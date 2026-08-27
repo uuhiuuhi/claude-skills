@@ -23,7 +23,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync 
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { loadConfig } from './plan-queue.mjs'
-import { nextStops, notifyChannel, shouldContinueLoop, waitAuthMin } from './runner-rules.mjs'
+import { nextStops, notifyChannel, refundUnrun, shouldContinueLoop, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = join(homedir(), '.claude', 'skills', 'auto-story-finish', 'auto-story-pipeline.mjs')
 const ART = resolve('_bmad-output/implementation-artifacts')
@@ -256,6 +256,7 @@ function runQueue(queuePath, autoQueueMeta, round) {
   }
 
   const results = []
+  const ranStories = new Set() // 실행을 **시작한** 배치의 스토리 — 원장 환불 판정 재료
   for (const batch of batches) {
     const label = batch.label ?? '(무제)'
     const stories = (batch.stories ?? []).join(',')
@@ -263,6 +264,7 @@ function runQueue(queuePath, autoQueueMeta, round) {
       record(`- 건너뜀: ${label} — stories 비어 있음`)
       continue
     }
+    for (const k of batch.stories) ranStories.add(k)
     const args = [
       ENGINE,
       '--stories',
@@ -310,6 +312,23 @@ function runQueue(queuePath, autoQueueMeta, round) {
   writeSummary()
 
   const worst = results.find((entry) => entry.code !== 0)
+
+  // 조기 종료(STOP) 시 하루 상한 원장 환불 — 미실행 배치가 기록만 남아 이후 슬롯의
+  // remaining 을 0 으로 만드는 결함 봉쇄(실사고 2026-08-27). 자동 편성 라운드에만 의미가 있다.
+  if (worst && autoPlan && !dryRun && autoQueueMeta) {
+    const unrun = batches.flatMap((b) => b.stories ?? []).filter((k) => !ranStories.has(k))
+    if (unrun.length > 0) {
+      const { s, save } = loadState()
+      const day = s.days[START_DATE]
+      if (day && Array.isArray(day.planned)) {
+        const before = day.planned.length
+        day.planned = refundUnrun(day.planned, unrun)
+        save()
+        record(`- 원장 환불: 미실행 ${unrun.length}건을 하루 상한 기록에서 제외(${before} → ${day.planned.length}) — 다음 슬롯이 다시 집는다`)
+        writeSummary()
+      }
+    }
+  }
   const done = results.filter((r) => r.code === 0).length
 
   // 차단기 갱신 + 슬롯 요약 푸시 — 리허설(dry-run)은 무음·무기록

@@ -37,3 +37,17 @@ export function notifyChannel({ telegramReady, ntfyReady }) {
   if (ntfyReady) return 'ntfy'
   return 'silent'
 }
+
+/** 가드 정지 시 하루 상한 원장 환불 — 실사고(2026-08-27): 편성기가 picked 전체를 원장에
+ *  선기록한 뒤 라운드가 STOP 으로 조기 종료되면, 미실행분이 기록만 남아 같은 날 이후
+ *  슬롯의 remaining 이 0 이 된다(밤 전체 공전). 환불 대상은 **실행을 시작도 못 한 배치의
+ *  스토리만** — 멈춘 배치는 일부 실행됐으므로 비수렴 상한(규칙 9) 집계에 남긴다.
+ *  키당 1회만 제거(앞 라운드의 정당한 기록 보존). 원본 배열 불변. */
+export function refundUnrun(planned, refundKeys) {
+  const next = [...planned]
+  for (const key of refundKeys) {
+    const i = next.indexOf(key)
+    if (i >= 0) next.splice(i, 1)
+  }
+  return next
+}
