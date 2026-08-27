@@ -34,7 +34,7 @@
 //   · 스토리 순차 처리(호출자가 준 순서 = 의존성 순서)
 //   · dev 후 qa 게이트 RED → 배치 즉시 중단(거짓 PASS 차단)
 //   · nested claude 인스턴스는 git commit/push 절대 안 함 (프롬프트 금지 + pipeline-settings deny)
-//   · (U9, 2026-08-17 박사장 승인) 엔진 자체의 스토리 단위 커밋·푸시는 **옵트인** — `--commit`(+`--branch auto/<x>` +`--push`).
+//   · (U9, 2026-08-17 승인) 엔진 자체의 스토리 단위 커밋·푸시는 **옵트인** — `--commit`(+`--branch auto/<x>` +`--push`).
 //     기본(플래그 없음) = 커밋·푸시 0. 켜도 하드 가드: 화이트리스트 pathspec 스테이징 · 금지 경로(.env*, 외부 *.log, scratch-*, *.local.*, 키 파일) 검출 시 STOP ·
 //     스테이징 diff 시크릿 패턴 스캔(걸리면 unstage + SECRET STOP exit 6) · 브랜치는 반드시 `auto/` 접두사(main·기타 금지, --push 는 --branch 필수) ·
 //     커밋 시점 = 스토리의 마지막 단계 완료 후 1회 · amend·force·태그 0 · 푸시 실패는 경고 후 계속(아침 사람 재시도).
