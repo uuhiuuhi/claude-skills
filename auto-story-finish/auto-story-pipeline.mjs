@@ -313,9 +313,13 @@ function ensureBranch() {
   if (!branchName) { note(`ℹ --commit: 현재 브랜치(${cur})에 스토리 단위 커밋(푸시 없음).`); return; }
   if (cur === branchName) { note(`ℹ 브랜치 ${branchName} (현재)`); return; }
   const exists = git(["rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`]).code === 0;
-  const r = exists ? git(["switch", branchName]) : git(["switch", "-c", branchName]);
+  // 기존 브랜치 팁이 이미 HEAD 의 조상(=전부 머지됨)이면 낡은 팁을 버리고 HEAD 에서 다시 딴다 —
+  // 실사고: 저녁에 main 으로 머지된 auto/<날짜> 의 낡은 로컬 팁을 그대로 switch 해, 밤 배치가
+  // 그 뒤의 사람 확정 커밋이 없는 어제 트리 위에서 돌았다. 미머지 커밋이 있으면 종전대로 보존 전환.
+  const mergedIn = exists && git(["merge-base", "--is-ancestor", branchName, "HEAD"]).code === 0;
+  const r = exists && !mergedIn ? git(["switch", branchName]) : git(["switch", "-C", branchName]);
   if (r.code !== 0) { note(`✖ COMMIT GUARD STOP — 브랜치 전환 실패: ${r.err.trim()}`); process.exit(6); }
-  note(`ℹ 브랜치 ${exists ? "전환" : "생성"}: ${branchName} (base=${cur})`);
+  note(`ℹ 브랜치 ${exists ? (mergedIn ? "재기점(HEAD)" : "전환") : "생성"}: ${branchName} (base=${cur})`);
 }
 function commitStory(story, stagesDone) {
   if (!doCommit) return;
@@ -364,7 +368,7 @@ const GUARD = "[비대화형] 승인/질문 없이 합리적 기본값으로 끝
 const prompts = {
   create: (s) => `/bmad-create-story ${s}\n\n${GUARD} 스토리 스펙(AC·파일 그라운딩)을 작성·저장하고 종료.`,
   dev: (s) => `/bmad-dev-story ${s}\n\n${GUARD} 구현 후 검증까지 자동 실행.`,
-  review: (s) => `/bmad-code-review ${s}\n\n${GUARD} 다른 LLM 관점에서 적대적으로. findings 리포트만 작성(코드 자동수정·commit 금지).`,
+  review: (s) => `/bmad-code-review ${s}\n\n${GUARD} 다른 LLM 관점에서 적대적으로. findings 리포트만 작성(코드 자동수정·commit 금지). ⚠️ 판정은 발견 0건·재오픈 불요 결론이어도 **반드시 스토리 파일의 Review Findings 절에 라운드 기록으로 기재**하라 — stdout 채팅 보고만 하고 파일을 안 쓰면 엔진이 산출물 부재(NO-OP exit 4)로 실패 처리한다(실사고 3회).`,
 };
 
 // 반환: "ok" | "stop" (사유는 내부에서 note + exit)
