@@ -6,7 +6,7 @@ Claude Code 스킬 백업. 세 개가 들어 있다.
 |---|---|
 | [`auto-story-finish`](auto-story-finish/) | BMad 스토리 배치를 create → dev → review 순으로 무인 완료한다(헤드리스 `claude -p` 엔진). 단계별 모델 자동 선택, 인증 만료·사용량 한도 감지와 복구 대기, qa RED 시 중단, 옵트인 커밋·푸시(가드 하에). |
 | [`dev-status`](dev-status/) | BMad v6 프로젝트의 **읽기 전용** 개발 현황판. `epics.md`·`sprint-status.yaml`·스토리 md·배치 로그를 규칙만으로 판정해 진행률·단계 배지·파일 겹침·불일치·다음 할 일을 로컬 HTML 한 장으로 낸다. 외부 의존성 0, LLM 호출 0. |
-| [`night-batch-ops`](night-batch-ops/) | **프로젝트 설치형** 24시간 무인 배치 체계 — 예약 실행(18:00+4시간 슬롯) · 큐 자동 편성(규칙 9종, LLM 0) · 연속 실행 루프 · **병렬 실행**(File List 서로소 dev 배치 2폭 — 워크트리 분리 + cherry-pick landing) · **텔레그램 원격 명령**(/status /merge /resume — 코드 되묻기·원격 ff 전용) · 낮/밤 창 단위 차단기 · 리셋 전 stash 보존 · 텔레그램/ntfy 알림. `auto-story-finish` 를 엔진으로 쓴다. 프로젝트 고유값은 설치되는 `auto.config.json` 이 소유. 설치 = 대상 프로젝트 루트에서 `node night-batch-ops/install.mjs`. |
+| [`night-batch-ops`](night-batch-ops/) | **프로젝트 설치형** 24시간 무인 배치 체계 — 예약 실행(18:00+4시간 슬롯) · 큐 자동 편성(규칙 10종 — 마감 재검수 포함, LLM 0) · 연속 실행 루프 · **병렬 실행**(File List 서로소 같은 에픽 2폭 — dev 전용·신규 dev+review 짝, 워크트리 분리 + cherry-pick landing) · **중요도별 모델 배정**(new/recovery/closeout + 교차검증) · **텔레그램 원격 명령**(/status /merge /resume — 코드 되묻기·원격 ff 전용) · 낮/밤 창 단위 차단기 · 리셋 전 stash 보존 · 텔레그램/ntfy 알림. `auto-story-finish` 를 엔진으로 쓴다. 프로젝트 고유값은 설치되는 `auto.config.json` 이 소유. 설치 = 대상 프로젝트 루트에서 `node night-batch-ops/install.mjs`. |
 
 ## 설치
 

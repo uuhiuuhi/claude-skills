@@ -72,7 +72,7 @@ export function defaultDeps({ dryRun = false } = {}) {
     async send(token, chatId, text) {
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: `[BaroOS] ${text}` }), signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ chat_id: chatId, text: `[${PROJECT}] ${text}` }), signal: AbortSignal.timeout(10_000),
       })
     },
     // 재검수 N-3: dry-run 은 원격 ref 도 만지지 않는다(리허설 중 러너와의 fetch 경합 원천 차단) —

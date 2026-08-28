@@ -237,7 +237,9 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
     const f = readdirSync(ART).find((n) => n.startsWith(s) && n.endsWith('.md'))
     return f ? parseFileList(readFileSync(join(ART, f), 'utf8')) : null
   })
-  if (lists.some((l) => l == null)) { record('· 병렬 폴백 — File List 절 부재 스토리 존재(모르는 채 병렬 금지)'); return null }
+  // 빈 목록(절은 있는데 항목 0 — 아직 dev 안 돈 스펙)도 「모르는 것」이다 — 파일을 모르는 채
+  // 병렬로 돌리면 겹침 판정이 무의미하다. 신규 스토리를 병렬로 돌리려면 지시서에 예상 File List 를 채운다.
+  if (lists.some((l) => l == null || l.length === 0)) { record('· 병렬 폴백 — File List 부재/빈 목록 스토리 존재(모르는 채 병렬 금지)'); return null }
   if (fileListConflicts(lists)) { record('· 병렬 폴백 — File List 실측 겹침'); return null }
 
   // 배치 트리를 오늘 브랜치로(순차 경로에선 엔진 ensureBranch 몫 — 병렬은 러너가 선다)
@@ -271,7 +273,9 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   record(`· 병렬 실행 ${workers}폭 — dev 만 병렬, 커밋 가드는 엔진 그대로, landing·push 는 직렬`)
 
   const engineArgsFor = (story) => {
-    const a = [ENGINE, '--stories', story, '--stages', 'dev',
+    // 배치의 stages 그대로 — dev 전용(회수)뿐 아니라 dev+review(신규)도 워크트리 안에서 완주하고
+    // 커밋 1개로 landing 한다(리뷰 findings 도 그 커밋의 스토리 md 에 실린다).
+    const a = [ENGINE, '--stories', story, '--stages', (batch.stages ?? ['dev']).join(','),
       '--stage-timeout-min', String(batch.stageTimeoutMin ?? defaults.stageTimeoutMin ?? 120),
       '--wait-auth-min', String(waitAuthMin(autoPlan, batch.waitAuthMin, defaults.waitAuthMin))]
     for (const [stage, model] of Object.entries(batch.models ?? {})) if (model) a.push(`--${stage}-model`, model)

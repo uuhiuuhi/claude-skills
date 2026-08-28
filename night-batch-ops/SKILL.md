@@ -1,7 +1,7 @@
 # night-batch-ops — 24시간 무인 배치 러너 (프로젝트 설치형)
 
 BMad 프로젝트에 **야간·낮 무인 배치 체계**를 설치·운영한다. `auto-story-finish` 전역 스킬(엔진)을
-전제로, 그 위에 ① 예약 실행(18:00 + 4시간 슬롯) ② 큐 자동 편성(규칙 9종, LLM 호출 0)
+전제로, 그 위에 ① 예약 실행(18:00 + 4시간 슬롯) ② 큐 자동 편성(규칙 10종, LLM 호출 0)
 ③ 연속 실행 루프(작업 종료가 다음 배치를 연다) ④ 텔레그램/ntfy 알림을 얹는다.
 
 **계층 원칙**: 이 폴더의 엔진 3파일은 프로젝트 중립이다. 프로젝트 고유값(에픽 순서·하루 상한·
@@ -42,7 +42,11 @@ BMad 프로젝트에 **야간·낮 무인 배치 체계**를 설치·운영한�
   "parallelAllow": { "4-0": 11 },
   "dailyCap": 30,
   "parallel": 2,
-  "models": { "dev": "fable", "review": "opus" }
+  "models": {
+    "new": { "dev": "fable", "review": "opus" },
+    "recovery": { "dev": "opus", "review": "fable" },
+    "closeout": { "review": "opus" }
+  }
 }
 ```
 
@@ -50,11 +54,15 @@ BMad 프로젝트에 **야간·낮 무인 배치 체계**를 설치·운영한�
 - `dailyCap` = 하루 편성 상한 — **페이스가 아니라 폭주 방지 백스톱**이다. 몫을 다 했다고 남은
   슬롯이 쉬면 안 된다(실사고: 상한이 낮던 시절 오전 소진 후 슬롯이 통째로 놀았다). 실질 제동은
   STOP 차단기·결정 대기 제외·한도 대기·리뷰 게이트.
-- `parallel` = 병렬 폭(기본 2 · 하드캡 3) — File List 서로소 **dev 전용** 2스토리 배치(규칙 ⑤ 짝)만
-  워크트리 분리로 동시 실행한다. 커밋 가드는 엔진 그대로(각 워크트리 detached HEAD 커밋), 반영은
-  러너의 cherry-pick 직렬 landing(충돌 = 그 스토리만 실패 + `archive/parallel-*` 태그 보존 — 유실 0).
-  조건 미달 배치는 자동 순차 폴백.
-- `models` — null 이면 CLI 기본 모델. dev/review 를 다른 모델로 두면 교차검증이 된다.
+- `parallel` = 병렬 폭(기본 2 · 하드캡 3) — File List 서로소 2스토리 배치(규칙 ⑤ 짝)를 워크트리
+  분리로 동시 실행한다. 대상 = **dev 를 포함하는 배치**(dev 전용·dev+review 신규 짝 모두 —
+  create/dev/review 밖 단계가 섞이면 순차). 신규 스토리 짝은 **스펙에 예상 File List 절이 있어야**
+  병렬 후보가 된다(비어 있으면 모르는 채 돌리지 않고 순차 폴백). 커밋 가드는 엔진 그대로(각
+  워크트리 detached HEAD 커밋), 반영은 러너의 cherry-pick 직렬 landing(충돌 = 그 스토리만 실패 +
+  `archive/parallel-*` 태그 보존 — 유실 0). 조건 미달 배치는 자동 순차 폴백.
+- `models` — 배치 종류별 3키(`new`/`recovery`/`closeout` — 중요도 배정). 평평한 `{dev,review}`
+  1개만 두면 전 종류 공통(하위 호환). null = CLI 기본 모델. **dev ≠ review 가 교차검증**이며,
+  엔진이 배치 안에서 같은 모델로 붙는 조합을 강제로 회피한다(사다리 강등 시에도 유지).
 
 ## 운영 계약 (러너·편성기에 하드코딩 — 프로젝트가 알아야 할 것)
 
@@ -78,10 +86,13 @@ BMad 프로젝트에 **야간·낮 무인 배치 체계**를 설치·운영한�
   `schtasks /Create /F /IT /TN "<프로젝트>-telegram-commands" /SC MINUTE /MO 10 /TR "cmd /c cd /d <클론> && node tools\auto\telegram-commands.mjs --once >> <상태폴더>\telegram-poll.log 2>&1"`
 - **설정 JSON 은 BOM 금지** — PowerShell 로 저장하면 UTF-8 BOM 이 붙는다. 코드가 내성을
   갖지만(chat.json 등), 새 파일은 BOM 없는 UTF-8 로 저장한다(실사고: 알림이 무음 증발).
-- **편성 규칙 9종**: ① epicOrder 순서(첫 후보 보유 에픽까지) ② 열린 Decision = 제외(인박스
+- **편성 규칙 10종**: ① epicOrder 순서(첫 후보 보유 에픽까지) ② 열린 Decision = 제외(인박스
   미등재 의심 경고) ③ 재투입 금지 지시 ④ Patch 만 있고 Task 0 = 사람이 라운드를 열어야 함
-  ⑤ File List 서로소 회수 2건 묶음 ⑥ 새 화면 목업 게이트 ⑦ 하루 상한 ⑧ 회수분 0 제외
-  ⑨ **무인 편성 2회 소진 = 사람 판단으로**(리뷰 비수렴 상한).
+  ⑤ File List 서로소 **같은 종류·같은 에픽** 2건 묶음(회수끼리·신규끼리 — 공유 장부 파일은
+  겹침 판정 제외) ⑥ 새 화면 목업 게이트 ⑦ 하루 상한 ⑧ 회수분 0 제외 ⑨ **무인 편성 2회 소진 =
+  사람 판단으로**(리뷰 비수렴 상한) ⑩ **마감 재검수(closeout)** — 상태 review 에 열린 findings 0
+  인 스토리는 review 단계만 강제 재실행해 done 으로 마감하거나 새 findings 를 캔다(「마무리 안 된
+  항목」이 물량 발굴원이 된다).
 - **수동 큐 우선**: `night-queue.json` 의 `planned` 가 `'auto'` 가 아니면 다음 슬롯이 1회 우선
   소비한다(전역 소비 표식 — 자정이 지나도 재실행되지 않는다).
 - **exit code**: 0 완주 · 1 실패/qa RED · 2 인자 · 3 인증/편성기 실패 · 4 no-op/dirty · 5 한도.

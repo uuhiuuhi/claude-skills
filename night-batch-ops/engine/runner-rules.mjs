@@ -71,7 +71,11 @@ export function stopWindowId(d) {
 export const PARALLEL_MAX = 3
 export function parallelPlan({ storyCount, stages, parallel }) {
   if (!Number.isInteger(parallel) || parallel < 2) return 1
-  if (!Array.isArray(stages) || stages.length !== 1 || stages[0] !== 'dev') return 1
+  // dev 전용뿐 아니라 dev+review(신규 스토리) 배치도 병렬 대상 — 각 워크트리 안에서
+  // dev→qa→review 까지 돌고 커밋 1개로 landing 한다. create 는 스토리 파일 실재 시 skip 되고
+  // File List 실측 대조(호출부)가 그 실재를 전제한다. dev 없는 배치(재검수 등)는 순차.
+  if (!Array.isArray(stages) || !stages.includes('dev')) return 1
+  if (stages.some((s) => !['create', 'dev', 'review'].includes(s))) return 1
   if (!Number.isInteger(storyCount) || storyCount < 2) return 1
   return Math.min(parallel, PARALLEL_MAX, storyCount)
 }

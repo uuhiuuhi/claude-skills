@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { SHARED_BOOKKEEPING } from './runner-rules.mjs'
 
 /** 프로젝트 설정 — 없으면 빈 객체(호출부가 필수값 부재를 판정한다) */
 export function loadConfig(root) {
@@ -129,6 +130,12 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
       return exclude(r.key, '무인 편성 2회 소진 — 리뷰 반복은 사람 판단(규칙 9 · 비수렴 상한)'), null
     }
     if (recovery && s.unfinishedTasks === 0 && s.openPatches === 0) {
+      // 규칙 10: review 상태 + 고칠 것 0 = **마감 재검수 후보** — 재검수 1회가 통과하면 done,
+      // 새 findings 가 나오면 회수 재고가 된다. 종전에는 제외만 해서 미마무리가 영구 적체됐다.
+      // in-progress 인데 0/0 인 기형 상태만 종전대로 제외(사람 확인 대상).
+      if (r.status === 'review') {
+        return { ...r, kind: 'closeout', files: s.files, stages: ['review'], force: true }
+      }
       return exclude(r.key, '회수분 0 — force 재실행은 헛돈다(규칙 8)'), null
     }
     if (recovery && s.unfinishedTasks === 0 && s.openPatches > 0) {
@@ -166,13 +173,33 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   while (pool.length) {
     const head = pool.shift()
     const batch = [head]
-    if (head.kind === 'recovery') {
-      const mateIdx = pool.findIndex((c) => c.kind === 'recovery' && c.files.every((f) => !head.files.includes(f)))
+    // 규칙 5 확장: 같은 에픽 · 같은 종류 · File List 서로소(공유 장부 제외)면 2개까지 한 배치.
+    // 신규도 지시서에 File List 가 채워져 있으면 짝이 된다(빈 목록 = 파일을 모르는 스펙 → 단독).
+    const realFiles = (c) => (c.files ?? []).filter((f) => !SHARED_BOOKKEEPING.includes(f))
+    const headFiles = realFiles(head)
+    if (headFiles.length > 0) {
+      const mateIdx = pool.findIndex((c) => {
+        const mateFiles = realFiles(c)
+        return c.kind === head.kind && c.epic === head.epic && mateFiles.length > 0 &&
+          mateFiles.every((f) => !headFiles.includes(f))
+      })
       if (mateIdx >= 0) batch.push(pool.splice(mateIdx, 1)[0])
     }
     batches.push(batch)
   }
-  const picked = batches.flat().map((c) => ({ key: c.key, why: c.kind === 'recovery' ? '회수(' + c.status + ')' : '신규(backlog)' }))
+  const KIND_LABEL = { recovery: (c) => '회수(' + c.status + ')', closeout: () => '마감 재검수(review→done 후보 · 규칙 10)', new: () => '신규(backlog)' }
+  const picked = batches.flat().map((c) => ({ key: c.key, why: (KIND_LABEL[c.kind] ?? KIND_LABEL.new)(c) }))
+  // 중요도 모델 배정 + 교차검증(dev ≠ review): cfg.models 가 평면({dev,review})이면 전 종류 공통(종전 호환),
+  // { new, recovery, closeout } 형태면 종류별 지정. 없으면 내장 기본 —
+  //   신규 dev=최상위/review=차상위 · 회수 dev=차상위/review=최상위(상위 교차) · 마감 재검수 review=차상위.
+  // 한도는 엔진 품질 사다리(자동 강등 · dev 모델 회피)가 흡수한다.
+  const modelsFor = (kind) => {
+    if (models && (models.new || models.recovery || models.closeout)) return models[kind] ?? null
+    if (models) return models
+    return kind === 'closeout' ? { review: 'opus' }
+      : kind === 'recovery' ? { dev: 'opus', review: 'fable' }
+        : { dev: 'fable', review: 'opus' }
+  }
 
   const queue = {
     planned: 'auto',
@@ -181,12 +208,12 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     // 워크트리 분리 병렬로 돌린다. 조건 미달 배치는 러너가 순차 폴백(runner-rules.parallelPlan).
     defaults: { waitAuthMin: 480, stageTimeoutMin: 150, commit: true, push: true, parallel: cfg.parallel ?? 2 },
     batches: batches.map((b, i) => ({
-      label: 'AUTO-' + (i + 1) + ': ' + b.map((c) => c.key.split('-').slice(0, 2).join('-')).join(' · ') + ' (' + (b[0].kind === 'recovery' ? '회수' : '신규') + ')',
+      label: 'AUTO-' + (i + 1) + ': ' + b.map((c) => c.key.split('-').slice(0, 2).join('-')).join(' · ') + ' (' + (b[0].kind === 'recovery' ? '회수' : b[0].kind === 'closeout' ? '마감 재검수' : '신규') + ')',
       enabled: true,
       stories: b.map((c) => c.key),
       stages: b[0].stages,
       force: b[0].force,
-      ...(models ? { models } : {}),
+      ...(modelsFor(b[0].kind) ? { models: modelsFor(b[0].kind) } : {}),
     })),
     _편성: { date: today, picked, excluded, cap, alreadyPlannedToday: day.planned.length },
   }

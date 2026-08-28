@@ -216,7 +216,9 @@ function postconditionOk(stage, story, beforeMaxMtime) {
 // ---- (U3) 인증 오류 패턴 ----
 const AUTH_RE = /(\b401\b|unauthorized|failed to authenticate|invalid.{0,3}api.{0,3}key|invalid authentication|authentication.{0,3}(error|failed)|token.{0,30}expired|oauth.{0,20}(error|expired))/i;
 // ---- (U8) 사용량 한도 패턴 — 인증(재로그인 필요)과 구분: 한도는 리셋 대기만으로 복구 ----
-const LIMIT_RE = /(usage.?limit|rate.?limit|\b429\b|quota exceeded|limit (reached|exceeded|will reset)|too many requests)/i;
+// "monthly spend limit"(월 지출 한도 — 실측: 이 문구가 기존 패턴에 안 걸려 STOP 으로 오분류돼
+// 차단기에 카운트된 실사례) 포함. 월 한도는 대기로 안 풀린다 — 모델 사다리 전환이 답.
+const LIMIT_RE = /(usage.?limit|rate.?limit|spend limit|\b429\b|quota exceeded|limit (reached|exceeded|will reset)|too many requests)/i;
 // 오류 종류별 메시지·exit code (auth=재로그인 / limit=리셋 대기)
 const KIND = {
   auth: { tag: "AUTH", what: "CLI 인증 오류(401/토큰 만료)", fix: "다른 터미널에서 CLI를 대화형으로 열어 재로그인하세요", exit: 3 },
@@ -230,7 +232,11 @@ const sleepSync = (ms) =>
 /** 1콜로 인증·한도 상태 확인(--probe-model 지정 시 그 모델, 미지정 = CLI 기본 모델).
  *  "ok" | "auth"(401류) | "limit"(사용량 한도) | "other"(네트워크 등 — 배치를 막지 않음) */
 function authProbe() {
-  const res = spawnSync(`${claudeBin} -p${probeModel ? ` --model ${probeModel}` : ""}`, {
+  // 프로브 모델 = 명시값 > dev 모델 > CLI 기본. CLI 기본으로만 찌르면 "기본 모델만 한도이고
+  // 배치 모델은 멀쩡한" 상황에서 영원히 미복구로 읽는다(실사고: 최상위 모델만 월 한도인데
+  // dev 는 차상위로 정상 — probe=limit 무한 대기).
+  const effectiveProbeModel = probeModel || models.dev || "";
+  const res = spawnSync(`${claudeBin} -p${effectiveProbeModel ? ` --model ${effectiveProbeModel}` : ""}`, {
     shell: true,
     input: "ok",
     encoding: "utf8",
@@ -414,9 +420,9 @@ function runClaude(stage, story) {
   } else {
     note(`✖ STOP — [${story}] ${stage} 실패(exit=${code}). 배치 중단. log=${logFile}`);
   }
-  // 진단 보강(실사고: 무인 dev 세션이 stdout 으로 「완료」를 보고했으나 스토리 산출물은
-  // 갱신되지 않았다 — 거짓 완료 보고). 아침 분석이 로그 대조 없이 원인을 즉시 알 수 있게
-  // STOP 사유에 불일치를 명시한다. 판정 자체는 종전(산출물 실측 우선).
+  // 진단 보강(실사고: 무인 dev 세션의 거짓 완료 보고): 세션 stdout 이 「완료」 보고인데 스토리
+  // 산출물 mtime 이 전진하지 않은 경우 — 보고가 실물과 다르다(거짓 완료 보고). 아침 분석이
+  // 로그 대조 없이 원인을 즉시 알 수 있게 STOP 사유에 명시한다. 판정 자체는 종전(실측 우선).
   if (/완료|완주/.test((res.stdout || "").slice(-3000))) {
     note(`   ⚠ 보고·실물 불일치 — 세션 stdout 은 완료를 보고하나 스토리 산출물(md) mtime 미전진. 세션 보고를 신뢰하지 말고 파일 실물로 판단할 것.`);
   }
@@ -426,10 +432,51 @@ function runClaude(stage, story) {
 
 /** 단계 실행 + 인증·한도 오류 시 (U7/U8) 대기·자동 재시도. 성공 외에는 내부에서 exit. */
 const MAX_AUTH_RETRY_PER_STAGE = 5; // 프로브만 통과하고 단계는 계속 실패하는 병리 케이스의 무한루프 방지
+
+// 모델 품질 사다리(운영 원칙): 최상위 모델을 우선 쓰되, **그 모델만 한도**에 걸리면
+// 대기하지 말고 차순위로 자동 전환해 계속 일한다(월 지출 한도는 대기로 안 풀린다 — 같은 날 실사고:
+// fable 만 차단·opus 정상인데 배치 전체가 한도 대기로 공전). 전환은 그 단계·그 배치에 한정된다.
+const MODEL_LADDER = ["fable", "opus", "sonnet"];
+// avoid = 교차검증 회피 대상(리뷰가 dev 와 같은 모델로 떨어지지 않게 건너뛴다 —
+// 같은 모델의 자기 검증은 같은 맹점을 공유한다).
+function nextModelDown(model, avoid) {
+  const i = MODEL_LADDER.indexOf(model);
+  for (let j = i + 1; j < MODEL_LADDER.length; j++) {
+    if (MODEL_LADDER[j] !== avoid) return MODEL_LADDER[j];
+  }
+  return null;
+}
+
+// 교차검증 강제 — 같은 배치에서 dev 가 실제로 쓴 모델과 review 모델이 같아지면
+// (장부가 같거나, dev 가 사다리로 강등돼 우연히 겹친 경우) review 를 「dev 와 다른 모델 중
+// 최상위」로 바꾼다: dev=opus → review=fable(상위 교차 우선), fable 한도면 사다리가 sonnet(하위
+// 교차)으로. sonnet 리뷰는 범위 고정 회수 diff 에는 충분하고, 신규 구현 리뷰가 sonnet 까지
+// 떨어지는 조합은 이 순서상 발생하지 않는다(신규 dev=fable → review 는 opus 부터).
+function enforceCrossModel(stage) {
+  if (stage !== "review" || !stages.includes("dev")) return;
+  if (!models.dev || !models.review || models.review !== models.dev) return;
+  const alt = MODEL_LADDER.find((m) => m !== models.dev);
+  if (alt) {
+    note(`⇄ review 모델 교차검증 조정: dev 와 동일(${models.dev}) → ${alt} (같은 모델 자기 검증 방지)`);
+    models.review = alt;
+  }
+}
+
 function runStage(stage, story) {
+  enforceCrossModel(stage);
   for (let authRetry = 0; ; authRetry++) {
     const r = runClaude(stage, story); // "ok" | "auth" | "limit"
     if (r === "ok") return;
+    if (r === "limit") {
+      const avoid = stage === "review" && stages.includes("dev") ? models.dev : null;
+      const down = nextModelDown(models[stage], avoid);
+      if (down) {
+        note(`↘ [${story}] ${stage}: ${models[stage]} 한도 — ${down} 로 자동 전환(품질 사다리 차순위 · 대기 없음)`);
+        push("MODEL FALLBACK", `[${story}] ${stage} — ${models[stage]} 한도로 ${down} 전환(자동)`);
+        models[stage] = down;
+        continue; // 전환 즉시 재시도(사다리는 최대 2단 — 재시도 상한 5 안에서 충분)
+      }
+    }
     // 대기 모드면 복구 후 같은 단계 재실행, 아니면 handleFailure가 exit(3|5)
     if (authRetry >= MAX_AUTH_RETRY_PER_STAGE) {
       note(`✖ ${KIND[r].tag} STOP — [${story}] ${stage}: 복구 후에도 ${MAX_AUTH_RETRY_PER_STAGE}회 연속 ${KIND[r].what}. 환경 점검 필요(재로그인 계정·CLAUDE_BIN·네트워크·한도). 배치 중단.`);
@@ -494,6 +541,18 @@ for (const story of stories) {
       if (p === "other") {
         note(`⚠ [${story}] 프로브가 비인증·비한도 사유로 실패 — 배치는 계속 진행(실패 시 단계에서 판정).`);
         break;
+      }
+      // 프로브 경로에도 품질 사다리를 적용한다(잔여 봉합 실사례: runStage 만 고치고 이 경로를
+      // 빠뜨려, dev=fable 큐가 스토리 경계 프로브에서 30분 한도 대기로 빠졌다). 프로브는 dev 모델을
+      // 찌르므로(effectiveProbeModel) dev 를 강등하면 다음 프로브가 그 모델로 재판정한다.
+      if (p === "limit") {
+        const down = nextModelDown(models.dev, null);
+        if (down) {
+          note(`↘ [${story}] 경계 프로브 한도 — dev 모델 사다리 강등 ${models.dev} → ${down} (대기 없음)`);
+          push("MODEL FALLBACK", `[${story}] 경계 프로브 — dev ${models.dev} 한도로 ${down} 전환(자동)`);
+          models.dev = down;
+          continue;
+        }
       }
       handleFailure(p, `[${story}] 시작 전 프로브`, null); // 대기 모드면 복구 후 재프로브
     }
