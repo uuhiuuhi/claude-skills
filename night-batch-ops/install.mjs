@@ -37,7 +37,7 @@ if (!(pkg.scripts && pkg.scripts.qa)) notes.push('⚠️ `npm run qa` 스크립�
 // ── 1. 엔진 파일 설치 ────────────────────────────────────────────────────
 const dst = join(ROOT, 'tools', 'auto')
 mkdirSync(dst, { recursive: true })
-for (const f of ['run-night.mjs', 'plan-queue.mjs', 'runner-rules.mjs']) {
+for (const f of ['run-night.mjs', 'plan-queue.mjs', 'runner-rules.mjs', 'telegram-rules.mjs', 'telegram-commands.mjs']) {
   const to = join(dst, f)
   if (existsSync(to) && !has('force')) { notes.push(`· ${f} 이미 있음 — 건너뜀(덮어쓰려면 --force)`); continue }
   copyFileSync(join(SELF, 'engine', f), to)
@@ -52,7 +52,8 @@ if (!existsSync(cfgPath)) {
     project,
     epicOrder: [],
     parallelAllow: {},
-    dailyCap: 12,
+    dailyCap: 30,
+    parallel: 2,
     models: { dev: null, review: null },
   }, null, 2) + '\n', 'utf8')
   console.log('✔ tools/auto/auto.config.json (epicOrder 를 채워야 자동 편성이 돈다)')

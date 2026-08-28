@@ -51,3 +51,66 @@ export function refundUnrun(planned, refundKeys) {
   }
   return next
 }
+
+/** 차단기 창(window) 식별 — 낮 사고가 밤 편성을 죽이지 않게 stops 를 달력 날짜가 아니라
+ *  「낮 창 / 밤 창」 단위로 센다(실사고: 낮 가드 정지 1회 + 밤 실패 1회가 달력일 합산 2회로
+ *  읽혀 밤 전체가 중단됐다). 낮 창 = 06:00~17:59(`<날짜>-day`), 밤 창 = 18:00~다음날
+ *  05:59(시작 날짜 앵커 `<날짜>-night`). 상한 2회는 창 안에서 유지된다. */
+export function stopWindowId(d) {
+  const p = (n) => String(n).padStart(2, '0')
+  const ymd = (x) => `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}`
+  const h = d.getHours()
+  if (h >= 6 && h < 18) return `${ymd(d)}-day`
+  const anchor = h >= 18 ? d : new Date(d.getTime() - 24 * 60 * 60 * 1000)
+  return `${ymd(anchor)}-night`
+}
+
+/** 병렬 실행 판정 — dev 단계 전용 · 스토리 2개+ · 큐가 parallel 을 켠 배치만.
+ *  상한 3 하드캡(동시 세션은 사용량 한도를 배로 태운다 — 기본 권장 2).
+ *  그 외 전부 1(= 현행 순차 경로 그대로). */
+export const PARALLEL_MAX = 3
+export function parallelPlan({ storyCount, stages, parallel }) {
+  if (!Number.isInteger(parallel) || parallel < 2) return 1
+  if (!Array.isArray(stages) || stages.length !== 1 || stages[0] !== 'dev') return 1
+  if (!Number.isInteger(storyCount) || storyCount < 2) return 1
+  return Math.min(parallel, PARALLEL_MAX, storyCount)
+}
+
+/** 공유 장부 파일 — 거의 모든 dev 가 함께 고치는 문서. File List 겹침 판정에서 제외한다
+ *  (landing 의 cherry-pick 3-way 가 줄 단위로 합치고, 충돌 나면 그 스토리만 landing 실패 폴백). */
+export const SHARED_BOOKKEEPING = Object.freeze([
+  '_bmad-output/implementation-artifacts/sprint-status.yaml',
+  '_bmad-output/implementation-artifacts/deferred-work.md',
+  '_bmad-output/implementation-artifacts/DECISIONS-INBOX.md',
+])
+
+/** 스토리 md 의 File List 절 파싱 — `## File List`/`### File List` 아래 불릿의 경로(백틱 우선).
+ *  절이 없으면 null(호출부는 순차 폴백 — 모르는 채 병렬로 돌리지 않는다). */
+export function parseFileList(md) {
+  const text = String(md ?? '')
+  const at = text.search(/^#{2,3} File List\s*$/m)
+  if (at < 0) return null
+  const files = []
+  for (const line of text.slice(at).split('\n').slice(1)) {
+    if (/^#{1,6} /.test(line)) break
+    const b = /^\s*[-*]\s+(.+)$/.exec(line)
+    if (!b) continue
+    const code = /`([^`]+)`/.exec(b[1])
+    const raw = (code ? code[1] : b[1].split(/[\s(]/)[0]).trim().replace(/\\/g, '/')
+    if (raw) files.push(raw)
+  }
+  return files
+}
+
+/** File List 겹침 — 공유 장부 제외 후 서로 다른 스토리가 같은 파일을 만지면 true(병렬 불가). */
+export function fileListConflicts(lists) {
+  const owner = new Map()
+  for (let i = 0; i < (lists ?? []).length; i++) {
+    for (const f of lists[i] ?? []) {
+      if (SHARED_BOOKKEEPING.includes(f)) continue
+      if (owner.has(f) && owner.get(f) !== i) return true
+      owner.set(f, i)
+    }
+  }
+  return false
+}

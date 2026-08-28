@@ -76,7 +76,10 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     throw new Error('auto.config.json 의 epicOrder 가 비어 있다 — 편성 불가(프로젝트의 에픽 우선순위는 사람이 정한다)')
   }
   const PARALLEL_ALLOW = cfg.parallelAllow ?? {} // 예: { "4-0": 11 } — 4-0 은 Epic 11 진행 중에도 후보
-  const cap = max ?? cfg.dailyCap ?? 12
+  // 상한은 페이스가 아니라 폭주 방지 백스톱이다 — 몫을 다 했다고 남은 슬롯이 쉬면 안 된다
+  // (실사고: 상한 12 시절, 오전에 12건 소진 후 남은 슬롯이 통째로 놀았다). 실질 제동은
+  // STOP 차단기·결정 대기 제외·사용량 한도 대기·리뷰 게이트가 맡는다.
+  const cap = max ?? cfg.dailyCap ?? 30
   const models = cfg.models ?? null // 예: { dev: 'fable', review: 'opus' } — 없으면 CLI 기본 모델
 
   const ART = join(root, '_bmad-output', 'implementation-artifacts')
@@ -174,7 +177,9 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   const queue = {
     planned: 'auto',
     updated: today + ' 자동 편성(plan-queue · 상한 ' + cap + ' · 오늘 기편성 ' + day.planned.length + ')',
-    defaults: { waitAuthMin: 480, stageTimeoutMin: 150, commit: true, push: true },
+    // parallel ≥ 2 = 병렬 점화 — File List 서로소 2스토리 dev 배치(규칙 5 짝)만 러너가
+    // 워크트리 분리 병렬로 돌린다. 조건 미달 배치는 러너가 순차 폴백(runner-rules.parallelPlan).
+    defaults: { waitAuthMin: 480, stageTimeoutMin: 150, commit: true, push: true, parallel: cfg.parallel ?? 2 },
     batches: batches.map((b, i) => ({
       label: 'AUTO-' + (i + 1) + ': ' + b.map((c) => c.key.split('-').slice(0, 2).join('-')).join(' · ') + ' (' + (b[0].kind === 'recovery' ? '회수' : '신규') + ')',
       enabled: true,

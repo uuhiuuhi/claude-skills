@@ -17,13 +17,13 @@
 // ② 슬롯 한도 대기 30분 — lock 인질 방지, 이어하기는 state.json ③ 차단기에서 exit 5 제외
 // ④ 알림 텔레그램 정본(공개 ntfy 폴백) ⑤ 상태 폴더 = 프로젝트별(~/.claude-auto/<이름>)
 // ⑥ 미머지 auto/* 잔존 시 슬롯 휴면(자정 롤오버 중복 실행 사고 방지) — 판정 규칙은 runner-rules.mjs 소유.
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { loadConfig } from './plan-queue.mjs'
-import { nextStops, notifyChannel, refundUnrun, shouldContinueLoop, waitAuthMin } from './runner-rules.mjs'
+import { fileListConflicts, nextStops, notifyChannel, parallelPlan, parseFileList, refundUnrun, shouldContinueLoop, stopWindowId, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = join(homedir(), '.claude', 'skills', 'auto-story-finish', 'auto-story-pipeline.mjs')
 const ART = resolve('_bmad-output/implementation-artifacts')
@@ -71,7 +71,9 @@ const notify = (title, body) => {
     const tokenPath = findFile('telegram-token.txt')
     const chatPath = findFile('telegram-chat.json')
     const token = tokenPath ? readFileSync(tokenPath, 'utf8').trim() : ''
-    const chatId = chatPath ? JSON.parse(readFileSync(chatPath, 'utf8')).chat_id : null
+    // BOM 내성 — PowerShell 저장 JSON 은 EF BB BF 로 시작해 parse 가 죽고, 이 catch 는
+    // 무음이라 알림이 조용히 증발한다(실기 테스트에서 실발생).
+    const chatId = chatPath ? JSON.parse(readFileSync(chatPath, 'utf8').replace(/^\uFEFF/, '')).chat_id : null
     const topicPath = join(homedir(), '.claude', 'ntfy-topic.txt')
     const topic = existsSync(topicPath) ? readFileSync(topicPath, 'utf8').trim() : ''
     const channel = notifyChannel({ telegramReady: Boolean(token && chatId), ntfyReady: Boolean(topic) })
@@ -92,7 +94,10 @@ const loadState = () => {
   s.consumed ??= {} // 수동 큐 소비 표식은 **전역**이다 — 날짜별로 두면 자정이 지나는 순간 어제 큐가
   // "새 큐"로 보여 통째로 재실행된다(실사고 — 7커밋 중복)
   s.days[today()] ??= { planned: [], stops: 0, consumed: {} }
-  return { s, day: s.days[today()], save: () => writeFileSync(p, JSON.stringify(s, null, 2) + '\n', 'utf8') }
+  // 차단기는 달력일이 아니라 낮/밤 창 단위 — 낮 사고가 밤 몫을 잠그지 않게(stopWindowId 소유).
+  s.windows ??= {}
+  s.windows[stopWindowId(new Date())] ??= { stops: 0 }
+  return { s, day: s.days[today()], win: s.windows[stopWindowId(new Date())], save: () => writeFileSync(p, JSON.stringify(s, null, 2) + '\n', 'utf8') }
 }
 
 // 자정 가드: 루프·브랜치는 시작 시점 날짜에 고정된다. 자정을 넘기면 루프를 끝내고
@@ -123,6 +128,23 @@ if (autoPlan) {
       const arc = join(STATE_DIR, 'archive', today() + '-' + Date.now())
       mkdirSync(arc, { recursive: true })
       for (const f of floating) { try { cpSync(resolve(f), join(arc, basename(f))) } catch { /* 삭제분 */ } }
+    }
+    // 미커밋 작업 보존 — checkout -f/clean 은 앞 배치가 STOP 으로 커밋 못 한 소스·테스트
+    // 수정을 지운다(실사고: dev 산출물이 리셋에 유실돼 원인 분석 물증까지 소실). 로그·marker·
+    // 잔재 로그를 뺀 변경이 있으면 stash 로 보관한다.
+    const valuable = (st.stdout ?? '').split('\n').filter((l) => l.trim() !== '')
+      .filter((l) => !l.includes('auto-pipeline-logs/'))
+      .filter((l) => !l.includes('.auto-batch-worktree'))
+      .filter((l) => !/_qa-[^/]*\.log/.test(l))
+    if (valuable.length > 0) {
+      const stashed = spawnSync('git', ['stash', 'push', '-u', '-m', `slot-preserve ${new Date().toISOString()}`,
+        '--', '.', ':(exclude).auto-batch-worktree', ':(exclude)_bmad-output/implementation-artifacts/auto-pipeline-logs'], { encoding: 'utf8' })
+      if (stashed.status === 0) {
+        console.log(`미커밋 변경 ${valuable.length}건 stash 보관(slot-preserve) — 아침에 사람이 확인 후 pop/drop`)
+        notify('미커밋 작업 stash 보관', `앞 배치가 커밋 못 한 변경 ${valuable.length}건을 stash 에 보관했다.\n${valuable.slice(0, 10).join('\n')}`)
+      } else {
+        console.log(`⚠ stash 보관 실패(${(stashed.stderr ?? '').trim().split('\n')[0]}) — 종전대로 리셋 진행(유실 가능)`)
+      }
     }
     // 엔진이 저장소 루트에 남기는 _qa-*.log 류 미추적 잔재를 치운다 — 안 치우면 다음 슬롯의
     // dirty 검사가 exit 4 로 멈춘다. ⚠️ 이 아래 checkout -f 는 이 파일 자신의 미커밋 수정도
@@ -160,10 +182,11 @@ if (autoPlan) {
   }
 
   // ③ 연속 중단 차단기 — 같은 원인으로 밤새 헛돌지 않는다. exit 5(한도)는 세지 않는다.
-  const { day } = loadState()
-  if (day.stops >= 2) {
-    console.log(`오늘 STOP ${day.stops}회 연속 — 남은 슬롯 자동 편성 중단(아침에 사람이 본다)`)
-    notify('슬롯 중단', `연속 STOP ${day.stops}회 — 오늘 자동 편성을 멈췄다. run-summary.log 확인.`)
+  //    창(낮/밤) 단위로 센다 — 낮 사고가 밤 몫을 잠그지 않게(stopWindowId).
+  const { win } = loadState()
+  if (win.stops >= 2) {
+    console.log(`이 창(${stopWindowId(new Date())}) STOP ${win.stops}회 연속 — 남은 슬롯 자동 편성 중단(아침에 사람이 본다)`)
+    notify('슬롯 중단', `연속 STOP ${win.stops}회(창 단위) — 이 창의 자동 편성을 멈췄다. run-summary.log 확인.`)
     process.exit(0)
   }
 }
@@ -201,8 +224,100 @@ function selectQueue() {
   return { path: autoOut, meta }
 }
 
+// 병렬 실행 — File List 가 겹치지 않는 dev 전용 배치를 워크트리 분리로 동시 실행한다.
+// 흐름: ① 실측 File List 대조(수동 큐 방어) ② 스토리별 임시 워크트리(detached · node_modules
+// junction · env 복사) ③ 엔진을 워크트리 cwd 로 병렬 spawn — `--commit` 만 켜서 **엔진 가드
+// (화이트리스트·시크릿 스캔) 그대로 detached HEAD 에 커밋** ④ landing = 러너가 배치 트리에서
+// cherry-pick 직렬(공유 장부는 3-way 가 합침 · 충돌 = 그 스토리만 실패 + archive/parallel-* 태그
+// 보존) ⑤ push 1회 ⑥ 워크트리 제거. 엔진 무수정. 점화 = 큐 defaults.parallel ≥ 2.
+// 반환: { code } 또는 null(병렬 조건 미충족 — 호출부가 순차 폴백).
+async function runBatchParallel({ batch, defaults, workers, record }) {
+  const storyList = batch.stories
+  const lists = storyList.map((s) => {
+    const f = readdirSync(ART).find((n) => n.startsWith(s) && n.endsWith('.md'))
+    return f ? parseFileList(readFileSync(join(ART, f), 'utf8')) : null
+  })
+  if (lists.some((l) => l == null)) { record('· 병렬 폴백 — File List 절 부재 스토리 존재(모르는 채 병렬 금지)'); return null }
+  if (fileListConflicts(lists)) { record('· 병렬 폴백 — File List 실측 겹침'); return null }
+
+  // 배치 트리를 오늘 브랜치로(순차 경로에선 엔진 ensureBranch 몫 — 병렬은 러너가 선다)
+  const cur = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).stdout.trim()
+  if (cur !== BRANCH) {
+    const exists = spawnSync('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${BRANCH}`]).status === 0
+    const sw = spawnSync('git', exists ? ['switch', BRANCH] : ['switch', '-c', BRANCH], { encoding: 'utf8' })
+    if (sw.status !== 0) { record(`· 병렬 폴백 — 브랜치 전환 실패: ${(sw.stderr ?? '').trim().split('\n')[0]}`); return null }
+  }
+
+  const wtBase = resolve('..')
+  const myName = basename(process.cwd())
+  const wts = []
+  const cleanup = () => {
+    for (const w of wts) spawnSync('git', ['worktree', 'remove', '--force', w.dir])
+    spawnSync('git', ['worktree', 'prune'])
+  }
+  for (let i = 0; i < storyList.length; i++) {
+    const dir = join(wtBase, `${myName}-wt${i}`)
+    spawnSync('git', ['worktree', 'remove', '--force', dir]) // 잔재 정리(없으면 무해)
+    const add = spawnSync('git', ['worktree', 'add', '--detach', dir, 'HEAD'], { encoding: 'utf8' })
+    if (add.status !== 0) { record(`· 병렬 폴백 — worktree 생성 실패: ${(add.stderr ?? '').trim().split('\n')[0]}`); cleanup(); return null }
+    wts.push({ story: storyList[i], dir, base: spawnSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim() })
+    try {
+      symlinkSync(join(process.cwd(), 'node_modules'), join(dir, 'node_modules'), 'junction') // 워크트리별 npm ci 회피
+    } catch (e) {
+      record(`· 병렬 폴백 — node_modules 연결 실패: ${e?.message ?? e}`); cleanup(); return null
+    }
+    for (const f of ['.env.local', '.env.production']) if (existsSync(resolve(f))) cpSync(resolve(f), join(dir, f)) // qa 스모크·배포 가드용(gitignore)
+  }
+  record(`· 병렬 실행 ${workers}폭 — dev 만 병렬, 커밋 가드는 엔진 그대로, landing·push 는 직렬`)
+
+  const engineArgsFor = (story) => {
+    const a = [ENGINE, '--stories', story, '--stages', 'dev',
+      '--stage-timeout-min', String(batch.stageTimeoutMin ?? defaults.stageTimeoutMin ?? 120),
+      '--wait-auth-min', String(waitAuthMin(autoPlan, batch.waitAuthMin, defaults.waitAuthMin))]
+    for (const [stage, model] of Object.entries(batch.models ?? {})) if (model) a.push(`--${stage}-model`, model)
+    if (batch.force) a.push('--force')
+    a.push('--commit') // 브랜치·푸시 없음 — detached HEAD 커밋(엔진 기존 지원 경로). landing 은 아래 직렬.
+    return a
+  }
+  const runOne = (wt) => new Promise((done) => {
+    const child = spawn(process.execPath, engineArgsFor(wt.story), { cwd: wt.dir, stdio: 'inherit' })
+    child.on('close', (c) => done({ story: wt.story, code: c ?? 1 }))
+    child.on('error', () => done({ story: wt.story, code: 1 }))
+  })
+  const queue = [...wts]
+  const outs = []
+  await Promise.all(Array.from({ length: Math.min(workers, wts.length) }, async () => {
+    while (queue.length > 0) outs.push(await runOne(queue.shift()))
+  }))
+
+  // landing — 원래 배치 순서 그대로 직렬(같은 브랜치 커밋 경합 방지). 실패 스토리는 건너뛰되
+  // 나머지는 마저 반영한다(성공분을 버리지 않는다), 끝에 배치 STOP 으로 보고.
+  let worst = 0
+  for (const wt of wts) {
+    const r = outs.find((o) => o.story === wt.story)
+    if (!r || r.code !== 0) { record(`- **중단(exit ${r?.code ?? '?'}): ${wt.story} (병렬 dev)** — 성공분 landing 후 배치 STOP`); worst ||= r?.code ?? 1; continue }
+    const head = spawnSync('git', ['-C', wt.dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim()
+    if (head === wt.base) { record(`- 완주(커밋 없음): ${wt.story}`); continue }
+    const pick = spawnSync('git', ['cherry-pick', head], { encoding: 'utf8' })
+    if (pick.status !== 0) {
+      spawnSync('git', ['cherry-pick', '--abort'])
+      spawnSync('git', ['tag', `archive/parallel-${wt.story}-${Date.now()}`, head]) // 산출물 보존 — 유실 금지
+      record(`- **landing 실패(공유 장부 충돌): ${wt.story}** — 산출물은 archive/parallel-* 태그 보존 · 다음 순차 라운드가 회수`)
+      worst ||= 1
+      continue
+    }
+    record(`- 완주: ${wt.story} (병렬 dev → landing)`)
+  }
+  if (defaults.push && !dryRun) {
+    const p = spawnSync('git', ['push', '-u', 'origin', BRANCH], { encoding: 'utf8' })
+    if (p.status !== 0) record(`⚠ push 실패(계속): ${(p.stderr ?? '').trim().split('\n').slice(-1)[0]} — 아침에 사람 재시도`)
+  }
+  cleanup()
+  return { code: worst }
+}
+
 // ⑤ 큐 1개 실행 = 1라운드 — 엔진 배치를 순차로 돌리고 요약을 남긴다.
-function runQueue(queuePath, autoQueueMeta, round) {
+async function runQueue(queuePath, autoQueueMeta, round) {
   let queue
   try {
     queue = JSON.parse(readFileSync(queuePath, 'utf8'))
@@ -265,6 +380,29 @@ function runQueue(queuePath, autoQueueMeta, round) {
       continue
     }
     for (const k of batch.stories) ranStories.add(k)
+
+    // 병렬 경로 — 큐가 parallel 을 켠 dev 전용 다스토리 배치만. 조건 미달·리허설은 순차 그대로.
+    const par = parallelPlan({
+      storyCount: (batch.stories ?? []).length,
+      stages: batch.stages ?? ['create', 'dev', 'review'],
+      parallel: batch.parallel ?? defaults.parallel,
+    })
+    if (par > 1 && !dryRun) {
+      console.log(`\n==== ${label} (병렬 ${par}폭 시도) ====`)
+      const started = new Date().toISOString()
+      const pr = await runBatchParallel({ batch, defaults, workers: par, record })
+      if (pr !== null) {
+        results.push({ label, code: pr.code, started })
+        record(`- ${pr.code === 0 ? '완주' : `**중단(exit ${pr.code})**`}: ${label} (병렬)`)
+        if (pr.code !== 0) {
+          record(`- 남은 배치는 실행하지 않았다 — \`auto-pipeline-logs/run-summary.log\` 확인`)
+          break
+        }
+        continue
+      }
+      // null = 조건 미충족 — 아래 순차 경로로 그대로 진행(폴백 사유는 record 됨)
+    }
+
     const args = [
       ENGINE,
       '--stories',
@@ -333,8 +471,8 @@ function runQueue(queuePath, autoQueueMeta, round) {
 
   // 차단기 갱신 + 슬롯 요약 푸시 — 리허설(dry-run)은 무음·무기록
   if (autoPlan && !dryRun) {
-    const { day, save } = loadState()
-    day.stops = nextStops(day.stops, worst ? worst.code : null) // exit 5(한도)는 고장이 아니라 날씨
+    const { win, save } = loadState()
+    win.stops = nextStops(win.stops, worst ? worst.code : null) // exit 5(한도)는 고장이 아니라 날씨 · 창 단위
     save()
     const blocked = (autoQueueMeta?.excluded ?? []).filter((e) => e.why.includes('결정 대기')).length
     notify(worst ? `슬롯 STOP(exit ${worst.code}) · 라운드 ${round}` : `슬롯 완주 ${done}배치 · 라운드 ${round}`,
@@ -346,7 +484,7 @@ function runQueue(queuePath, autoQueueMeta, round) {
 
 // ⑥ 실행 — 수동은 단일 실행, 슬롯 모드는 큐가 마를 때까지 연속.
 if (!autoPlan) {
-  const r = runQueue(manualQueuePath, null, 1)
+  const r = await runQueue(manualQueuePath, null, 1)
   console.log(`\n==== 야간 배치 종료 — ${SUMMARY} ====`)
   process.exit(r.worstCode ?? 0)
 }
@@ -355,7 +493,7 @@ let lastWorst = null
 for (let round = 1; ; round++) {
   const sel = selectQueue()
   if (!sel) break // 오늘 몫 소진(편성 0) — 다음 정시 슬롯이 새로 판단한다
-  const r = runQueue(sel.path, sel.meta, round)
+  const r = await runQueue(sel.path, sel.meta, round)
   lastWorst = r.worstCode
   const cont = shouldContinueLoop({
     autoPlan, dryRun, worstCode: r.worstCode, ranCount: r.ranCount,

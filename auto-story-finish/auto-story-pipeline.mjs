@@ -414,6 +414,12 @@ function runClaude(stage, story) {
   } else {
     note(`✖ STOP — [${story}] ${stage} 실패(exit=${code}). 배치 중단. log=${logFile}`);
   }
+  // 진단 보강(실사고: 무인 dev 세션이 stdout 으로 「완료」를 보고했으나 스토리 산출물은
+  // 갱신되지 않았다 — 거짓 완료 보고). 아침 분석이 로그 대조 없이 원인을 즉시 알 수 있게
+  // STOP 사유에 불일치를 명시한다. 판정 자체는 종전(산출물 실측 우선).
+  if (/완료|완주/.test((res.stdout || "").slice(-3000))) {
+    note(`   ⚠ 보고·실물 불일치 — 세션 stdout 은 완료를 보고하나 스토리 산출물(md) mtime 미전진. 세션 보고를 신뢰하지 말고 파일 실물로 판단할 것.`);
+  }
   push("BATCH STOP", `[${story}] ${stage} ${timedOut ? "타임아웃" : `실패(exit=${code})`} — 로그 확인 필요.`);
   process.exit(1);
 }
