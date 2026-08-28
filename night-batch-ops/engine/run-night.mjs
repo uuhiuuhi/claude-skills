@@ -23,7 +23,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, 
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { loadConfig } from './plan-queue.mjs'
-import { fileListConflicts, nextStops, notifyChannel, parallelPlan, parseFileList, refundUnrun, shouldContinueLoop, stopWindowId, waitAuthMin } from './runner-rules.mjs'
+import { fileListConflicts, landingResolution, nextStops, notifyChannel, parallelPlan, parseFileList, refundUnrun, shouldContinueLoop, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = join(homedir(), '.claude', 'skills', 'auto-story-finish', 'auto-story-pipeline.mjs')
 const ART = resolve('_bmad-output/implementation-artifacts')
@@ -304,10 +304,34 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
     if (head === wt.base) { record(`- 완주(커밋 없음): ${wt.story}`); continue }
     const pick = spawnSync('git', ['cherry-pick', head], { encoding: 'utf8' })
     if (pick.status !== 0) {
-      spawnSync('git', ['cherry-pick', '--abort'])
-      spawnSync('git', ['tag', `archive/parallel-${wt.story}-${Date.now()}`, head]) // 산출물 보존 — 유실 금지
-      record(`- **landing 실패(공유 장부 충돌): ${wt.story}** — 산출물은 archive/parallel-* 태그 보존 · 다음 순차 라운드가 회수`)
-      worst ||= 1
+      // 자동 해소 가능한 충돌 클래스(엔진 자기 로그 append·state.json·공유 장부 append)만 풀어 landing 을
+      // 살린다 — 그 외 파일이 섞이면 손대지 않고 종전 보존 폴백(archive 태그).
+      const conflicted = (spawnSync('git', ['diff', '--name-only', '--diff-filter=U'], { encoding: 'utf8' }).stdout ?? '')
+        .split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+      const plan = landingResolution(conflicted)
+      let landed = plan != null
+      if (landed) {
+        for (const [file, how] of Object.entries(plan)) {
+          if (how === 'ours') {
+            if (spawnSync('git', ['checkout', '--ours', '--', file]).status !== 0) { landed = false; break }
+          } else {
+            let merged
+            try { merged = stripConflictMarkers(readFileSync(file, 'utf8')) } catch { merged = null }
+            if (merged == null) { landed = false; break }
+            writeFileSync(file, merged)
+          }
+          if (spawnSync('git', ['add', '--', file]).status !== 0) { landed = false; break }
+        }
+        if (landed) landed = spawnSync('git', ['-c', 'core.editor=true', 'cherry-pick', '--continue'], { encoding: 'utf8' }).status === 0
+      }
+      if (!landed) {
+        spawnSync('git', ['cherry-pick', '--abort'])
+        spawnSync('git', ['tag', `archive/parallel-${wt.story}-${Date.now()}`, head]) // 산출물 보존 — 유실 금지
+        record(`- **landing 실패(자동 해소 불가 충돌): ${wt.story}** — 산출물은 archive/parallel-* 태그 보존 · 다음 순차 라운드가 회수`)
+        worst ||= 1
+        continue
+      }
+      record(`- 완주: ${wt.story} (병렬 dev → landing · 충돌 자동 해소 ${Object.keys(plan).length}파일)`)
       continue
     }
     record(`- 완주: ${wt.story} (병렬 dev → landing)`)

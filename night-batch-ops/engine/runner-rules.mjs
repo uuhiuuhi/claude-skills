@@ -106,6 +106,47 @@ export function parseFileList(md) {
   return files
 }
 
+/** 병렬 landing 충돌 자동 해소 판정 — 실사고: 병렬 첫 신규 짝의 landing 전건 실패 원인이 File List 코드가 아니라 **엔진이 스토리 커밋에 싣는 자기 로그**(run-summary.log append ·
+ *  state.json)와 공유 장부 append 행(DECISIONS-INBOX)이었다. 그 클래스만 자동 해소를 허용한다 —
+ *  로그·장부 = union(양쪽 순서대로 보존 · append 전용이라 안전) · 엔진 state.json = ours(런타임 부기 ·
+ *  완료 스토리는 커밋으로 남아 유실 0). 목록에 그 외 파일이 하나라도 있으면 null(= 종전 보존 폴백 —
+ *  코드 충돌을 자동으로 뭉개지 않는다). */
+export function landingResolution(files) {
+  const out = {}
+  for (const f of files ?? []) {
+    const p = String(f).trim().replace(/\\/g, '/')
+    if (!p) continue
+    if (p.startsWith('_bmad-output/implementation-artifacts/auto-pipeline-logs/')) {
+      out[p] = p.endsWith('.json') ? 'ours' : 'union'
+    } else if (SHARED_BOOKKEEPING.includes(p)) {
+      out[p] = 'union'
+    } else {
+      return null
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
+
+/** 충돌 마커를 벗겨 양쪽을 순서대로 모두 보존(union). diff3 스타일의 base 구간(||||||| ~ =======)은
+ *  버린다. 처리 후에도 마커가 남으면(중첩 등 비정형) null — 호출부는 보존 폴백으로 간다. */
+export function stripConflictMarkers(text) {
+  const lines = String(text ?? '').split('\n')
+  const out = []
+  let inBase = false
+  for (const line of lines) {
+    const bare = line.replace(/\r$/, '')
+    if (/^<{7}(\s|$)/.test(bare)) continue
+    if (/^\|{7}(\s|$)/.test(bare)) { inBase = true; continue }
+    if (/^={7}$/.test(bare)) { inBase = false; continue }
+    if (/^>{7}(\s|$)/.test(bare)) continue
+    if (inBase) continue
+    out.push(line)
+  }
+  const s = out.join('\n')
+  // 잔존 검사 — <·>·| 마커는 뒤에 라벨이 붙고, = 마커는 단독 줄만 마커다(스트리퍼와 같은 정의).
+  return /^(?:<{7}(\s|$)|>{7}(\s|$)|\|{7}(\s|$)|={7}\r?$)/m.test(s) ? null : s
+}
+
 /** File List 겹침 — 공유 장부 제외 후 서로 다른 스토리가 같은 파일을 만지면 true(병렬 불가). */
 export function fileListConflicts(lists) {
   const owner = new Map()
