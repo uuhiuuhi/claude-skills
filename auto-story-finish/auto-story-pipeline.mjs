@@ -364,7 +364,7 @@ function commitStory(story, stagesDone) {
 // ---- 단계별 프롬프트 (비대화형 + 가드레일 명시) ----
 // GUARD는 프로젝트 중립 — 프로젝트 특화 제약(법정 보수성·보호 파일 등)은 실행 cwd의
 // 프로젝트 CLAUDE.md가 nested 인스턴스에 자동 로드되어 주입된다(계층화 원칙, 2026-08-08).
-const GUARD = "[비대화형] 승인/질문 없이 합리적 기본값으로 끝까지 진행하라. ⚠️ git commit·push 절대 금지. 프로젝트 CLAUDE.md에 명시된 절대 제약(보호 파일·보수성 규칙)을 최우선 준수하라.";
+const GUARD = "[비대화형] 승인/질문 없이 합리적 기본값으로 끝까지 진행하라. ⚠️ git commit·push 절대 금지. 프로젝트 CLAUDE.md에 명시된 절대 제약(보호 파일·보수성 규칙)을 최우선 준수하라. 임시 파일(diff 덤프·qa 로그 등)은 저장소 루트가 아니라 _bmad-output/implementation-artifacts/auto-pipeline-logs/ 아래에만 써라 — 루트 스크래치는 다음 배치를 dirty STOP 시킨다(실사고 반복).";
 const prompts = {
   create: (s) => `/bmad-create-story ${s}\n\n${GUARD} 스토리 스펙(AC·파일 그라운딩)을 작성·저장하고 종료.`,
   dev: (s) => `/bmad-dev-story ${s}\n\n${GUARD} 구현 후 검증까지 자동 실행.`,
