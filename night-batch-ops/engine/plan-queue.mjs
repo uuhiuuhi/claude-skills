@@ -156,9 +156,19 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     for (const epic of EPIC_ORDER.slice(EPIC_ORDER.indexOf(currentEpic) + 1)) {
       for (const r of rows.filter((x) => x.epic === epic)) {
         const shortKey = r.key.split('-').slice(0, 2).join('-')
-        if (PARALLEL_ALLOW[shortKey] !== currentEpic) { exclude(r.key, '에픽 순서 대기 — Epic ' + currentEpic + ' 후보 잔존(규칙 1)'); continue }
+        if (PARALLEL_ALLOW[shortKey] === currentEpic) {
+          const got = judge(r)
+          if (got) candidates.push(got) // 명시 병행 허용분은 뒤 에픽이어도 후보(규칙 1 단서)
+          continue
+        }
+        // 규칙 1 개정: 에픽 순서는 **우선순위이지 댐이 아니다** — 뒤 에픽의 회수·마감 재검수(이미
+        // 시작된 스토리의 마무리)는 앞 에픽에 후보가 남아 있어도 통과한다(실교착: 앞 에픽의 사람-대기
+        // 잔존이 뒤 에픽 회수까지 막았다). **신규 착수만** 에픽 도달을 기다린다(선행 스키마 스토리보다
+        // 후속 스토리가 먼저 도는 순서 사고 방지). 후보가 에픽 순서로 쌓이므로 상한은 뒤 에픽부터 잘린다.
         const got = judge(r)
-        if (got) candidates.push(got)
+        if (!got) continue // 제외 사유는 judge 가 이미 남겼다
+        if (got.kind === 'new') { exclude(r.key, '에픽 순서 대기 — 신규 착수는 에픽 도달 후(규칙 1 개정 · 회수·마감 재검수는 통과)'); continue }
+        candidates.push(got)
       }
     }
   }

@@ -86,7 +86,9 @@ BMad 프로젝트에 **야간·낮 무인 배치 체계**를 설치·운영한�
   `schtasks /Create /F /IT /TN "<프로젝트>-telegram-commands" /SC MINUTE /MO 10 /TR "cmd /c cd /d <클론> && node tools\auto\telegram-commands.mjs --once >> <상태폴더>\telegram-poll.log 2>&1"`
 - **설정 JSON 은 BOM 금지** — PowerShell 로 저장하면 UTF-8 BOM 이 붙는다. 코드가 내성을
   갖지만(chat.json 등), 새 파일은 BOM 없는 UTF-8 로 저장한다(실사고: 알림이 무음 증발).
-- **편성 규칙 10종**: ① epicOrder 순서(첫 후보 보유 에픽까지) ② 열린 Decision = 제외(인박스
+- **편성 규칙 10종**: ① epicOrder 는 **우선순위이지 댐이 아니다** — 뒤 에픽의 회수·마감 재검수는 앞
+  에픽에 후보가 남아도 통과하고, **신규 착수만** 에픽 도달을 기다린다(상한은 에픽 순서대로 뒤부터 절단)
+  ② 열린 Decision = 제외(인박스
   미등재 의심 경고) ③ 재투입 금지 지시 ④ Patch 만 있고 Task 0 = 사람이 라운드를 열어야 함
   ⑤ File List 서로소 **같은 종류·같은 에픽** 2건 묶음(회수끼리·신규끼리 — 공유 장부 파일은
   겹침 판정 제외) ⑥ 새 화면 목업 게이트 ⑦ 하루 상한 ⑧ 회수분 0 제외 ⑨ **무인 편성 2회 소진 =
