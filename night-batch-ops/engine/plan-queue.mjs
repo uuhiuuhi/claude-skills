@@ -126,8 +126,8 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     const recovery = r.status === 'review' || r.status === 'in-progress'
     // 규칙 9: 무인 회수는 2라운드까지 — dev↔리뷰가 서로 뒤집기를 반복해도 편성기는 모른다.
     // 상한 소진 스토리는 사람 판단으로 넘긴다(무인 리뷰 비수렴 상한).
-    if (recovery && timesPlanned(r.key) >= 2) {
-      return exclude(r.key, '무인 편성 2회 소진 — 리뷰 반복은 사람 판단(규칙 9 · 비수렴 상한)'), null
+    if (timesPlanned(r.key) >= 2) { // 종류 불문(신규 포함) — 사람 게이트에 막힌 신규가 매 라운드 재편성 + 전 단계 skip 커밋으로 무한 루프한 실사고 봉합
+      return exclude(r.key, '무인 편성 2회 소진 — 반복 편성은 사람 판단(규칙 9 · 비수렴 상한 · 신규 포함)'), null
     }
     if (recovery && s.unfinishedTasks === 0 && s.openPatches === 0) {
       // 규칙 10: review 상태 + 고칠 것 0 = **마감 재검수 후보** — 재검수 1회가 통과하면 done,

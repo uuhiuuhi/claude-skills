@@ -312,6 +312,9 @@ function ensureBranch() {
   const cur = git(["rev-parse", "--abbrev-ref", "HEAD"]).out.trim();
   if (!branchName) { note(`ℹ --commit: 현재 브랜치(${cur})에 스토리 단위 커밋(푸시 없음).`); return; }
   if (cur === branchName) { note(`ℹ 브랜치 ${branchName} (현재)`); return; }
+  // 엔진 자기 로그(auto-pipeline-logs/) 의 미커밋 churn 이 브랜치 이동(switch/-C)을 통째로 막는다 —
+  // 실사고: 이 실패로 워크트리가 낡은 커밋에 갇혀 옛 코드로 편성이 돌았다. 로그는 버려도 되는 churn.
+  git(["checkout", "--", "_bmad-output/implementation-artifacts/auto-pipeline-logs"]);
   const exists = git(["rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`]).code === 0;
   // 기존 브랜치 팁이 이미 HEAD 의 조상(=전부 머지됨)이면 낡은 팁을 버리고 HEAD 에서 다시 딴다 —
   // 실사고: 저녁에 main 으로 머지된 auto/<날짜> 의 낡은 로컬 팁을 그대로 switch 해, 밤 배치가
