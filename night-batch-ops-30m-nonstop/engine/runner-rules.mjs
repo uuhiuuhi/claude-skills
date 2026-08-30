@@ -1,0 +1,314 @@
+// 러너 순수 규칙 — 판정부만 분리(테스트 가능). 원 출처: 2026-08 야간 운영 실사고·개선 원탁 실측.
+//
+// 왜 별도 파일인가: run-night.mjs 는 import 하는 순간 본문이 실행되는 스크립트라 테스트가
+// 물 수 없다. 판정 규칙만 여기로 빼서 vitest 가 실물을 검증한다.
+
+/** 슬롯 모드 한도 대기(분) — lock 을 쥔 장시간 대기가 밤 전체를 인질로 잡는다.
+ *  슬롯은 짧게 기다렸다 exit 5 로 빠지고, 이어하기(state.json)는 다음 슬롯/라운드 몫이다. */
+export const SLOT_WAIT_AUTH_MIN = 30
+
+export function waitAuthMin(autoPlan, batchVal, defaultVal) {
+  if (autoPlan) return SLOT_WAIT_AUTH_MIN
+  return batchVal ?? defaultVal ?? 480
+}
+
+/** 연속 중단 차단기 갱신 — 한도(exit 5)는 고장이 아니라 날씨다.
+ *  5 를 stops 에 세면 한도 두 번에 밤 전체가 「고장」으로 분류된다. */
+export function nextStops(prevStops, worstCode) {
+  if (worstCode == null) return 0
+  if (worstCode === 5) return prevStops
+  return prevStops + 1
+}
+
+/** 실작업 판정 — 라운드가 만든 새 커밋들의 변경 파일 목록(커밋당 배열)을 받아, 로그 폴더
+ *  **밖** 파일이 하나라도 있으면 true. 새 커밋 0건이거나 전부 자기 로그면 false.
+ *  (경계 상수 LOG_PREFIX 는 이 파일 아래쪽에서 선언한다 — 호출 시점엔 이미 초기화돼 있다.)
+ *
+ *  왜(실사고): 사람 게이트에 막혀 상태가 안 바뀌는 스토리를 연속 루프가 밤새 십수 회 재편성했다 —
+ *  엔진은 전 단계를 state.json skip 으로 건너뛰고 **자기 로그 2파일만 커밋**한 뒤 exit 0 을 냈고,
+ *  러너는 그걸 「완주」로 세어 다음 라운드를 열었다. 커밋 오염 + 알림 폭주가 반복된다.
+ *  편성기의 비수렴 상한이 1차 방어선이고, 이건 러너 쪽 심층 방어다. */
+export function roundDidRealWork(commitFileLists) {
+  for (const files of commitFileLists ?? []) {
+    for (const f of files ?? []) {
+      const p = String(f).trim().replace(/\\/g, '/')
+      if (!p) continue
+      if (!p.startsWith(LOG_PREFIX)) return true
+    }
+  }
+  return false
+}
+
+/** 연속 실행 루프 계속 판정 — 루프는 슬롯의 연장이지 새 스케줄러가 아니다.
+ *  날짜가 바뀌면(자정) 루프를 끝내고 다음 슬롯의 새 프로세스에 넘긴다 — 자정 롤오버
+ *  중복 실행 사고(2026-08-27 실사례)의 재발 방지 로직을 재사용하기 위해서다.
+ *
+ *  공회전 가드: `roundDidRealWork` 가 true 가 **아니면**(false·미전달 포함) 종료한다. 모르는 채로
+ *  계속 도는 쪽이 손해가 크다 — 헛돌면 커밋 오염·알림 폭주가 밤새 쌓이지만, 잘못 멈춰도
+ *  다음 정시 슬롯이 새 프로세스로 이어받는다. */
+export function shouldContinueLoop({ autoPlan, dryRun, worstCode, ranCount, startDate, nowDate, roundDidRealWork: didRealWork }) {
+  if (!autoPlan || dryRun) return false
+  if (worstCode != null) return false // STOP 은 원인 확인이 먼저 — 헛도는 재시도 금지
+  if (ranCount === 0) return false // 편성 0 = 오늘 몫 소진
+  if (didRealWork !== true) return false // 공회전 = 종결
+  return startDate === nowDate
+}
+
+/** 알림 채널 선택 — 텔레그램(비공개)이 구성돼 있으면 정본, 없으면 공개 ntfy 폴백,
+ *  둘 다 없으면 무음. 공개 ntfy 주제는 주제 이름만 알면 누구나 읽는다. */
+export function notifyChannel({ telegramReady, ntfyReady }) {
+  if (telegramReady) return 'telegram'
+  if (ntfyReady) return 'ntfy'
+  return 'silent'
+}
+
+/** 가드 정지 시 하루 상한 원장 환불 — 실사고(2026-08-27): 편성기가 picked 전체를 원장에
+ *  선기록한 뒤 라운드가 STOP 으로 조기 종료되면, 미실행분이 기록만 남아 같은 날 이후
+ *  슬롯의 remaining 이 0 이 된다(밤 전체 공전). 환불 대상은 **실행을 시작도 못 한 배치의
+ *  스토리만** — 멈춘 배치는 일부 실행됐으므로 비수렴 상한(규칙 9) 집계에 남긴다.
+ *  키당 1회만 제거(앞 라운드의 정당한 기록 보존). 원본 배열 불변. */
+export function refundUnrun(planned, refundKeys) {
+  const next = [...planned]
+  for (const key of refundKeys) {
+    const i = next.indexOf(key)
+    if (i >= 0) next.splice(i, 1)
+  }
+  return next
+}
+
+/** 차단기 창(window) 식별 — 낮 사고가 밤 편성을 죽이지 않게 stops 를 달력 날짜가 아니라
+ *  「낮 창 / 밤 창」 단위로 센다(실사고: 낮 가드 정지 1회 + 밤 실패 1회가 달력일 합산 2회로
+ *  읽혀 밤 전체가 중단됐다). 낮 창 = 06:00~17:59(`<날짜>-day`), 밤 창 = 18:00~다음날
+ *  05:59(시작 날짜 앵커 `<날짜>-night`). 상한 2회는 창 안에서 유지된다. */
+export function stopWindowId(d) {
+  const p = (n) => String(n).padStart(2, '0')
+  const ymd = (x) => `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}`
+  const h = d.getHours()
+  if (h >= 6 && h < 18) return `${ymd(d)}-day`
+  const anchor = h >= 18 ? d : new Date(d.getTime() - 24 * 60 * 60 * 1000)
+  return `${ymd(anchor)}-night`
+}
+
+/** 병렬 실행 판정 — dev 단계 전용 · 스토리 2개+ · 큐가 parallel 을 켠 배치만.
+ *  상한 3 하드캡(동시 세션은 사용량 한도를 배로 태운다 — 기본 권장 2).
+ *  그 외 전부 1(= 현행 순차 경로 그대로). */
+export const PARALLEL_MAX = 3
+export function parallelPlan({ storyCount, stages, parallel }) {
+  if (!Number.isInteger(parallel) || parallel < 2) return 1
+  // dev 전용뿐 아니라 dev+review(신규 스토리) 배치도 병렬 대상 — 각 워크트리 안에서
+  // dev→qa→review 까지 돌고 커밋 1개로 landing 한다. create 는 스토리 파일 실재 시 skip 되고
+  // File List 실측 대조(호출부)가 그 실재를 전제한다. dev 없는 배치(재검수 등)는 순차.
+  if (!Array.isArray(stages) || !stages.includes('dev')) return 1
+  if (stages.some((s) => !['create', 'dev', 'review'].includes(s))) return 1
+  if (!Number.isInteger(storyCount) || storyCount < 2) return 1
+  return Math.min(parallel, PARALLEL_MAX, storyCount)
+}
+
+/** 엔진·러너가 자기 부기를 남기는 폴더 — 여기 안의 변경만으로는 「일했다」고 하지 않는다.
+ *  (실작업 판정·진전 판정·landing 자동 해소가 모두 이 경계 하나를 공유한다.) */
+export const LOG_PREFIX = '_bmad-output/implementation-artifacts/auto-pipeline-logs/'
+
+/** 공유 장부 파일 — 거의 모든 dev 가 함께 고치는 문서. File List 겹침 판정에서 제외한다
+ *  (landing 의 cherry-pick 3-way 가 줄 단위로 합치고, 충돌 나면 그 스토리만 landing 실패 폴백). */
+export const SHARED_BOOKKEEPING = Object.freeze([
+  '_bmad-output/implementation-artifacts/sprint-status.yaml',
+  '_bmad-output/implementation-artifacts/deferred-work.md',
+  '_bmad-output/implementation-artifacts/DECISIONS-INBOX.md',
+])
+
+/** 스토리 md 의 File List 절 파싱 — `## File List`/`### File List` 아래 불릿의 경로(백틱 우선).
+ *  절이 없으면 null(호출부는 순차 폴백 — 모르는 채 병렬로 돌리지 않는다). */
+export function parseFileList(md) {
+  const text = String(md ?? '')
+  const at = text.search(/^#{2,3} File List\s*$/m)
+  if (at < 0) return null
+  const files = []
+  for (const line of text.slice(at).split('\n').slice(1)) {
+    if (/^#{1,6} /.test(line)) break
+    const b = /^\s*[-*]\s+(.+)$/.exec(line)
+    if (!b) continue
+    const code = /`([^`]+)`/.exec(b[1])
+    const raw = (code ? code[1] : b[1].split(/[\s(]/)[0]).trim().replace(/\\/g, '/')
+    if (raw) files.push(raw)
+  }
+  return files
+}
+
+/** 병렬 landing 충돌 자동 해소 판정 — 실사고: 병렬 첫 신규 짝의 landing 전건 실패 원인이 File List 코드가 아니라 **엔진이 스토리 커밋에 싣는 자기 로그**(run-summary.log append ·
+ *  state.json)와 공유 장부 append 행(DECISIONS-INBOX)이었다. 그 클래스만 자동 해소를 허용한다 —
+ *  로그·장부 = union(양쪽 순서대로 보존 · append 전용이라 안전) · 엔진 state.json = ours(런타임 부기 ·
+ *  완료 스토리는 커밋으로 남아 유실 0). 목록에 그 외 파일이 하나라도 있으면 null(= 종전 보존 폴백 —
+ *  코드 충돌을 자동으로 뭉개지 않는다). */
+export function landingResolution(files) {
+  const out = {}
+  for (const f of files ?? []) {
+    const p = String(f).trim().replace(/\\/g, '/')
+    if (!p) continue
+    if (p.startsWith(LOG_PREFIX)) {
+      out[p] = p.endsWith('.json') ? 'ours' : 'union'
+    } else if (SHARED_BOOKKEEPING.includes(p)) {
+      out[p] = 'union'
+    } else {
+      return null
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
+
+/** 충돌 마커를 벗겨 양쪽을 순서대로 모두 보존(union). diff3 스타일의 base 구간(||||||| ~ =======)은
+ *  버린다. 처리 후에도 마커가 남으면(중첩 등 비정형) null — 호출부는 보존 폴백으로 간다. */
+export function stripConflictMarkers(text) {
+  const lines = String(text ?? '').split('\n')
+  const out = []
+  let inBase = false
+  for (const line of lines) {
+    const bare = line.replace(/\r$/, '')
+    if (/^<{7}(\s|$)/.test(bare)) continue
+    if (/^\|{7}(\s|$)/.test(bare)) { inBase = true; continue }
+    if (/^={7}$/.test(bare)) { inBase = false; continue }
+    if (/^>{7}(\s|$)/.test(bare)) continue
+    if (inBase) continue
+    out.push(line)
+  }
+  const s = out.join('\n')
+  // 잔존 검사 — <·>·| 마커는 뒤에 라벨이 붙고, = 마커는 단독 줄만 마커다(스트리퍼와 같은 정의).
+  return /^(?:<{7}(\s|$)|>{7}(\s|$)|\|{7}(\s|$)|={7}\r?$)/m.test(s) ? null : s
+}
+
+/** File List 겹침 — 공유 장부 제외 후 서로 다른 스토리가 같은 파일을 만지면 true(병렬 불가). */
+export function fileListConflicts(lists) {
+  const owner = new Map()
+  for (let i = 0; i < (lists ?? []).length; i++) {
+    for (const f of lists[i] ?? []) {
+      if (SHARED_BOOKKEEPING.includes(f)) continue
+      if (owner.has(f) && owner.get(f) !== i) return true
+      owner.set(f, i)
+    }
+  }
+  return false
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 무정지 밤(Non-Stop Night) 판정부 — 적대 리뷰 확정본의 판정 규칙.
+// 목표: 「아침 브리핑 → 다음 아침까지 24h 무정지 · 완성도 무손실 · 정본 머지는 사람」.
+// 구판은 밤을 멈추는 장치가 여럿이었다(미머지 브랜치면 휴면 · 창 통짜 차단 · lock 오판).
+// 아래 함수들은 그 정지 조건을 **계속 도는 조건**으로 바꾸되, 자동으로 뭉개면 안 되는 것
+// (코드 충돌 · 검토 없는 신규 축조)은 그대로 세운다. 각 함수 주석에 「왜」를 남긴다.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** lock 심박 보조 판정 기한(ms) — pid 판정 **불능**(EPERM·JSON 손상)일 때만 쓴다.
+ *  6시간 = 최장 스토리 라운드(스테이지 타임아웃 × 단계 수 + qa)보다 길다 — 정상 라운드를
+ *  절대 stale 로 오판하지 않는다(짧은 기한 + OR 탈취 초안은 리뷰에서 폐기됐다). */
+export const LOCK_HB_STALE_MS = 6 * 60 * 60 * 1000
+
+/** lock 처분 판정 — pid 재사용·권한 오류(EPERM)로 인한 양방향 오판 봉합(이중 기동 실사고 실측).
+ *  입력: exists(파일 유무) · parseOk(JSON 읽힘) · pidAlive(true=생존 · false=ESRCH 사망 ·
+ *  'unknown'=EPERM 등 판정 불능) · hbAgeMs(심박 경과 — 없으면 Infinity).
+ *  반환: 'acquire'(빈 자리) · 'skip-alive'(정상 실행 중) · 'takeover'(죽은 lock 교체) ·
+ *        'skip-unknown'(판정 불능 + 심박 신선 — 보수적으로 물러나되 **알림은 창당 1회 의무**). */
+export function lockAction({ exists, parseOk, pidAlive, hbAgeMs }) {
+  if (!exists) return 'acquire'
+  if (!parseOk) return (hbAgeMs ?? Infinity) > LOCK_HB_STALE_MS ? 'takeover' : 'skip-unknown'
+  if (pidAlive === true) return 'skip-alive'
+  if (pidAlive === false) return 'takeover'
+  return (hbAgeMs ?? Infinity) > LOCK_HB_STALE_MS ? 'takeover' : 'skip-unknown'
+}
+
+/** STOP 차단기 v2 — 구판은 창(12시간) 단위 통짜 차단이라 초저녁 실패 2회가 밤 전체(최장 11시간)를
+ *  휴면시켰다. 차단 단위를 「원인 서명」(exit 코드 + 멈춘 배치 라벨)으로 좁힌다: 같은 서명 2회만
+ *  차단하고 다른 원인은 계속 돈다. 창 누적 4회는 폭주 백스톱으로 남긴다.
+ *  exit 5(한도)는 종전대로 세지 않는다(고장이 아니라 날씨).
+ *  성공 라운드는 서명 스트릭을 지운다(총 누적은 유지 — 백스톱 보존). 원본 불변. */
+export function stopRecord(win, worstCode, label) {
+  const w = { sigs: { ...(win?.sigs ?? {}) }, total: win?.total ?? 0, stops: win?.stops ?? 0 }
+  if (worstCode == null) return { ...w, sigs: {}, stops: 0 } // 성공 — 스트릭 소거
+  if (worstCode === 5) return w // 한도는 날씨
+  const sig = `${worstCode}|${label ?? ''}`
+  w.sigs[sig] = (w.sigs[sig] ?? 0) + 1
+  w.total += 1
+  w.stops = Math.max(...Object.values(w.sigs), 0) // 원격 명령 폴러(/status·/resume) 호환(stops = 최대 스트릭)
+  return w
+}
+export function stopBlocked(win) {
+  if (!win) return false
+  if ((win.total ?? 0) >= 4) return true // 창 백스톱
+  return Object.values(win.sigs ?? {}).some((n) => n >= 2)
+}
+
+/** 하향 동기 충돌 처분 — 정본(main)→작업 브랜치 merge 의 충돌 파일 목록을 받아:
+ *  'resolve' = 전부 로그·공유 장부 클래스 → landingResolution 계획으로 자동 해소(검증된 부품 재사용)
+ *  'defer'   = 잔여 충돌이 전부 산출물 문서(`_bmad-output/**.md`) → merge 중단, **동기 없이 라운드
+ *              계속**(pre-merge 베이스 — 사람이 하는 정식 3-way 머지가 아침에 합친다 · 밤을 막지 않는다)
+ *  'halt'    = 코드 파일 충돌 → merge 중단 + 이 라운드 휴면(자동으로 뭉개지 않는다). */
+export function downSyncDecision(files) {
+  const list = (files ?? []).map((f) => String(f).trim().replace(/\\/g, '/')).filter(Boolean)
+  if (list.length === 0) return { mode: 'resolve', plan: {} }
+  const plan = landingResolution(list)
+  if (plan) return { mode: 'resolve', plan }
+  const docOnly = list.every((p) => p.startsWith('_bmad-output/') && p.endsWith('.md'))
+  return docOnly ? { mode: 'defer' } : { mode: 'halt' }
+}
+
+/** 충돌 지문 — 같은 충돌을 라운드마다 재생산하는 것을 막는 반복 백스톱의 재료(순서 무관 동일). */
+export function conflictFingerprint(files) {
+  return (files ?? []).map((f) => String(f).trim().replace(/\\/g, '/')).filter(Boolean).sort().join('|')
+}
+
+/** 선형 승계 — 미머지 `auto/<날짜>` 목록에서 승계 기준을 고른다. 구판은 미머지 브랜치가 남아 있으면
+ *  슬롯을 통째로 휴면시켰다(사람이 머지할 때까지 밤이 죽는다). 대신 최신 날짜 브랜치를 베이스로
+ *  이어받아 한 줄로 쌓는다 — 같은 날짜면 원격(origin/) 이름 우선(push 된 것이 공유 사실이다).
+ *  체인 나이 = 가장 오래된 미머지 날짜 → 오늘. 반환 { ref, chainAgeDays, branches } · 목록 비면 null. */
+export function inheritPlan(unmergedNames, todayYmd) {
+  const uniq = [...new Set((unmergedNames ?? []).map((n) => String(n).trim()).filter(Boolean))]
+  const dated = uniq
+    .map((n) => ({ n, m: /auto\/(\d{4}-\d{2}-\d{2})/.exec(n) }))
+    .filter((x) => x.m).map((x) => ({ name: x.n, date: x.m[1] }))
+  if (dated.length === 0) return null
+  const newest = dated.reduce((a, b) => (b.date > a.date ? b : a))
+  const oldest = dated.reduce((a, b) => (b.date < a.date ? b : a))
+  // 같은 날짜면 원격(origin/) 이름 우선 — 로컬 미푸시보다 공유 사실이 안전 기준이다
+  const sameDay = dated.filter((d) => d.date === newest.date)
+  const pick = sameDay.find((d) => d.name.startsWith('origin/')) ?? sameDay[0]
+  const days = (ymd) => Math.floor(Date.parse(ymd + 'T00:00:00') / 86400000)
+  return {
+    ref: pick.name,
+    chainAgeDays: Math.max(0, days(todayYmd) - days(oldest.date)),
+    branches: dated.map((d) => d.name),
+  }
+}
+
+/** 체인 게이트 — 사람 검토 없는 축조의 총량 상한. 미머지 체인이 이 나이(일) 이상이면
+ *  **신규(kind=new) 착수만** 중단한다(회수·마감 재검수는 계속 — 시작된 일의 마무리는 검토를
+ *  더 쌓는 게 아니라 검토를 준비하는 일이다). 판정 자체는 plan-queue 가 chain-info 파일로 읽는다. */
+export const CHAIN_MAX_AGE_DAYS = 2
+export function allowNewUnderChain(chainAgeDays) {
+  return (chainAgeDays ?? 0) < CHAIN_MAX_AGE_DAYS
+}
+
+/** exit 5 환불 판정 — 한도(exit 5)가 하루 상한 원장과 비수렴 상한을 공짜로 소모하는 것을 막는다.
+ *  멈춘 배치의 스토리 중 **라운드 커밋이 그 스토리 md 를 한 번도 만지지 않은 키**를 돌려준다
+ *  (= 실작업 0 · 환불 대상). 한 줄이라도 만졌으면 그 스토리는 실제로 진행됐으므로 환불하지 않는다. */
+export function limitRefundKeys(batchStories, commitFileLists) {
+  const touched = new Set()
+  for (const files of commitFileLists ?? []) for (const f of files ?? []) {
+    const p = String(f).trim().replace(/\\/g, '/')
+    const m = /implementation-artifacts\/(\d+-\d+[^/]*)\.md$/.exec(p)
+    if (m) touched.add(m[1])
+  }
+  return (batchStories ?? []).filter((k) => !touched.has(k))
+}
+
+/** 라운드 진전 스토리 추출 — 비수렴 상한(규칙 9)을 「편성 횟수」가 아니라 「무진전 편성의 연속
+ *  횟수」로 재정의하기 위한 재료. 라운드 커밋들이 만진 스토리 md 의 키 목록을 돌려준다.
+ *  로그 폴더 안 경로는 명시적으로 제외한다 — 엔진이 자기 로그만 커밋하고 exit 0 을 내는
+ *  공회전을 「진전」으로 세면, 사람 게이트에 막힌 스토리가 밤새 재편성된다(실사고 실측). */
+export function progressedStoryKeys(commitFileLists) {
+  const keys = new Set()
+  for (const files of commitFileLists ?? []) for (const f of files ?? []) {
+    const p = String(f).trim().replace(/\\/g, '/')
+    if (p.startsWith(LOG_PREFIX)) continue
+    const m = /implementation-artifacts\/(\d+-\d+[^/]*)\.md$/.exec(p)
+    if (m) keys.add(m[1])
+  }
+  return [...keys]
+}
