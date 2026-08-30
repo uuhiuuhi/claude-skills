@@ -190,6 +190,30 @@ function findStoryFile(story) {
     return null;
   }
 }
+// ---- (U1-b) 허수 완주 방지 — 기록이 「완료」인데 산출물이 없으면 기록을 믿지 않는다 ----
+// 2026-08-30 실사고(👤 승인 (a)): 11-3·4-1 이 08-28 저녁 **5분 만에** create·dev·qa·review 를
+//   전부 「완료」로 기록했는데 스토리에는 완료 Task 0 · 미완 7/33 이었다(개발 0줄). 그 뒤 모든
+//   라운드가 3단계를 전부 skip 하고 로그 1개만 커밋한 뒤 **「완주」로 보고**했다 — 하루 상한 한
+//   칸을 먹고, 스토리 md 를 안 만져 진전 기록이 없어 규칙 9 스트릭까지 쌓았다. 두 스토리가
+//   며칠간 무진전이던 실제 원인이 에픽 순서 규칙이 아니라 이 거짓 기록이었다.
+// 판정: 완료 체크박스 0 **이면서** 미완 1+ 면 「개발이 하나도 안 됐다」로 본다.
+//   · 둘 다 0(체크박스를 안 쓰는 스토리)은 대상이 아니다 — 오탐을 만들지 않는다
+//   · 미완 0(전부 완료)도 대상이 아니다
+//   · dev 에만 적용한다 — dev 가 실제로 돌면 invalidate 가 qa·review 기록을 함께 지운다
+function hasNoCompletedWork(story) {
+  const file = findStoryFile(story);
+  if (!file) return false; // 파일이 없으면 이 판정의 대상이 아니다(create 가 먼저다)
+  let text;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return false; // 못 읽으면 판정하지 않는다 — 의심만으로 재실행하지 않는다
+  }
+  const doneN = (text.match(/^[ \t]*- \[x\] /gm) || []).length;
+  const openN = (text.match(/^[ \t]*- \[ \] /gm) || []).length;
+  return doneN === 0 && openN > 0;
+}
+
 // dev/review 는 스토리 파일 또는 부속 산출물({story}*-findings.md 등) 갱신을 인정.
 // ⚠️ 시각 비교("단계 시작 이후")가 아닌 단계 전/후 mtime 스냅샷 비교 — 직전 단계(create)가
 //    파일을 쓴 수 ms 뒤에 다음 단계가 빠르게 실패(401은 수 초 내 실패)하면 시각 비교는
@@ -216,14 +240,38 @@ function postconditionOk(stage, story, beforeMaxMtime) {
 // ---- (U3) 인증 오류 패턴 ----
 const AUTH_RE = /(\b401\b|unauthorized|failed to authenticate|invalid.{0,3}api.{0,3}key|invalid authentication|authentication.{0,3}(error|failed)|token.{0,30}expired|oauth.{0,20}(error|expired))/i;
 // ---- (U8) 사용량 한도 패턴 — 인증(재로그인 필요)과 구분: 한도는 리셋 대기만으로 복구 ----
-// "monthly spend limit"(월 지출 한도 — 실측: 이 문구가 기존 패턴에 안 걸려 STOP 으로 오분류돼
-// 차단기에 카운트된 실사례) 포함. 월 한도는 대기로 안 풀린다 — 모델 사다리 전환이 답.
-const LIMIT_RE = /(usage.?limit|rate.?limit|spend limit|\b429\b|quota exceeded|limit (reached|exceeded|will reset)|too many requests)/i;
-// 오류 종류별 메시지·exit code (auth=재로그인 / limit=리셋 대기)
+// "monthly spend limit"(월 지출 한도 — 2026-08-28 실측: 이 문구가 기존 패턴에 안 걸려 STOP 으로
+// 오분류돼 차단기에 카운트됐다) 포함. 월 한도는 대기로 안 풀린다 — 모델 전환이 답(큐 모델 장부).
+const LIMIT_RE = /(usage.?limit|rate.?limit|\b429\b|quota exceeded|limit (reached|exceeded|will reset)|too many requests)/i;
+// ---- (U8-b) **월 지출 한도**는 사용량 한도와 다른 갈래다 (2026-08-30 반복 종결) ----
+// 2026-08-28 에 이 문구를 LIMIT_RE 에 **넣기만** 하고 같은 갈래로 묶었다. 그때 주석에는
+// 「월 한도는 대기로 안 풀린다」고 정확히 적어 놓고 **대기하는 갈래에 분류**했다 — 진단은
+// 맞았는데 처방이 반대로 들어갔고, 그날은 fable 만 걸려 사다리가 opus 로 넘겨 피해가 0이라
+// 아무도 밟지 않았다. 2026-08-30 전 모델이 걸리자 처음으로 드러났다(수 시간 정지 · 슬롯마다 반복).
+//   실측(2026-08-30 17:2x · 👤 사용량 화면 + 3모델 직접 프로브): 주간 모든 모델 57% · 세션 5% 로
+//   **사용량은 여유**인데 opus·sonnet·fable 전부 「You've hit your monthly spend limit」.
+//   → 사용량 지갑과 지출(크레딧) 지갑은 **다른 지갑**이고, 지출 한도는 **기다려도 안 풀린다**.
+// 규율: SPEND_RE 는 LIMIT_RE 보다 **먼저** 판정한다(둘 다 걸리는 문구가 있다).
+const SPEND_RE = /(spend(ing)?.?limit)/i;
+// 오류 종류별 메시지·exit code (auth=재로그인 / limit=리셋 대기 / spend=사람이 설정을 바꿔야 함)
 const KIND = {
   auth: { tag: "AUTH", what: "CLI 인증 오류(401/토큰 만료)", fix: "다른 터미널에서 CLI를 대화형으로 열어 재로그인하세요", exit: 3 },
   limit: { tag: "LIMIT", what: "사용량 한도 초과(usage/rate limit)", fix: "한도가 리셋되면 자동 복구됩니다 — 재로그인 불필요(급하면 요금제·한도 확인)", exit: 5 },
+  spend: {
+    tag: "SPEND",
+    what: "월 지출 한도 초과(구독 몫 소진 — 사용량 한도가 아니다)",
+    // ⚠️ 여기서 「기다리면 된다」고 말하면 안 된다 — 그 오안내가 2026-08-30 에 수 시간을 버렸다.
+    fix: "기다려도 풀리지 않습니다. 사람이 claude.ai/settings/usage 에서 「사용 크레딧」을 켜거나 지출 한도를 올려야 합니다(👤 정책: 기본은 구독 한도까지만 · 크레딧은 박사장 판단). 모델을 바꿔도 소용없습니다 — 계정 전체 지갑입니다",
+    exit: 5,
+  },
 };
+/** 실패 문구 분류 — auth > spend > limit 순. 순서가 규율이다(spend 가 limit 보다 먼저). */
+function classifyFailure(out) {
+  if (AUTH_RE.test(out)) return "auth";
+  if (SPEND_RE.test(out)) return "spend";
+  if (LIMIT_RE.test(out)) return "limit";
+  return "other";
+}
 
 // ---- (U6/U7) 인증 프로브 + 재로그인 대기 ----
 const sleepSync = (ms) =>
@@ -233,8 +281,8 @@ const sleepSync = (ms) =>
  *  "ok" | "auth"(401류) | "limit"(사용량 한도) | "other"(네트워크 등 — 배치를 막지 않음) */
 function authProbe() {
   // 프로브 모델 = 명시값 > dev 모델 > CLI 기본. CLI 기본으로만 찌르면 "기본 모델만 한도이고
-  // 배치 모델은 멀쩡한" 상황에서 영원히 미복구로 읽는다(실사고: 최상위 모델만 월 한도인데
-  // dev 는 차상위로 정상 — probe=limit 무한 대기).
+  // 배치 모델은 멀쩡한" 상황에서 영원히 미복구로 읽는다(2026-08-28 실사고: fable 만 월 한도,
+  // dev=opus 는 정상인데 probe=limit 무한 대기).
   const effectiveProbeModel = probeModel || models.dev || "";
   const res = spawnSync(`${claudeBin} -p${effectiveProbeModel ? ` --model ${effectiveProbeModel}` : ""}`, {
     shell: true,
@@ -245,9 +293,7 @@ function authProbe() {
   });
   if (res.status === 0) return "ok";
   const out = `${res.stdout || ""}\n${res.stderr || ""}`;
-  if (AUTH_RE.test(out)) return "auth";
-  if (LIMIT_RE.test(out)) return "limit"; // (U8)
-  return "other";
+  return classifyFailure(out); // (U8/U8-b) auth | spend | limit | other
 }
 
 /** (U7/U8) 복구 폴링 대기(kind: "auth"|"limit"). 복구되면 true, 시한 초과면 false. */
@@ -272,7 +318,9 @@ function waitForRecovery(kind, context) {
 
 /** 인증·한도 실패 공통 처리: 대기 모드면 복구 시 true(재시도), 아니면 안내 후 exit(3|5). */
 function handleFailure(kind, context, logFile) {
-  if (waitForRecovery(kind, context)) return true;
+  // (U8-b) 지출 한도는 **기다리지 않는다** — 사람이 설정을 바꿔야 풀리므로 폴링은 순수 낭비다.
+  // 2026-08-30 실사고: 슬롯마다 30분씩 헛기다리고 STOP 하기를 반복했다.
+  if (kind !== "spend" && waitForRecovery(kind, context)) return true;
   const k = KIND[kind];
   note(`✖ ${k.tag} STOP — ${context}: ${k.what}로 배치를 중단합니다.`);
   note(`   조치: ① ${k.fix} → ② 같은 명령을 그대로 재실행하면 완료 단계는 자동 skip(이어하기).${logFile ? ` log=${logFile}` : ""}`);
@@ -367,11 +415,11 @@ function commitStory(story, stagesDone) {
 // ---- 단계별 프롬프트 (비대화형 + 가드레일 명시) ----
 // GUARD는 프로젝트 중립 — 프로젝트 특화 제약(법정 보수성·보호 파일 등)은 실행 cwd의
 // 프로젝트 CLAUDE.md가 nested 인스턴스에 자동 로드되어 주입된다(계층화 원칙, 2026-08-08).
-const GUARD = "[비대화형] 승인/질문 없이 합리적 기본값으로 끝까지 진행하라. ⚠️ git commit·push 절대 금지. 프로젝트 CLAUDE.md에 명시된 절대 제약(보호 파일·보수성 규칙)을 최우선 준수하라. 임시 파일(diff 덤프·qa 로그 등)은 저장소 루트가 아니라 _bmad-output/implementation-artifacts/auto-pipeline-logs/ 아래에만 써라 — 루트 스크래치는 다음 배치를 dirty STOP 시킨다(실사고 반복).";
+const GUARD = "[비대화형] 승인/질문 없이 합리적 기본값으로 끝까지 진행하라. ⚠️ git commit·push 절대 금지. 프로젝트 CLAUDE.md에 명시된 절대 제약(보호 파일·보수성 규칙)을 최우선 준수하라. 임시 파일(diff 덤프·qa 로그 등)은 저장소 루트가 아니라 _bmad-output/implementation-artifacts/auto-pipeline-logs/ 아래에만 써라 — 루트 스크래치는 다음 배치를 dirty STOP 시킨다(실사고 반복).";
 const prompts = {
   create: (s) => `/bmad-create-story ${s}\n\n${GUARD} 스토리 스펙(AC·파일 그라운딩)을 작성·저장하고 종료.`,
   dev: (s) => `/bmad-dev-story ${s}\n\n${GUARD} 구현 후 검증까지 자동 실행.`,
-  review: (s) => `/bmad-code-review ${s}\n\n${GUARD} 다른 LLM 관점에서 적대적으로. findings 리포트만 작성(코드 자동수정·commit 금지). ⚠️ 판정은 발견 0건·재오픈 불요 결론이어도 **반드시 스토리 파일의 Review Findings 절에 라운드 기록으로 기재**하라 — stdout 채팅 보고만 하고 파일을 안 쓰면 엔진이 산출물 부재(NO-OP exit 4)로 실패 처리한다(실사고 3회).`,
+  review: (s) => `/bmad-code-review ${s}\n\n${GUARD} 다른 LLM 관점에서 적대적으로. findings 리포트만 작성(코드 자동수정·commit 금지). ⚠️ 판정은 발견 0건·재오픈 불요 결론이어도 **반드시 스토리 파일의 Review Findings 절에 라운드 기록으로 기재**하라 — stdout 채팅 보고만 하고 파일을 안 쓰면 엔진이 산출물 부재(NO-OP exit 4)로 실패 처리한다(실사고 3회).`,
 };
 
 // 반환: "ok" | "stop" (사유는 내부에서 note + exit)
@@ -416,18 +464,17 @@ function runClaude(stage, story) {
   }
   // code !== 0 && !postOk
   const combined = `${res.stdout || ""}\n${res.stderr || ""}`;
-  if (AUTH_RE.test(combined)) {
-    return "auth"; // (U3/U7) 인증 오류 — 호출부(runStage)가 대기/중단 판단
-  }
-  if (LIMIT_RE.test(combined)) {
-    return "limit"; // (U8) 사용량 한도 — 호출부(runStage)가 대기/중단 판단
+  {
+    const kind = classifyFailure(combined);
+    // (U3/U7/U8/U8-b) 인증·지출 한도·사용량 한도 — 호출부(runStage)가 대기/중단 판단
+    if (kind !== "other") return kind;
   }
   if (timedOut) {
     note(`✖ STOP — [${story}] ${stage} 타임아웃(${stageTimeoutMs / 60000}분 초과). 배치 중단. log=${logFile}`);
   } else {
     note(`✖ STOP — [${story}] ${stage} 실패(exit=${code}). 배치 중단. log=${logFile}`);
   }
-  // 진단 보강(실사고: 무인 dev 세션의 거짓 완료 보고): 세션 stdout 이 「완료」 보고인데 스토리
+  // 2026-08-28 진단 보강(2026-08-27 밤 2-3 실사고): 세션 stdout 이 「완료」 보고인데 스토리
   // 산출물 mtime 이 전진하지 않은 경우 — 보고가 실물과 다르다(거짓 완료 보고). 아침 분석이
   // 로그 대조 없이 원인을 즉시 알 수 있게 STOP 사유에 명시한다. 판정 자체는 종전(실측 우선).
   if (/완료|완주/.test((res.stdout || "").slice(-3000))) {
@@ -440,11 +487,14 @@ function runClaude(stage, story) {
 /** 단계 실행 + 인증·한도 오류 시 (U7/U8) 대기·자동 재시도. 성공 외에는 내부에서 exit. */
 const MAX_AUTH_RETRY_PER_STAGE = 5; // 프로브만 통과하고 단계는 계속 실패하는 병리 케이스의 무한루프 방지
 
-// 모델 품질 사다리(운영 원칙): 최상위 모델을 우선 쓰되, **그 모델만 한도**에 걸리면
+// 모델 품질 사다리(👤 2026-08-28 운영 원칙): 최상위 모델을 우선 쓰되, **그 모델만 한도**에 걸리면
 // 대기하지 말고 차순위로 자동 전환해 계속 일한다(월 지출 한도는 대기로 안 풀린다 — 같은 날 실사고:
 // fable 만 차단·opus 정상인데 배치 전체가 한도 대기로 공전). 전환은 그 단계·그 배치에 한정된다.
-const MODEL_LADDER = ["fable", "opus", "sonnet"];
-// avoid = 교차검증 회피 대상(리뷰가 dev 와 같은 모델로 떨어지지 않게 건너뛴다 —
+// 👤 2026-08-29 개정: AUTO_MODEL_LADDER 환경변수로 사다리를 좁힐 수 있다(예: "fable" 단일 =
+// 타 모델 자동 강등 금지 — 정보 오류 사유. 한도 시 전환 대신 waitAuthMin 리셋 대기로 떨어진다).
+const MODEL_LADDER = (process.env.AUTO_MODEL_LADDER || "fable,opus,sonnet")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+// avoid = 교차검증 회피 대상(리뷰가 dev 와 같은 모델로 떨어지지 않게 건너뛴다 — 👤 2026-08-28:
 // 같은 모델의 자기 검증은 같은 맹점을 공유한다).
 function nextModelDown(model, avoid) {
   const i = MODEL_LADDER.indexOf(model);
@@ -454,7 +504,7 @@ function nextModelDown(model, avoid) {
   return null;
 }
 
-// 교차검증 강제 — 같은 배치에서 dev 가 실제로 쓴 모델과 review 모델이 같아지면
+// 교차검증 강제(👤 2026-08-28) — 같은 배치에서 dev 가 실제로 쓴 모델과 review 모델이 같아지면
 // (장부가 같거나, dev 가 사다리로 강등돼 우연히 겹친 경우) review 를 「dev 와 다른 모델 중
 // 최상위」로 바꾼다: dev=opus → review=fable(상위 교차 우선), fable 한도면 사다리가 sonnet(하위
 // 교차)으로. sonnet 리뷰는 범위 고정 회수 diff 에는 충분하고, 신규 구현 리뷰가 sonnet 까지
@@ -474,6 +524,7 @@ function runStage(stage, story) {
   for (let authRetry = 0; ; authRetry++) {
     const r = runClaude(stage, story); // "ok" | "auth" | "limit"
     if (r === "ok") return;
+    // (U8-b) spend 는 사다리를 타지 않는다 — 계정 전체 지갑이라 어떤 모델로 바꿔도 같다.
     if (r === "limit") {
       const avoid = stage === "review" && stages.includes("dev") ? models.dev : null;
       const down = nextModelDown(models[stage], avoid);
@@ -549,9 +600,10 @@ for (const story of stories) {
         note(`⚠ [${story}] 프로브가 비인증·비한도 사유로 실패 — 배치는 계속 진행(실패 시 단계에서 판정).`);
         break;
       }
-      // 프로브 경로에도 품질 사다리를 적용한다(잔여 봉합 실사례: runStage 만 고치고 이 경로를
+      // 프로브 경로에도 품질 사다리를 적용한다(2026-08-28 잔여 봉합: runStage 만 고치고 이 경로를
       // 빠뜨려, dev=fable 큐가 스토리 경계 프로브에서 30분 한도 대기로 빠졌다). 프로브는 dev 모델을
       // 찌르므로(effectiveProbeModel) dev 를 강등하면 다음 프로브가 그 모델로 재판정한다.
+      // (U8-b) spend 는 여기서도 사다리를 안 탄다 — 아래 handleFailure 가 즉시 안내하고 멈춘다.
       if (p === "limit") {
         const down = nextModelDown(models.dev, null);
         if (down) {
@@ -575,6 +627,10 @@ for (const story of stories) {
         if (!isDone(story, "create")) markDone(story, "create");
         continue;
       }
+    } else if (isDone(story, stage) && !force && stage === "dev" && hasNoCompletedWork(story)) {
+      // (U1-b) 허수 완주 방지 — 기록을 믿지 않고 실제로 돌린다(👤 2026-08-30 승인 (a)).
+      note(`⚠ [${story}] dev 완료 기록을 무시한다 — 스토리에 완료 Task 0건 · 미완 1건 이상(허수 완주 방지). 실제로 실행한다.`);
+      invalidate(story, "dev", "qa", "review");
     } else if (isDone(story, stage) && !force) {
       note(`↷ [${story}] ${stage} skip — state.json 완료 기록 (재실행=--force).`);
       // dev가 skip이면 qa도 이미 통과한 기록이 있을 때만 skip (아래 qa 블록에서 판정)
