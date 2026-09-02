@@ -58,7 +58,7 @@ if (!(pkg.scripts && pkg.scripts.qa)) notes.push('⚠️ `npm run qa` 스크립�
 // ── 1. 엔진 파일 설치 ────────────────────────────────────────────────────
 const dst = join(ROOT, 'tools', 'auto')
 mkdirSync(dst, { recursive: true })
-for (const f of ['run-night.mjs', 'plan-queue.mjs', 'runner-rules.mjs', 'telegram-rules.mjs', 'telegram-commands.mjs']) {
+for (const f of ['run-night.mjs', 'plan-queue.mjs', 'runner-rules.mjs', 'story-ledger.mjs', 'telegram-rules.mjs', 'telegram-commands.mjs']) {
   const to = join(dst, f)
   if (existsSync(to) && !has('force')) { notes.push(`· ${f} 이미 있음 — 건너뜀(덮어쓰려면 --force)`); continue }
   copyFileSync(join(SELF, 'engine', f), to)
@@ -72,7 +72,8 @@ if (!existsSync(cfgPath)) {
       '프로젝트 고유값의 집 — 엔진 코드에는 프로젝트 값을 넣지 않는다.',
       'epicOrder: 에픽 우선순위(사람이 정한다). 비어 있으면 자동 편성이 이유를 말하고 선다.',
       'parallelAllow: { "<스토리키>": <에픽번호> } — 그 에픽이 진행 중이어도 후보로 두는 예외.',
-      'dailyCap: 하루 편성 상한(폭주 방지 백스톱 · 페이스가 아니다) · parallel: 병렬 폭.',
+      'dailyCap: 하루 편성 상한 — 단위는 **하루 고유 스토리 수**다(dev↔review 재편성은 무과금). 폭주 방지 백스톱이지 페이스가 아니다 · parallel: 병렬 폭.',
+      'exhaustedModels: 이번 주 한도가 소진된 모델 목록(예: ["fable"]). 편성 단계에서 짝 단위로 대체해 교차검증(dev ≠ review)을 지킨다. 기본은 빈 목록.',
       'stateDir: 상태 폴더를 직접 지정(비우면 ~/.claude-auto/<project> · 환경변수 AUTO_BATCH_STATE_DIR 이 최우선).',
       'models: 적지 않으면 엔진 기본값 = 종류별 교차검증(신규 dev/review 상위-차상위 · 회수는 반대 · 마감 재검수 review 상위).',
       '  고정하고 싶을 때만 { "new": {...}, "recovery": {...}, "closeout": {...} } 또는 평면 { "dev": "...", "review": "..." } 로 적는다.',
@@ -85,6 +86,7 @@ if (!existsSync(cfgPath)) {
     epicOrder: [],
     parallelAllow: {},
     dailyCap: 30,
+    exhaustedModels: [],
     parallel: 2,
     stateDir: null,
     mockupGate: {
@@ -135,7 +137,7 @@ const runDir = clonePath || ROOT
 // 러너는 marker 클론을 라운드마다 `git clean -fdq` + `checkout -f` 로 새로고침하므로 복사본이
 // 첫 라운드에 그대로 지워진다(= 며칠 뒤 조용히 실패). 그래서 「커밋·푸시 → 클론 pull」이
 // 유일하게 안 깨지는 경로이고, 그 전에는 **예약을 등록하지 않는다**(등록 즉시 실패 방지).
-const engineFiles = ['run-night.mjs', 'plan-queue.mjs', 'runner-rules.mjs', 'auto.config.json']
+const engineFiles = ['run-night.mjs', 'plan-queue.mjs', 'runner-rules.mjs', 'story-ledger.mjs', 'auto.config.json']
 const missingInRunDir = engineFiles.filter((f) => !existsSync(join(runDir, 'tools', 'auto', f)))
 const syncSteps = [
   `cd ${ROOT} && git add tools/auto && git commit -m "chore(auto): night-batch-ops 엔진·설정" && git push`,

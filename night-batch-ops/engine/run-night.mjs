@@ -31,7 +31,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, s
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { loadConfig } from './plan-queue.mjs'
-import { conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, landingResolution, limitRefundKeys, lockAction, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, landingResolution, limitRefundKeys, lockAction, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = join(homedir(), '.claude', 'skills', 'auto-story-finish', 'auto-story-pipeline.mjs')
 const ART = resolve('_bmad-output/implementation-artifacts')
@@ -391,8 +391,12 @@ function doDownSync() {
   }
   const fp = conflictFingerprint(conflicted)
   day.d2fp ??= {}
-  day.d2fp[fp] = (day.d2fp[fp] ?? 0) + 1
-  if (day.d2fp[fp] >= 2) day.d2halt = true // 같은 충돌 2회 — 오늘 동기 재시도 중단
+  // 2026-09-02 개정: 백스톱은 halt(코드 충돌)만 센다 — defer/문서 해소 실패까지 세면
+  // 무해한 문서 충돌 2회 만에 하루치 동기를 통째로 끈다(19시간 38분 미동기 실사고).
+  if (dec.mode === 'halt') {
+    day.d2fp[fp] = (day.d2fp[fp] ?? 0) + 1
+    if (day.d2fp[fp] >= 2) day.d2halt = true // 같은 코드 충돌 2회 — 오늘 동기 재시도 중단
+  }
   day.notified ??= {}
   const first = !day.notified.d2conflict
   day.notified.d2conflict = true
@@ -750,7 +754,18 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     save()
     const blocked = (autoQueueMeta?.excluded ?? []).filter((e) => e.why.includes('결정 대기')).length
     const exhausted = (autoQueueMeta?.excluded ?? []).filter((e) => e.why.includes('소진')).length
-    notify(worst ? `슬롯 STOP(exit ${worst.code}) · 라운드 ${round}` : `슬롯 완주 ${done}배치 · 라운드 ${round}`,
+    // 지출 한도 차단(2026-08-30 회수) — 한 건도 못 한 exit 5 라운드는 **원인을 이름으로** 말하고
+    // 매 라운드 같은 말을 반복하지 않는다. 성공 라운드가 나오면 연속 카운트를 0 으로 되돌린다.
+    const nowIso = new Date().toISOString()
+    const spendBlocked = worst?.code === 5 && done === 0
+    s.spendBlock = spendBlocked
+      ? { streak: (s.spendBlock?.streak ?? 0) + 1, firstIso: s.spendBlock?.firstIso ?? nowIso }
+      : { streak: 0, firstIso: null }
+    save()
+    const spend = spendBlocked ? spendBlockNotice({ streak: s.spendBlock.streak, firstIso: s.spendBlock.firstIso, nowIso }) : { speak: false }
+    if (spendBlocked) record(`- 무인 실행 지출 한도 차단 — 연속 ${s.spendBlock.streak}회 무작업(최초 ${s.spendBlock.firstIso})${spend.speak ? ' · 알림 발신' : ' · 알림 억제(반복)'}`)
+    if (spend.speak) notify(spend.title, spend.body)
+    else if (!spendBlocked) notify(worst ? `슬롯 STOP(exit ${worst.code}) · 라운드 ${round}` : `슬롯 완주 ${done}배치 · 라운드 ${round}`,
       `${results.map((r) => `${r.code === 0 ? 'OK' : 'STOP'} ${r.label}`).join('\n')}${blocked ? `\n결정 대기가 스토리 ${blocked}개를 막는 중 — DECISIONS-INBOX.md` : ''}${exhausted ? `\n무인 소진 ${exhausted}건 — 사람 판단 필요(아침 브리핑)` : ''}`,
       // 공개 폴백에는 배치 라벨을 싣지 않는다 — 건수·exit 코드까지만.
       `완주 ${done}건${worst ? ` · STOP exit ${worst.code}` : ''}${blocked ? ` · 결정 대기 ${blocked}건` : ''}. ${NTFY_BRIEF}`)

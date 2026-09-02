@@ -237,16 +237,25 @@ export function stopBlocked(win) {
 
 /** 하향 동기 충돌 처분 — 정본(main)→작업 브랜치 merge 의 충돌 파일 목록을 받아:
  *  'resolve' = 전부 로그·공유 장부 클래스 → landingResolution 계획으로 자동 해소(검증된 부품 재사용)
- *  'defer'   = 잔여 충돌이 전부 산출물 문서(`_bmad-output/**.md`) → merge 중단, **동기 없이 라운드
- *              계속**(pre-merge 베이스 — 사람이 하는 정식 3-way 머지가 아침에 합친다 · 밤을 막지 않는다)
- *  'halt'    = 코드 파일 충돌 → merge 중단 + 이 라운드 휴면(자동으로 뭉개지 않는다). */
+ *  'halt'    = 코드 파일 충돌 → merge 중단 + 이 라운드 휴면(자동으로 뭉개지 않는다).
+ *
+ *  2026-09-02 개정: **문서 전용 충돌도 'resolve' 로 푼다**(종전 'defer'). 스토리 md 는 'ours'
+ *  (러너 산출 유지 — 그 스토리만 낡은 채 가고 사람의 정식 3-way 머지가 아침에 합친다), 공유
+ *  장부는 'union'. 종전 'defer' 는 아래 반복 백스톱과 결합해 **19시간 38분 미동기 실사고**를
+ *  만들었다: 문서 2파일 충돌이 2회 나자 d2halt 가 섰고, 새 날 브랜치가 정본이 아니라 전날
+ *  작업 tip 을 승계해 정본의 확정·코드가 밤새 러너에 닿지 않았다(편성기가 낡은 원장으로 오보). */
 export function downSyncDecision(files) {
   const list = (files ?? []).map((f) => String(f).trim().replace(/\\/g, '/')).filter(Boolean)
   if (list.length === 0) return { mode: 'resolve', plan: {} }
   const plan = landingResolution(list)
   if (plan) return { mode: 'resolve', plan }
   const docOnly = list.every((p) => p.startsWith('_bmad-output/') && p.endsWith('.md'))
-  return docOnly ? { mode: 'defer' } : { mode: 'halt' }
+  if (docOnly) {
+    const docPlan = {}
+    for (const p of list) docPlan[p] = SHARED_BOOKKEEPING.includes(p) ? 'union' : 'ours'
+    return { mode: 'resolve', plan: docPlan }
+  }
+  return { mode: 'halt' }
 }
 
 /** 충돌 지문 — 같은 충돌을 라운드마다 재생산하는 것을 막는 반복 백스톱의 재료(순서 무관 동일). */
@@ -311,4 +320,39 @@ export function progressedStoryKeys(commitFileLists) {
     if (m) keys.add(m[1])
   }
   return [...keys]
+}
+
+/** 무인 실행이 **계정 지출 한도**로 막혔을 때의 알림 판정 (2026-08-30 실사고 회수).
+ *
+ *  왜 필요한가: 러너는 exit 5(한도)를 「날씨」로 보고 차단기에서 제외한 뒤 원장을 환불하고
+ *  다음 슬롯에 재시도한다 — 짧은 한도에는 맞는 설계다. 그런데 **오래 막히면 아무도 깨우지
+ *  않았다**: 9시간 동안 30분마다 같은 알림이 20회 나갔고, 그 본문은 원인을 「결정 대기가
+ *  스토리 N개를 막는 중」이라고 **엉뚱하게** 말했다. 사람은 그 문장에서 지출 한도를 떠올릴
+ *  수 없다. 알림 피로로 실제로 무시됐다.
+ *
+ *  세 가지를 고친다:
+ *   ① 원인을 이름으로 말한다 — 「계정 지출 한도」 + 확인처 + **사람만 풀 수 있다**는 사실
+ *   ② 매 라운드 같은 말을 하지 않는다 — 첫 회 + 이후 4라운드마다(30분 슬롯이면 2시간)
+ *   ③ 경과를 말한다 — 「N시간째 0건」이 있어야 사람이 심각도를 안다
+ *
+ *  `streak` = 지출 한도로 **한 건도 못 한** 연속 라운드 수(성공 라운드가 나오면 0으로 리셋).
+ *  반환 `speak=false` 면 조용히 넘어간다(러너는 요약 로그만 남긴다). */
+export function spendBlockNotice({ streak, firstIso, nowIso }) {
+  if (!Number.isInteger(streak) || streak < 1) return { speak: false }
+  const speak = streak === 1 || streak % 4 === 0
+  if (!speak) return { speak: false }
+  const first = Date.parse(firstIso ?? '')
+  const now = Date.parse(nowIso ?? '')
+  const mins = Number.isFinite(first) && Number.isFinite(now) && now > first ? Math.round((now - first) / 60000) : 0
+  const elapsed = mins >= 60 ? `${Math.floor(mins / 60)}시간 ${mins % 60}분째` : `${mins}분째`
+  return {
+    speak: true,
+    title: streak === 1 ? '무인 실행 차단 — 계정 지출 한도' : `무인 실행 ${elapsed} 차단 (연속 ${streak}회)`,
+    body:
+      '헤드리스(무인) 실행이 계정 **지출 한도**로 거부되고 있다. 모델·인증·환경 문제가 아니다 — ' +
+      '전 모델이 같은 메시지로 거부되고 `claude auth status` 는 정상이다.\n' +
+      '요금제 사용량 설정에서 한도를 확인해야 풀린다 — **사람만 할 수 있다**.\n' +
+      `슬롯은 계속 재시도하고 있고(${elapsed} · 연속 ${streak}회 무작업), 풀리는 즉시 자동으로 이어받는다. ` +
+      '하루 상한 원장은 환불되므로 손해는 없다.',
+  }
 }

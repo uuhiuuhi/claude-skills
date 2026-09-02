@@ -23,6 +23,36 @@ import { pathToFileURL } from 'node:url'
 // 네임스페이스로 받는다 — 체인 게이트 상수는 러너 규칙이 SoT 이지만, 그 상수가 없는
 // 구버전 runner-rules 와 섞여도 편성기가 링크 단계에서 죽지 않아야 한다(무정지 원칙).
 import * as RULES from './runner-rules.mjs'
+// 원장(Markdown) 해석은 **단일 소스**다 — 2026-09-01 P0-a. 편성기·가드·현황판·브리핑이
+// 각자 문장을 해석하다 표기 흔들림(굵게 · 👤 인용 · 부정문)으로 오판이 반복됐다.
+// 해석 규칙을 고칠 일이 있으면 story-ledger.mjs 한 곳만 고친다. 종전 소비자 호환을 위해 재수출한다.
+import {
+  MOCKUP_GATE_DEFAULT, openFindings, isHumanGateLine,
+  readStorySignals, parseSprint, epicSection, mockupGateOk,
+} from './story-ledger.mjs'
+export {
+  MOCKUP_GATE_DEFAULT, openFindings, isHumanGateLine,
+  readStorySignals, parseSprint, epicSection, mockupGateOk,
+}
+
+/** 주간 한도가 소진된 모델 — 프로젝트가 `auto.config.json` 의 `exhaustedModels` 로 소유한다.
+ *  기본은 빈 목록이다: 남의 프로젝트에 이번 주 우리 사정이 하드코딩되면 안 된다. */
+export const MODEL_SUBSTITUTE = 'opus'   // 「모든 모델」 한도를 쓰는 상위 모델
+export const MODEL_SUBSTITUTE_2 = 'sonnet' // 1순위가 상대 단계와 겹칠 때의 2순위(교차검증 유지)
+export const avoidExhausted = (model, exhausted = []) =>
+  typeof model === 'string' && exhausted.includes(model) ? MODEL_SUBSTITUTE : model
+/** 배정 **짝**을 소진 회피로 바꾼다 — ⚠️ 단계별로 따로 바꾸면 `dev === review` 가 되어
+ *  교차검증(dev ≠ review 항상)이 깨진다. 상대가 이미 1순위를 쓰면 2순위로 내린다. */
+export const avoidExhaustedPair = (models, exhausted = []) => {
+  if (!models || exhausted.length === 0) return models
+  const out = { ...models }
+  for (const stage of ['dev', 'review']) {
+    if (!exhausted.includes(out[stage])) continue
+    const other = stage === 'dev' ? out.review : out.dev
+    out[stage] = other === MODEL_SUBSTITUTE ? MODEL_SUBSTITUTE_2 : MODEL_SUBSTITUTE
+  }
+  return out
+}
 
 const { SHARED_BOOKKEEPING } = RULES
 /** 미머지 체인 나이 상한(일) — 러너 규칙이 SoT. 여기 값은 구버전 폴백용 사본일 뿐이다. */
@@ -30,18 +60,6 @@ const CHAIN_MAX_AGE_DAYS = RULES.CHAIN_MAX_AGE_DAYS ?? 2
 /** 체인 게이트 판정은 규칙 함수를 그대로 쓴다(비교식을 편성기에 복제하지 않는다).
  *  구버전 runner-rules 에 함수가 없을 때만 같은 뜻의 폴백을 쓴다 — 링크 단계에서 죽지 않기 위해서다. */
 const allowNewUnderChain = RULES.allowNewUnderChain ?? ((ageDays) => (ageDays ?? 0) < CHAIN_MAX_AGE_DAYS)
-
-/** 목업 게이트(규칙 6) 기본값 — 프로젝트가 `cfg.mockupGate` 로 덮어쓴다.
- *  marker  : 에픽 문서에서 「새 화면 스토리」를 가리키는 문구(비면 게이트 미구성 = 통과)
- *  ruleId  : 함께 있어야 게이트가 걸리는 프로젝트 내부 규칙 ID(선택 · null 이면 marker 만으로 판정)
- *  mockupsDir   : 목업 판정 키의 접두 경로
- *  verdictsPath : 목업 판정 JSON 의 저장소 상대 경로 */
-export const MOCKUP_GATE_DEFAULT = Object.freeze({
-  marker: '새 화면',
-  ruleId: null,
-  mockupsDir: 'mockups',
-  verdictsPath: 'tools/dev-status/mockup-verdicts.json',
-})
 
 /** 프로젝트 설정 — 없으면 빈 객체(호출부가 필수값 부재를 판정한다) */
 export function loadConfig(root) {
@@ -59,67 +77,6 @@ const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null)
 // 편성기를 통째로 세우면 무정지가 아니다. 깨졌으면 「없음」으로 보고 계속한다.
 const readJson = (p) => { try { return JSON.parse(readIf(p) ?? '{}') } catch { return {} } }
 
-/** sprint-status.yaml → [{key, status, epic}] (스토리 키 행만 — 주석·벌크 무시) */
-export function parseSprint(text) {
-  const rows = []
-  for (const line of text.split('\n')) {
-    const m = /^ {2}(\d+-\d+[^:]*): *(backlog|ready-for-dev|in-progress|review|done)\b/.exec(line)
-    if (m) rows.push({ key: m[1], status: m[2], epic: Number(m[1].split('-')[0]) })
-  }
-  return rows
-}
-
-/** 스토리 파일 판정 재료
- *
- *  ⚠️ **스토리 문서 규약에 의존한다** — 아래 정규식의 절 제목(`## Tasks…`·`### File List`),
- *  체크박스 표기(`- [ ] [Review][Decision]`·`[Review][Patch]`), 한국어 관용 문구
- *  (`재투입 금지`·`마지막 구현 라운드`·`사람 게이트`·`👤`)는 **이 배치가 전제하는 스토리 문서
- *  서식**이다. 다른 서식·다른 언어로 스토리를 쓰는 프로젝트에서는 이 판정들이 전부 「해당 없음」이
- *  되어 **게이트가 조용히 무동작한다**(결정 대기·재투입 금지·사람 게이트가 안 걸리고 편성된다).
- *  → 이식할 때는 스토리 문서를 이 서식에 맞추거나, 문구의 config 화를 후속 과제로 잡는다.
- *  (문구 자체의 config 화는 이번 범위 밖 — 동작을 바꾸지 않는다.) */
-export function readStorySignals(text) {
-  const openDecision = /^- \[ \] \[Review\]\[Decision\]/m.test(text)
-  const openPatches = (text.match(/^- \[ \] \[Review\]\[Patch\]/gm) ?? []).length
-  const banPresent = /재투입 금지|마지막 구현 라운드/.test(text)
-  // Tasks/Subtasks 절 안의 미완 체크박스만 센다. 사람 게이트 항목(사람만 풀 수 있는 것)은
-  // 기계 일감에서 뺀다 — 그것만 남은 스토리를 편성하면 no-op STOP 이 예약된다.
-  const tasksSection = /## Tasks[^\n]*\n([\s\S]*?)(?=\n## )/.exec(text)?.[1] ?? ''
-  const unfinishedTasks = (tasksSection.match(/^\s*- \[ \] [^\n]*/gm) ?? [])
-    .filter((l) => !/사람 게이트|👤/.test(l)).length
-  const fileSection = /### File List\n([\s\S]*?)(?=\n#{2,3} )/.exec(text)?.[1] ?? ''
-  const files = [...fileSection.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]).filter((p) => p.includes('/'))
-  return { openDecision, openPatches, banPresent, unfinishedTasks, files }
-}
-
-/** epics.md 에서 해당 스토리 절 추출 — 키 4-1-... → 헤더 '### Story 4.1:'
- *  (역시 스토리·에픽 문서 규약이다 — 헤더 서식이 다르면 절이 빈 문자열이 되어 규칙 1·6 이 무동작한다) */
-export function epicSection(epicsText, key) {
-  const [a, b] = key.split('-')
-  const re = new RegExp('^### Story ' + a + '\\.' + b + ':[^\\n]*\\n([\\s\\S]*?)(?=\\n### Story |\\n## )', 'm')
-  return re.exec(epicsText)?.[1] ?? ''
-}
-
-/** 목업 게이트: 새 화면 스토리는 approved 목업이 실재해야 후보.
- *  판정에 쓰는 값은 전부 `cfg.mockupGate`(→ MOCKUP_GATE_DEFAULT) 가 소유한다 —
- *  프로젝트 내부 규칙 ID·목업 경로가 코드에 박히지 않는다.
- *  marker 가 비면 **게이트 미구성**으로 보아 통과시키고, 호출부가 그 사실을 편성 근거에 남긴다. */
-export function mockupGateOk(section, key, verdicts, gate = MOCKUP_GATE_DEFAULT) {
-  const marker = gate?.marker
-  if (!marker) return { ok: true, unconfigured: true }
-  if (!section.includes(marker)) return { ok: true }
-  // ruleId 는 선택 — 지정하면 marker 와 **함께** 있을 때만 게이트가 걸린다(오탐 축소용).
-  if (gate.ruleId && !section.includes(gate.ruleId)) return { ok: true }
-  const dir = String(gate.mockupsDir ?? MOCKUP_GATE_DEFAULT.mockupsDir).replace(/[/\\]+$/, '')
-  const prefix = dir + '/story-' + key.split('-').slice(0, 2).join('-') + '-'
-  const mine = Object.entries(verdicts?.items ?? {}).filter(([k]) => k.startsWith(prefix))
-  const tag = gate.ruleId ? ' — ' + gate.ruleId : ''
-  if (mine.length === 0) return { ok: false, why: marker + ' 인데 목업 부재(pending 취급' + tag + ')' }
-  const bad = mine.filter(([, v]) => v.verdict !== 'approved')
-  if (bad.length > 0) return { ok: false, why: '목업 미승인: ' + bad.map(([k]) => k.split('/').pop()).join(', ') }
-  return { ok: true }
-}
-
 export function plan({ root, stateDir, max, today = todayStr(), config }) {
   const cfg = config ?? loadConfig(root)
   const EPIC_ORDER = cfg.epicOrder
@@ -132,6 +89,9 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   // STOP 차단기·결정 대기 제외·사용량 한도 대기·리뷰 게이트가 맡는다.
   const capBase = max ?? cfg.dailyCap ?? 30
   const models = cfg.models ?? null // 예: { dev: 'fable', review: 'opus' } — 없으면 CLI 기본 모델
+  // 주간 한도가 소진된 모델 — 배정 단계에서 미리 피한다(엔진 프로브가 헛돌지 않게).
+  // 프로젝트 사정이라 config 소유이고 기본은 빈 목록이다.
+  const exhausted = Array.isArray(cfg.exhaustedModels) ? cfg.exhaustedModels : []
 
   // 목업 게이트(규칙 6) 재료 — 경로·문구·규칙 ID 는 전부 config 소유(기본값 병합)
   const gateCfg = { ...MOCKUP_GATE_DEFAULT, ...(cfg.mockupGate ?? {}) }
@@ -158,7 +118,15 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   // 위해서다. 당일 한정 — 자정이 지나면 파일이 바뀌어 기본 상한으로 돌아간다.
   const capBonus = Math.max(0, Number(readJson(join(stateDir, `cap-extend-${today}.json`)).extra ?? 0) || 0)
   const cap = capBase + capBonus
-  const remaining = Math.max(0, cap - day.planned.length)
+  // 규칙 7 개정(2026-09-01 운영 체계 정비 P0-b): 상한 단위 = **하루 고유 스토리 수**.
+  // 종전에는 편성 이벤트를 세서 같은 스토리의 dev↔review 재편성이 상한을 거듭 소모했다 —
+  // 실측: 편성 30 = 고유 12 · 편성 50 = 고유 29. 「30 소진」이 「30개 스토리」가 아니었고,
+  // 낮에 상한이 차서 밤 슬롯이 빈손으로 돌았다. 이제 이미 오늘 편성된 스토리의 재편성은
+  // 무과금이고 새 스토리만 슬롯을 쓴다. day.planned 배열 자체는 그대로 쌓는다
+  // (규칙 9 무진전 스트릭이 편성 횟수를 재료로 쓰기 때문이다).
+  const plannedSet = new Set(day.planned)
+  const uniqueUsed = plannedSet.size
+  const remaining = Math.max(0, cap - uniqueUsed)
   // 체인 게이트 — 사람 검토 없는 축조에 상한을 둔다. 러너가 라운드마다 남기는 chain-info 를 읽어
   // 미머지 체인이 CHAIN_MAX_AGE_DAYS 일 이상이면 **신규 착수만** 보류한다(회수·마감 재검수는 계속 —
   // 이미 시작된 일의 마무리는 검토 축적이 아니다). 사람이 머지하면 러너가 나이를 0 으로 되돌린다.
@@ -178,10 +146,13 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     let streak = 0
     for (const d of Object.keys(state.days).sort()) {
       const rec = state.days[d]
-      const plannedN = (rec.planned ?? []).filter((k) => k === key).length
-      if (plannedN === 0) continue
-      if ((rec.progressed ?? []).includes(key)) streak = 0
-      else streak += plannedN
+      // 판정 순서 주의(2026-09-02 실사고 — 재편성 승인이 무효였다): progressed 를
+      // plannedN 조기 continue **앞에서** 본다. 종전 순서는 「그날 편성되지 않은 날」을
+      // 통째로 건너뛰어, 편성 밖에서 들어온 진전 기재(사람이 규칙 9 의 「반복 편성은 사람
+      // 판단」을 집행하려고 넣는 승인 · 다른 세션이 스토리 md 를 만진 라운드)가 스트릭을
+      // 영원히 리셋하지 못했다. 누적 갈래(편성됐고 진전 0)는 그대로 — 폭주 백스톱 무손실.
+      if ((rec.progressed ?? []).includes(key)) { streak = 0; continue }
+      streak += (rec.planned ?? []).filter((k) => k === key).length
     }
     return streak
   }
@@ -271,9 +242,20 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   }
 
   // 규칙 7: 하루 상한
-  const capped = candidates.slice(0, remaining)
   const capText = cap + (capBonus > 0 ? '(기본 ' + capBase + ' + 연장 ' + capBonus + ')' : '')
-  for (const c of candidates.slice(remaining)) exclude(c.key, '하루 상한 ' + capText + ' 도달(오늘 기편성 ' + day.planned.length + ' — 규칙 7 · /extend 로 연장 가능)')
+  // 규칙 7(P0-b): 재편성(오늘 이미 편성된 스토리)은 **무과금**이라 잘라내지 않는다 —
+  // slice 로 앞에서 N개만 취하면 dev↔review 왕복이 상한을 거듭 먹어 새 스토리가 밀린다.
+  const capped = []
+  let newUnique = 0
+  for (const c of candidates) {
+    const isReplan = plannedSet.has(c.key)
+    if (isReplan || newUnique < remaining) {
+      capped.push(c)
+      if (!isReplan) newUnique++
+    } else {
+      exclude(c.key, '하루 상한 ' + capText + ' 도달(오늘 고유 스토리 ' + uniqueUsed + ' — 규칙 7 · 재편성은 무과금 · /extend 로 연장 가능)')
+    }
+  }
 
   // 규칙 5: 회수끼리 File List 서로소면 2개까지 한 배치 · 신규는 단독 배치
   const batches = []
@@ -302,11 +284,14 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   //   신규 dev=최상위/review=차상위 · 회수 dev=차상위/review=최상위(상위 교차) · 마감 재검수 review=차상위.
   // 한도는 엔진 품질 사다리(자동 강등 · dev 모델 회피)가 흡수한다.
   const modelsFor = (kind) => {
-    if (models && (models.new || models.recovery || models.closeout)) return models[kind] ?? null
-    if (models) return models
-    return kind === 'closeout' ? { review: 'opus' }
-      : kind === 'recovery' ? { dev: 'opus', review: 'fable' }
-        : { dev: 'fable', review: 'opus' }
+    const base =
+      models && (models.new || models.recovery || models.closeout) ? (models[kind] ?? null)
+        : models ? models
+          : kind === 'closeout' ? { review: 'opus' }
+            : kind === 'recovery' ? { dev: 'opus', review: 'fable' }
+              : { dev: 'fable', review: 'opus' }
+    // 소진 회피는 **짝 단위**로 한다 — 단계별로 따로 바꾸면 dev === review 가 되어 교차검증이 깨진다.
+    return base ? avoidExhaustedPair(base, exhausted) : null
   }
 
   const queue = {
