@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { plan, readStorySignals } from './plan-queue.mjs'
-import { PLAN_SCHEMA, buildPlanPrompt, validatePlanShape } from './orchestrate.mjs'
+import { PLAN_SCHEMA, buildPlanPrompt, makeClaudePlanRunner, validatePlanShape } from './orchestrate.mjs'
 import { STAGE_NAMES, buildDag, validatePlan } from './plan-dag.mjs'
 import { engineFlagsFromConfig, parallelPlan, providerConfig } from './runner-rules.mjs'
 
@@ -214,6 +214,16 @@ describe('[자율운전] 원장 신호 · 검증기 · 오케스트레이터 · 
     const guarded = buildPlanPrompt({ ...ctx, mode: 'guarded' }).prompt
     assert.match(guarded, /신규 착수는 진행 에픽에서만/)
     assert.ok(!guarded.includes('시니어 개발 기획자'))
+  })
+  it('계획 실행기 — 잔여 예산이 null/0 이면 설정 상한(5분)을 쓴다 · 양수면 좁힌다(2026-09-04 1ms 마감 실사고)', async () => {
+    const seen = []
+    const spawn = async (_file, _args, opts) => { seen.push(opts.timeout); return { status: 0, stdout: '{"batches":[]}', stderr: '' } }
+    const runner = makeClaudePlanRunner({ bin: 'claude', model: 'fable', timeoutMs: 300000, spawn })
+    await runner('p', null, { timeoutMs: null })
+    await runner('p', null, {})
+    await runner('p', null, { timeoutMs: 0 })
+    await runner('p', null, { timeoutMs: 120000 })
+    assert.deepEqual(seen, [300000, 300000, 300000, 120000])
   })
   it('러너 규칙 — autonomy 정규화 · --autonomy full 플래그 · replan 은 병렬 가능, mockup 은 순차', () => {
     const pc = providerConfig({ providers: { codex: { enabled: false } }, autonomy: { mode: 'full' } })

@@ -273,8 +273,11 @@ export function makeClaudePlanRunner({ bin = 'claude', model = 'fable', cwd = un
     const isCmdShim = /\.(cmd|bat)$/i.test(exe)
     const file = isCmdShim ? (env.ComSpec || 'cmd.exe') : exe
     const args = isCmdShim ? ['/d', '/s', '/c', exe, ...argv] : argv
+    // 잔여 예산은 **양수일 때만** 상한을 좁힌다 — `null`/`undefined`/0 은 「예산 미지정」이지 「0ms 남음」이 아니다.
+    // (2026-09-04 실측: run-night 이 timeoutMs 를 안 넘겨 `Number(null)=0` → 1ms 마감 → 매 슬롯 runner-timeout 폴백.
+    //  Fable 계획이 켜진 뒤 한 번도 실제로 돈 적이 없던 원인.)
     const left = Number(opts?.timeoutMs)
-    const timeout = Math.max(1, Number.isFinite(left) ? Math.min(timeoutMs, left) : timeoutMs)
+    const timeout = Math.max(1, Number.isFinite(left) && left > 0 ? Math.min(timeoutMs, left) : timeoutMs)
     const r = await spawn(file, args, {
       input: prompt, encoding: 'utf8', cwd, timeout,
       shell: false, windowsHide: true, maxBuffer: 8 * 1024 * 1024,
