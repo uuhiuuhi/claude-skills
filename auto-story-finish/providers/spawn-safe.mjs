@@ -83,6 +83,12 @@ export function planSpawn(file, argv = [], { platform = process.platform, comspe
       ), { code: 'EXECUTABLE_NOT_FOUND', value: exe })
     }
     exe = resolved
+  } else if (platform === 'win32' && isBareName(exe) && !/\.[A-Za-z0-9]{1,4}$/.test(exe)) {
+    // 확장자 없는 bare 이름(`codex`·`npm`)도 PATH 를 한 번 본다 — CreateProcess 는 `.exe` 만 스스로 붙이고
+    // npm 의 `.cmd` 심은 못 찾는다(2026-09-04 실측: `codex --version` 이 ENOENT → 「codex CLI 미설치」 오판).
+    // 심(.cmd)이면 아래 cmd.exe 전용 경로로, .exe 면 절대경로 직접 실행. 못 찾으면 종전대로 bare 그대로 둔다.
+    const resolved = resolveExecutable(exe, { platform, exec, env })
+    if (!isBareName(resolved)) exe = assertSafePath(resolved, '실행파일')
   }
   const display = [exe, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')
   if (platform === 'win32' && isCmdShim(exe)) {

@@ -235,6 +235,25 @@ describe('[8] 공백 포함 경로의 CLI 를 실제로 실행한다 — 인자�
       (e) => e.code === 'EXECUTABLE_NOT_FOUND',
     )
   })
+
+  // 2026-09-04 — 확장자 없는 bare 이름(`codex`)은 PATH 에 `.cmd` 심만 있을 때 CreateProcess 가 못 찾는다(ENOENT).
+  // 러너가 `codex --version` 실패를 「codex CLI 미설치」로 오판해 Codex 리뷰가 한 번도 안 돌던 결함의 회귀 테스트.
+  it('planSpawn: 확장자 없는 bare 이름도 PATH 의 `.cmd` 심을 찾아 cmd.exe 절대경로 경로로 간다', { skip: !isWin ? 'Windows 전용' : false }, (t) => {
+    const dir = tmp(t, 'shim dir2')
+    writeFileSync(join(dir, 'sibling.txt'), 'SIBLING-OK')
+    writeFileSync(join(dir, 'r5codex.cmd'), '@echo off\r\ntype "%~dp0sibling.txt"\r\n')
+    const pathKey = Object.keys(process.env).find((k) => /^path$/i.test(k)) ?? 'PATH'
+    const env = { ...process.env, [pathKey]: `${dir};${process.env[pathKey] ?? ''}` }
+    const plan = planSpawn('r5codex', ['--version'], { env })
+    assert.equal(plan.viaCmd, true, '심을 찾았으면 cmd.exe 전용 경로다')
+    assert.ok(plan.argv[3].includes(dir), `절대경로화되지 않았다: ${plan.argv[3]}`)
+    const r = spawnSafe('r5codex', [], { encoding: 'utf8', env })
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`)
+    assert.match(String(r.stdout), /SIBLING-OK/)
+    // PATH 에 없으면 종전대로 bare 그대로(던지지 않는다 — 호출부가 실패를 판정)
+    const miss = planSpawn('r5-no-such-9421', [], { env })
+    assert.deepEqual([miss.file, miss.viaCmd], ['r5-no-such-9421', false])
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
