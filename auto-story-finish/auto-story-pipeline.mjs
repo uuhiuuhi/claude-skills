@@ -354,7 +354,7 @@ function replanSignals(story) {
   return {
     openDecisions: countOpenFindings(text, "Decision"),
     openTasks: (tasks.match(/^[ \t]*- \[ \] /gm) ?? []).length,
-    blocked: /^[ \t>*_-]*BLOCKED-ON-HUMAN:/m.test(text),
+    blocked: /^BLOCKED-ON-HUMAN:/m.test(text), // 줄머리(0열)만 — 편성기(story-ledger)와 같은 잣대
     replanNotes: (text.match(/^#{2,4} Replan /gm) ?? []).length,
   };
 }
@@ -948,7 +948,7 @@ function prepareWorker(stage, story, variant) {
   const spec = resolved.spec;
   const storyFile = findStoryFile(story);
   const storyRel = storyFile ? rel(storyFile) : `_bmad-output/implementation-artifacts/${story}.md`;
-  const guardCommit = role === "dev" || role === "repair"; // 워커가 HEAD 를 움직이면 안 된다
+  const guardCommit = role === "dev" || role === "repair" || role === "replan" || role === "mockup"; // 워커가 HEAD 를 움직이면 안 된다(replan/mockup 도 사후 HEAD·브랜치·stash 검사)
   if (spec.provider === "codex") {
     const outFile = resolve(logDir, `codex-${hash8(story)}-${role}.last.txt`);
     let prompt, targetRef = "", schemaPath = null, reviewInputs = null;
@@ -1576,6 +1576,12 @@ for (const story of stories) {
 
     runStage(stage, story); // 실패 시 내부에서 exit (인증 오류는 대기 모드 시 자동 재시도)
     markDone(story, stage);
+    // replan 이 「남은 일은 전부 사람 몫」(BLOCKED-ON-HUMAN)이라고 선언했으면 dev/review 를 돌리지 않는다 —
+    // 돌려 봐야 산출물이 없어 NO-OP exit 4 로 차단기만 누적한다. 커밋은 아래에서 그대로 한다(표식이 원장에 남아야 편성기가 뺀다).
+    if (stage === "replan" && replanSignals(story).blocked) {
+      note(`↷ [${story}] replan 이 사람 질문(BLOCKED-ON-HUMAN)을 남겼다 — 남은 단계(${stages.slice(stages.indexOf(stage) + 1).join(",") || "없음"})는 건너뛴다.`);
+      break;
+    }
 
     // dev 직후 qa 게이트 (stages에 dev가 있을 때만)
     if (stage === "dev") {

@@ -47,15 +47,16 @@ export function readStorySignals(text) {
   // 그것도 일감이다(2-9·2-24 실측). 밖(h2 형제 절)에 있으면 안 센다(3-1 no-op 실사례).
   // 다만 사람 게이트 항목은 dev 가 코드로 못 푸므로 기계 일감에서 뺀다 — 그것만 남은 스토리를
   // 편성하면 no-op STOP 이 예약된다.
-  const tasksSection = /## Tasks[^\n]*\n([\s\S]*?)(?=\n## )/.exec(text)?.[1] ?? ''
+  const tasksSection = /## Tasks[^\n]*\n([\s\S]*?)(?=\n## |$)/.exec(text)?.[1] ?? '' // 마지막 h2 여도 센다(리뷰 권장 · 엔진과 같은 잣대)
   const openTaskLines = tasksSection.match(/^\s*- \[ \] [^\n]*/gm) ?? []
   const unfinishedTasks = openTaskLines.filter((l) => !isHumanGateLine(l)).length
   // 자율운전(full · 2026-09-03) 재료 — 사람 게이트 줄 수/원문과, replan 이 남기는 「사람 질문 대기」 표식.
   // 표식은 'BLOCKED-ON-HUMAN: <질문>' 한 줄이고, 취소선(~~)으로 감싸면 해소된 것으로 본다.
   const humanGateTasks = openTaskLines.length - unfinishedTasks
   const humanGateLines = openTaskLines.filter((l) => isHumanGateLine(l)).map((l) => l.trim())
-  const blockedLine = /^[ \t>*_-]*BLOCKED-ON-HUMAN:[^\n]*/m.exec(text)?.[0] ?? null
-  const blockedOnHuman = blockedLine ? blockedLine.replace(/^[ \t>*_-]*/, '').trim() : null
+  // 줄머리(0열)만 인정한다 — 인용(> )·목록(- ) 안의 과거 기재가 게이트를 다시 열지 않게(리뷰 #14)
+  const blockedLine = /^BLOCKED-ON-HUMAN:[^\n]*/m.exec(text)?.[0] ?? null
+  const blockedOnHuman = blockedLine ? blockedLine.trim() : null
   // File List 절의 백틱 경로(규칙 5 재료) — 경로형(슬래시 포함)만
   const fileSection = /### File List\n([\s\S]*?)(?=\n#{2,3} )/.exec(text)?.[1] ?? ''
   const files = [...fileSection.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]).filter((p) => p.includes('/'))

@@ -216,7 +216,6 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
       const mp = mockupPlan(section, r.key)
       if (mp.block) return exclude(r.key, mp.block), null
       if (overLimit()) return gateOut(r.key, 'question', limitWhy())
-      if (streak >= 2) state.replans[r.key] = replansOf(r.key) + 1 // 신규는 replan 단계가 없다(파일 부재) — 회차만 센다
       const stages = mp.stage ? ['create', 'mockup', 'dev', 'review'] : ['create', 'dev', 'review']
       return { ...r, kind: 'new', files: [], stages, force: false, notes: [mp.note].filter(Boolean) }
     }
@@ -237,7 +236,7 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
       if (s.openDecision) why.push('AI 결정 ' + s.openDecisions + '건 채택')
       if (s.unfinishedTasks === 0 && s.openPatches > 0) why.push('회수 라운드 개방(열린 Patch ' + s.openPatches + ')')
       else if (s.unfinishedTasks === 0 && recovery) why.push('남은 일 재계획(미완 Task 0)')
-      if (s.banPresent) why.push('재투입 금지 표기는 조언으로만 봄')
+      if (s.banPresent && s.unfinishedTasks === 0) why.push('재투입 금지 표기는 조언으로만 봄') // 미완 기계 Task 가 있으면 답은 replan 이 아니라 dev 다(리뷰 #1 · 무한 replan 방지)
       if (why.length) { stages = ['replan', ...stages]; notes.push(...why) }
     }
     const mp = kind === 'closeout' ? { stage: false } : mockupPlan(section, r.key) // 마감 재검수엔 목업 초안을 붙이지 않는다
@@ -246,12 +245,14 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     let replanHint = null
     if (streak >= 2) {
       if (overLimit()) return gateOut(r.key, 'question', limitWhy())
-      const n = replansOf(r.key) + 1
-      state.replans[r.key] = n
+      // replan 회차(state.replans)는 **러너가 실제로 replan 배치를 돌린 라운드**에만 올린다(리뷰 #2 —
+      // 편성 시점에 깎으면 한 번도 안 돌고 「자율 한계」로 빠진다). 편성기는 읽기만 한다.
       if (!stages.includes('replan')) stages = ['replan', ...stages]
       replanHint = '무진전 편성 ' + streak + '회 — 접근을 바꿔라(과제 재작성·분할·다른 구현 경로)'
-      notes.push('무진전 ' + streak + '회 → replan ' + n + '/' + autoCfg.maxReplansPerStory)
+      notes.push('무진전 ' + streak + '회 → replan ' + (replansOf(r.key) + 1) + '/' + autoCfg.maxReplansPerStory)
     }
+    // 어떤 갈래로든 replan 이 앞섰는데 회차가 상한이면 replan 을 떼고 dev 만 돌린다(리뷰 #1-2 · replan 무한 반복 방지)
+    if (stages[0] === 'replan' && streak >= 2 && replansOf(r.key) >= autoCfg.maxReplansPerStory) return gateOut(r.key, 'question', limitWhy())
     return { ...r, kind, files: s.files, stages, force: kind !== 'new', notes, ...(replanHint ? { replanHint } : {}) }
   }
 

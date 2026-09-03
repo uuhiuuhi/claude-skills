@@ -407,7 +407,7 @@ export function providerConfig(cfg = {}) {
   if (g.pushOnFail !== undefined) warnings.push('[INTEGRATION] pushOnFail 은 폐지됨 — RED 는 항상 rollback')
   // 자율운전(2026-09-03): mode 'full' 만 켜짐 — 편성기(plan-queue)와 엔진(--autonomy)이 같은 값을 본다.
   const autonomy = { mode: c.autonomy?.mode === 'full' ? 'full' : 'guarded' }
-  const configured = c.providers !== undefined || c.workers !== undefined || c.quality !== undefined || c.integrationGate !== undefined || c.autonomy !== undefined
+  const configured = c.providers !== undefined || c.workers !== undefined || c.quality !== undefined || c.integrationGate !== undefined // autonomy 는 여기 안 든다(리뷰 #3 — guarded 명령줄 불변)
   return { configured, workers, providers: { claude, codex }, quality, integrationGate, autonomy, warnings }
 }
 
@@ -577,13 +577,13 @@ export function applyIntegrationToManifest(manifestJson, result) {
 
 /** 정규화 설정 → 엔진 추가 플래그(순수). 설정이 하나도 없으면 [] — 종전 명령줄과 바이트 단위로 같다(하위 호환). */
 export function engineFlagsFromConfig(pc) {
-  if (!pc?.configured) return []
   const a = []
+  if (pc?.autonomy?.mode === 'full') a.push('--autonomy', 'full') // configured 와 무관 — full 은 그 자체로 켜진다
+  if (!pc?.configured) return a
   if (pc.quality.autoRepair > 0) a.push('--auto-repair', String(pc.quality.autoRepair), '--repair-same-cause', String(pc.quality.sameRootCauseMaxRetries))
   // (2026-09-02) `--integrity` 는 **항상 명시**한다 — 엔진 기본값이 `on` 으로 바뀌어, 생략하면 설정의
   // `auto`(= autoRepair>0 일 때만)가 조용히 `on` 으로 승격된다. 설정이 곧 실행이어야 한다.
   a.push('--integrity', pc.quality.integrity)
-  if (pc.autonomy?.mode === 'full') a.push('--autonomy', 'full') // 엔진 프롬프트(AI 결정 채택 · 사후 확인 기록)와 인박스 절 제목을 바꾼다
   if (pc.providers.codex.enabled) {
     a.push('--providers', 'claude,codex', '--codex-roles', pc.providers.codex.roles.join(',') || 'review', '--codex-max', String(pc.providers.codex.max))
     if (pc.providers.codex.network) a.push('--codex-network', 'on')

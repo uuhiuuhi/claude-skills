@@ -73,14 +73,24 @@ describe('[자율운전] 편성기 full 모드 — 사람 대기 대신 replan',
     assert.deepEqual(r.batch('2-1-a').stages, ['review'])
     assert.match(r.pick('2-1-a').why, /마감 재검수/)
   })
-  it('무진전 편성 2회 → replan 을 앞세우고 힌트를 싣는다 · state.replans 가 1 이 된다', () => {
+  it('무진전 편성 2회 → replan 을 앞세우고 힌트를 싣는다 · 회차(state.replans)는 편성기가 올리지 않는다(러너가 실행 기준으로 센다)', () => {
     const r = run({
       sprint: { '2-1-a': 'in-progress' }, stories: { '2-1-a': story({ status: 'in-progress', tasks: '- [ ] T1' }) },
       state: { days: { '2026-09-01': { planned: ['2-1-a', '2-1-a'], stops: 0 } } },
     })
     assert.deepEqual(r.batch('2-1-a').stages, ['replan', 'dev'])
     assert.match(r.batch('2-1-a').replanHint, /무진전 편성 2회/)
-    assert.equal(r.state.replans['2-1-a'], 1)
+    assert.equal(r.state.replans['2-1-a'] ?? 0, 0)
+  })
+  it('「재투입 금지」 문구가 있어도 미완 기계 Task 가 있으면 replan 없이 dev(무한 replan 방지 · 리뷰 #1)', () => {
+    const r = run({ sprint: { '2-1-a': 'in-progress' }, stories: { '2-1-a': story({ status: 'in-progress', tasks: '- [ ] T1', head: '재투입 금지 — 마지막 구현 라운드였다' }) } })
+    assert.deepEqual(r.batch('2-1-a').stages, ['dev'])
+    const zero = run({ sprint: { '2-1-a': 'in-progress' }, stories: { '2-1-a': story({ status: 'in-progress', tasks: '- [x] T1', head: '재투입 금지' }) } })
+    assert.deepEqual(zero.batch('2-1-a').stages, ['replan', 'dev'])
+  })
+  it('Tasks 절이 파일의 마지막 h2 여도 미완 Task 를 센다(엔진과 같은 잣대)', () => {
+    const s = readStorySignals('# S\nStatus: in-progress\n## Tasks / Subtasks\n- [ ] T1\n- [x] T2\n')
+    assert.equal(s.unfinishedTasks, 1)
   })
   it('replan 을 상한만큼 썼는데도 무진전 → 그 스토리만 「자율 한계」로 사람 질문(humanGates question)', () => {
     const r = run({
@@ -91,6 +101,15 @@ describe('[자율운전] 편성기 full 모드 — 사람 대기 대신 replan',
     assert.match(r.ex('2-1-a').why, /자율 한계/)
     assert.deepEqual(r.info.humanGates.map((g) => [g.key, g.type]), [['2-1-a', 'question']])
     assert.ok(r.pick('2-2-b'), '다른 스토리는 계속 돈다')
+  })
+  it('편성만 되고 실행이 안 된 슬롯이 이어져도 「자율 한계」로 빠지지 않는다(회차는 러너가 실행 기준으로 센다 · 리뷰 #2)', () => {
+    const fx = { sprint: { '2-1-a': 'in-progress' }, stories: { '2-1-a': story({ status: 'in-progress', tasks: '- [ ] T1' }) }, state: { days: { '2026-09-01': { planned: ['2-1-a', '2-1-a', '2-1-a', '2-1-a'], stops: 0 } } } }
+    for (let i = 0; i < 3; i++) {
+      const r = run(fx)
+      assert.ok(r.pick('2-1-a'), '편성 ' + (i + 1) + '회차에서 빠졌다: ' + JSON.stringify(r.info.excluded))
+      assert.deepEqual(r.batch('2-1-a').stages, ['replan', 'dev'])
+      assert.equal(r.state.replans['2-1-a'] ?? 0, 0)
+    }
   })
   it('진전이 나면 replan 회차는 0 으로 본다(스트릭 리셋과 같은 잣대)', () => {
     const r = run({
@@ -107,6 +126,9 @@ describe('[자율운전] 편성기 full 모드 — 사람 대기 대신 replan',
     assert.equal(r.info.humanGates[0].type, 'question')
     const solved = story({ status: 'in-progress', tasks: '- [ ] T1', head: '~~BLOCKED-ON-HUMAN: 운영 DB 키가 필요하다~~ — ✅ 해소(2026-09-03)' })
     assert.ok(run({ sprint: { '2-1-a': 'in-progress' }, stories: { '2-1-a': solved } }).pick('2-1-a'))
+    // 인용·목록 안의 과거 기재는 표식이 아니다(줄머리 0열만 · 리뷰 #14)
+    const quoted = story({ status: 'in-progress', tasks: '- [ ] T1', head: '> 지난주 replan 은 BLOCKED-ON-HUMAN: 키 필요 를 남겼었다\n- BLOCKED-ON-HUMAN: 이것도 인용' })
+    assert.ok(run({ sprint: { '2-1-a': 'in-progress' }, stories: { '2-1-a': quoted } }).pick('2-1-a'))
   })
   it('사람 게이트 Task 만 남은 스토리는 gate 로 사람 몫(그 외 스토리는 계속)', () => {
     const r = run({ sprint: { '2-1-a': 'in-progress' }, stories: { '2-1-a': story({ status: 'in-progress', tasks: '- [ ] 사람 게이트: 운영 DB 적용은 박사장 승인' }) } })
@@ -200,6 +222,10 @@ describe('[자율운전] 원장 신호 · 검증기 · 오케스트레이터 · 
     assert.ok(flags.includes('--autonomy') && flags[flags.indexOf('--autonomy') + 1] === 'full')
     assert.equal(providerConfig({ providers: {} }).autonomy.mode, 'guarded')
     assert.ok(!engineFlagsFromConfig(providerConfig({ providers: {} })).includes('--autonomy'))
+    // autonomy 키만 있는 설정: guarded 면 명령줄 불변([]) · full 이면 --autonomy 만 붙는다(리뷰 #3)
+    assert.deepEqual(engineFlagsFromConfig(providerConfig({ autonomy: { mode: 'guarded' } })), [])
+    assert.deepEqual(engineFlagsFromConfig(providerConfig({ autonomy: { mode: 'full' } })), ['--autonomy', 'full'])
+    assert.equal(providerConfig({ autonomy: { mode: 'full' } }).configured, false)
     assert.equal(parallelPlan({ storyCount: 2, stages: ['replan', 'dev'], parallel: 2 }), 2)
     assert.equal(parallelPlan({ storyCount: 2, stages: ['mockup', 'dev', 'review'], parallel: 2 }), 1)
   })

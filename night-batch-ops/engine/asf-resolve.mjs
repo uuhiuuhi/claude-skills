@@ -7,19 +7,20 @@
 // 정적 import 대신 `await import(resolveAsf('quality-rules.mjs'))` 로 쓴다(ESM 최상위 await).
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
-/** 후보 경로(순서대로): 저장소 배치(engine/ 기준 ../../) → 형제 폴더(../) → 전역 스킬 설치본. */
+/** 후보 경로(순서대로). 저장소 배치(`night-batch-ops/engine/` 안)에서만 `../../auto-story-finish` 를 1순위로 두고,
+ *  설치본(`tools/auto/` 등)에서는 **전역 스킬 설치본이 1순위**다 — 프로젝트 루트에 우연히 같은 이름의 폴더가
+ *  있어도 그것을 엔진으로 잡지 않는다(리뷰 #13). */
 export function asfCandidates(relName, { here = HERE, home = homedir() } = {}) {
   const name = String(relName ?? '').replace(/^[/\\]+/, '')
-  return [
-    resolve(here, '..', '..', 'auto-story-finish', name),
-    resolve(here, '..', 'auto-story-finish', name),
-    join(home, '.claude', 'skills', 'auto-story-finish', name),
-  ]
+  const inRepo = basename(resolve(here, '..')) === 'night-batch-ops'
+  const repo = [resolve(here, '..', '..', 'auto-story-finish', name), resolve(here, '..', 'auto-story-finish', name)]
+  const global = [join(home, '.claude', 'skills', 'auto-story-finish', name)]
+  return inRepo ? [...repo, ...global] : [...global, ...repo]
 }
 
 /** 존재하는 첫 후보의 file:// URL. 없으면 시도한 경로를 전부 담아 던진다(조용한 폴백 금지). */

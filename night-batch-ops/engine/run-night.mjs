@@ -47,8 +47,11 @@ const ENGINE = join(homedir(), '.claude', 'skills', 'auto-story-finish', 'auto-s
 // 엔진 기본 화이트리스트(--commit-paths 기본값)를 그대로 옮기고 목업 폴더 하나만 더한다.
 const ENGINE_COMMIT_PATHS = 'src,tests,supabase,tools,public,.github,_bmad-output,package.json,package-lock.json,wrangler.jsonc,.env.example,.gitignore,index.html,vite.config.ts,tsconfig.json,tsconfig.app.json,tsconfig.node.json,eslint.config.js,components.json,CLAUDE.md,README.md'
 const mockupCommitPaths = (cfg) => {
-  const dir = String(cfg?.mockupGate?.mockupsDir ?? 'mockups').replace(/[\/]+$/, '')
-  return /^[A-Za-z0-9._-]+$/.test(dir) ? `${ENGINE_COMMIT_PATHS},${dir}` : ENGINE_COMMIT_PATHS
+  const dir = String(cfg?.mockupGate?.mockupsDir ?? 'mockups').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')
+  const segs = dir.split('/')
+  const ok = dir !== '' && segs.every((s) => /^[A-Za-z0-9._-]+$/.test(s) && s !== '..' && s !== '.')
+  if (!ok) console.log(`⚠ mockupGate.mockupsDir(${dir}) 형식 불가 — 목업 HTML 이 스토리 커밋에 실리지 않는다(장부만 커밋됨)`)
+  return ok ? `${ENGINE_COMMIT_PATHS},${dir}` : ENGINE_COMMIT_PATHS
 }
 const ART = resolve('_bmad-output/implementation-artifacts')
 const LOG_DIR = join(ART, 'auto-pipeline-logs')
@@ -813,6 +816,19 @@ async function applyOrchestrator(q, outPath) {
     console.log(`[ORCHESTRATOR] source=${PLAN_SOURCE} (${cacheState})`)
     // 규칙 큐의 배치 속성(force · models · replanHint)은 **승계**한다 — 종전에는 force 가 떨어져 회수 배치의 dev 가
     // state.json 완료 기록으로 skip 되는 길이 열려 있었다(무진전의 숨은 원인 후보 · 2026-09-03 자율운전 개편에서 발견).
+    const sigOf = (key) => {
+      const s = batches.find((x) => (x.stories ?? []).includes(key)) ?? {}
+      return `${(s.stages ?? []).join('>')}|${s.force ? 'f' : ''}|${s.replanHint ?? ''}`
+    }
+    const mixed = plan.batches.find((b) => new Set((b.stories ?? []).map(sigOf)).size > 1)
+    if (mixed) {
+      // 규칙 큐가 스토리마다 정한 단계(replan/mockup 유무·force·힌트)는 LLM 이 바꿀 수 없다 — 섞이면 replan 이 필요 없는
+      // 스토리에 replan 이 붙어 NO-OP exit 4 가 난다(리뷰 #5). 이 계획은 버리고 규칙 큐로 간다.
+      console.log(`⚠ [ORCHESTRATOR] 단계 서명이 다른 스토리를 한 배치에 묶었다(${(mixed.stories ?? []).join(', ')}) — 규칙 큐로 계속`)
+      PLAN_SOURCE = 'deterministic-fallback(stage-mismatch)'
+      PLAN_CACHE_NOTE = cacheState
+      return false
+    }
     q.batches = plan.batches.map((b, i) => {
       const src = batches.find((x) => (x.stories ?? []).includes(b.stories?.[0])) ?? {}
       return {
@@ -835,7 +851,7 @@ async function applyOrchestrator(q, outPath) {
 
   // ── 지문 ──
   const meta = q._편성 ?? {}
-  const capNum = Number(meta.cap)
+  const capNum = meta.cap == null ? NaN : Number(meta.cap) // full 의 null(무제한)을 0 으로 읽지 않는다(리뷰 #7)
   const fingerprint = orchFingerprint({
     stories,
     blocked: (meta.excluded ?? []).map((e) => `${e?.key ?? ''}|${e?.why ?? ''}`),
@@ -957,6 +973,16 @@ async function selectQueue() {
       // 자율운전: 남은 것은 전부 사람 몫(질문·게이트·사후 확인)이다 — 「내가 할 일 뭐야」 한마디로 모아 본다
       if (humanN > 0 && !dryRun) notify(`할 일 0 — 사람 몫 ${humanN}건`, `자율운전이 스스로 풀 수 없는 항목 ${humanN}건이 남았다 — 「내가 할 일 뭐야」로 확인`,
         `사람 몫 ${humanN}건. ${NTFY_BRIEF}`)
+      else if (!dryRun) {
+        // 후보도 사람 몫도 0 = 전부 done 이거나 원장이 비었다 — 무음 유휴는 금지(리뷰 #9) · 하루 1회
+        const { day, save } = loadState()
+        day.notified ??= {}
+        if (!day.notified.idleFull) {
+          notify('자율운전 유휴 — 편성 후보 0 · 사람 몫 0', '돌릴 스토리도 사람 몫도 없다. 전부 done 이면 다음 에픽/스토리를 장전할 차례다(sprint-status.yaml · epics.md 확인).', `후보 0 · 사람 몫 0. ${NTFY_BRIEF}`)
+          day.notified.idleFull = true
+          save()
+        }
+      }
     } else if (blocked > 0 && !dryRun) notify('할 일 0 · 결정 대기', `결정 대기가 스토리 ${blocked}개를 막고 있다 — DECISIONS-INBOX.md`,
       `결정 대기가 스토리 ${blocked}개를 막는 중. ${NTFY_BRIEF}`)
     return null
@@ -1525,7 +1551,7 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
       const pr = await runBatchParallel({ batch, defaults, workers: par, record })
       if (pr !== null) {
         addMetrics(pr.metrics)
-        results.push({ label, code: pr.code, started, batchBase, stories: batch.stories ?? [] })
+        results.push({ label, code: pr.code, started, batchBase, stories: batch.stories ?? [], stages: batch.stages ?? [] })
         record(`- ${pr.code === 0 ? '완주' : `**중단(exit ${pr.code})**`}: ${label} (병렬)`)
         if (pr.code !== 0) {
           record(`- 남은 배치는 실행하지 않았다 — \`auto-pipeline-logs/run-summary.log\` 확인`)
@@ -1596,7 +1622,7 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
         workers: 1, quality: { integration: seqIntegration }, tokens: {},
       })
     }
-    results.push({ label, code, started, batchBase, stories: batch.stories ?? [] })
+    results.push({ label, code, started, batchBase, stories: batch.stories ?? [], stages: batch.stages ?? [] })
     record(`- ${code === 0 ? '완주' : `**중단(exit ${code})**`}: ${label}`)
     if (code !== 0) {
       // 앞 배치가 멈췄는데 뒤를 돌리면 원인이 섞인다.
@@ -1675,6 +1701,10 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
         if (!day.progressed.includes(k)) day.progressed.push(k)
       }
     }
+    // 자율운전 replan 회차 — 편성기가 아니라 러너가, replan 단계가 든 배치가 **실제로 돈** 라운드에만 +1 (리뷰 #2).
+    // 성공·실패를 가리지 않는다: 두 번 헛돌면 편성기가 「자율 한계」로 사람 질문에 올린다.
+    s.replans ??= {}
+    for (const r of results) if ((r.stages ?? []).includes('replan')) for (const k of r.stories ?? []) s.replans[k] = (s.replans[k] ?? 0) + 1
     save()
     const fullMode = autoQueueMeta?.mode === 'full'
     const blocked = fullMode ? (autoQueueMeta?.humanGates ?? []).length : (autoQueueMeta?.excluded ?? []).filter((e) => e.why.includes('결정 대기')).length
