@@ -15,6 +15,9 @@ import { parallelHazardsExtended } from './conflicts.mjs'
  *  왜 이렇게 좁히나: 이 값은 결국 자식 프로세스의 argv 로 간다 — 공백·따옴표·`;`·`$(`·`&` 같은
  *  셸 메타문자가 섞이면 실행 경로(특히 Windows `.cmd` 심)에서 명령이 갈라질 수 있다. */
 export const MODEL_SPEC_RE = /^(?:(?:claude|codex):)?[A-Za-z0-9][A-Za-z0-9._-]*$/
+/** 단계 이름 화이트리스트 — 엔진(auto-story-pipeline)과 같은 5종. mockup(AI 목업 초안)·replan(시니어 재계획)은
+ *  자율운전(2026-09-03)에서 추가됐다. 계획 검증기·오케스트레이터 스키마가 같은 목록을 본다. */
+export const STAGE_NAMES = Object.freeze(['create', 'mockup', 'replan', 'dev', 'review'])
 export function isValidModelSpec(spec) {
   const s = String(spec ?? '')
   if (!s || s !== s.trim()) return false
@@ -180,7 +183,7 @@ export function validatePlan(plan, dag = { nodes: [], edges: [], cycles: [], byK
     }
     // 단계 이름
     for (const s of b?.stages ?? []) {
-      if (!['create', 'dev', 'review'].includes(s)) errors.push(E('stage', stories[0] ?? null, `배치 ${bi + 1} 에 알 수 없는 단계 '${s}'`))
+      if (!STAGE_NAMES.includes(s)) errors.push(E('stage', stories[0] ?? null, `배치 ${bi + 1} 에 알 수 없는 단계 '${s}'`))
     }
     // ④ 같은 배치 안 충돌 — File List 겹침 + 범주별 위험(마이그레이션·스키마·계약·설정·테스트 환경)
     if (stories.length >= 2) {

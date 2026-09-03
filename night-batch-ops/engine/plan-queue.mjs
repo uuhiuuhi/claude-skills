@@ -28,11 +28,14 @@ import * as RULES from './runner-rules.mjs'
 // 해석 규칙을 고칠 일이 있으면 story-ledger.mjs 한 곳만 고친다. 종전 소비자 호환을 위해 재수출한다.
 import {
   MOCKUP_GATE_DEFAULT, openFindings, isHumanGateLine,
-  readStorySignals, parseSprint, epicSection, mockupGateOk,
+  readStorySignals, parseSprint, epicSection, mockupGateOk, mockupEntries,
 } from './story-ledger.mjs'
 // 계획 DAG·검증기(9점대 하네스 · 2026-09-02): 편성기가 만든 큐도 **자기 검증**을 통과해야 한다.
 // LLM 계획(orchestrate.mjs)과 같은 잣대로 본다 — 검증기가 규칙 계획만 봐주면 잣대가 아니다.
 import { buildDag, parseDependsOn, validatePlan } from './plan-dag.mjs'
+// 짝짓기 단계에서 확장 충돌 판정(테스트 환경·마이그레이션·계약·공유 설정)을 **미리** 본다 — 검증기가 나중에 걸면
+// 걸린 스토리가 이번 라운드에서 통째로 빠진다(2026-09-04 실측: 자율 편성 53건 중 3건이 「배치 병렬 불가」로 탈락).
+import { parallelHazardsExtended } from './conflicts.mjs'
 // 모델 배정은 홀짝이 아니라 **점수**(난이도·위험도·가용성·최근 실패)로 한다.
 import { ASSIGN_HISTORY_FILE, assignBatchModels, parseHistory } from './assign.mjs'
 export {
@@ -89,10 +92,16 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     throw new Error('auto.config.json 의 epicOrder 가 비어 있다 — 편성 불가(프로젝트의 에픽 우선순위는 사람이 정한다)')
   }
   const PARALLEL_ALLOW = cfg.parallelAllow ?? {} // 예: { "<스토리키>": <에픽번호> } — 그 에픽이 진행 중이어도 후보로 두는 예외
+  // ── 자율운전(full) — 2026-09-03 👤 「판단을 사람에게 넘기는 기준 전부 삭제 · 시니어 기획자 수준 24시간」 ──
+  // guarded(기본 · 종전) 는 아래 규칙 1~10 그대로다. full 은 「되돌릴 수 없는 실행」만 사람 몫으로 남기고
+  // 결정·회수 라운드 개방·재투입 금지·무진전·체인·상한·목업 승인을 전부 편성 안에서 푼다(replan/mockup 단계).
+  const AUTO = cfg.autonomy?.mode === 'full'
+  const autoCfg = { maxReplansPerStory: 2, epicScope: 'all', mockups: 'ai-draft', ...(cfg.autonomy ?? {}) }
+  const humanGates = [] // { key, type: 'question'|'gate'|'post-hoc', text } — 「내가 할 일 뭐야」 재료
   // 상한은 페이스가 아니라 폭주 방지 백스톱이다 — 몫을 다 했다고 남은 슬롯이 쉬면 안 된다
   // (실사고: 상한 12 시절, 오전에 12건 소진 후 남은 슬롯이 통째로 놀았다). 실질 제동은
   // STOP 차단기·결정 대기 제외·사용량 한도 대기·리뷰 게이트가 맡는다.
-  const capBase = max ?? cfg.dailyCap ?? 30
+  const capBase = max ?? (AUTO && !(Number(cfg.dailyCap) > 0) ? Infinity : (cfg.dailyCap ?? 30)) // full: 0/없음 = 무제한
   const models = cfg.models ?? null // 예: { dev: 'fable', review: 'opus' } — 없으면 CLI 기본 모델
   // 주간 한도가 소진된 모델 — 배정 단계에서 미리 피한다(엔진 프로브가 헛돌지 않게).
   // 프로젝트 사정이라 config 소유이고 기본은 빈 목록이다.
@@ -115,6 +124,7 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   const statePath = join(stateDir, 'auto-plan-state.json')
   const state = JSON.parse(readIf(statePath) ?? '{}')
   state.days ??= {}
+  state.replans ??= {} // full: 스토리별 replan 회차(진전이 나면 0 으로 본다)
   // day.progressed[] 는 러너가 쓴다(그 라운드 커밋이 실제로 만진 스토리 키) — 규칙 9 v2 의 재료.
   // 편성기는 읽기만 한다(단일 작성자 원칙).
   const day = (state.days[today] ??= { planned: [], stops: 0, consumed: {} })
@@ -136,11 +146,16 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   // 미머지 체인이 CHAIN_MAX_AGE_DAYS 일 이상이면 **신규 착수만** 보류한다(회수·마감 재검수는 계속 —
   // 이미 시작된 일의 마무리는 검토 축적이 아니다). 사람이 머지하면 러너가 나이를 0 으로 되돌린다.
   const chainAgeDays = Math.max(0, Number(readJson(join(stateDir, 'chain-info.json')).ageDays ?? 0) || 0)
-  const chainBlocksNew = !allowNewUnderChain(chainAgeDays)
+  const chainBlocksNew = AUTO ? false : !allowNewUnderChain(chainAgeDays) // full: 체인은 알림만(머지는 사람 몫)
 
   const allRows = parseSprint(sprintText)
   const doneKeys = allRows.filter((r) => r.status === 'done').map((r) => r.key)
   const rows = allRows.filter((r) => r.status !== 'done')
+  // full: 에픽 순서는 우선순위일 뿐 — 적힌 에픽 뒤에 나머지 에픽을 번호순으로 잇는다(epicScope 'listed' 면 종전처럼 자른다).
+  const allEpics = [...new Set(allRows.map((r) => r.epic))].sort((a, b) => a - b)
+  const EPIC_ORDER_EFF = AUTO && autoCfg.epicScope !== 'listed' ? [...EPIC_ORDER, ...allEpics.filter((e) => !EPIC_ORDER.includes(e))] : EPIC_ORDER
+  // full: 선행이 review(코드 실재)면 후속을 허용한다 — done 만 기다리면 3주 표류(2-1) 뒤의 후속이 영영 막힌다.
+  const depSatisfiedKeys = AUTO ? allRows.filter((r) => r.status === 'done' || r.status === 'review').map((r) => r.key) : doneKeys
   // 스토리 md 의 선행 표기(「선행: 2.1」 · 「depends-on: 11-3」) — DAG 간선 재료.
   // 줄머리 라벨만 인정한다(본문에 스친 「선행」을 의존으로 읽으면 멀쩡한 스토리가 통째로 빠진다).
   const depsOf = new Map()
@@ -173,12 +188,78 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     '무진전 편성 ' + streakLimit(kind) + '회 연속 소진 — 반복 편성은 사람 판단(규칙 9 v2 · 진전 시 자동 리셋)'
   const CHAIN_WHY = () =>
     '무머지 체인 ' + chainAgeDays + '일 — 신규 착수 보류(사람 머지 후 재개 · 회수·재검수는 계속)'
-  for (const r of rows) if (!EPIC_ORDER.includes(r.epic)) exclude(r.key, '에픽 ' + r.epic + ' 은 목표 범위 밖(규칙 1 — epicOrder)')
+  for (const r of rows) if (!EPIC_ORDER_EFF.includes(r.epic)) exclude(r.key, '에픽 ' + r.epic + ' 은 목표 범위 밖(규칙 1 — epicOrder)')
+
+  // ── 자율운전(full) 판정 ──
+  // 사람 몫으로 남는 것은 ① 스토리가 스스로 남긴 「사람 질문 대기」 표식(BLOCKED-ON-HUMAN) ② 사람 게이트 Task 만 남은 스토리
+  // ③ 자율 한계(무진전 + replan 소진) ④ epics 이연 확정 ⑤ 선행 미완(후속을 미루고 선행을 먼저) 뿐이다.
+  // 결정·회수 라운드 개방·재투입 금지·무진전은 전부 replan(시니어 재계획) 단계가 흡수한다.
+  const gateOut = (key, type, why) => { exclude(key, why); humanGates.push({ key, type, text: why }); return null }
+  const replansOf = (key) => (unproductiveStreak(key) === 0 ? 0 : Number(state.replans[key] ?? 0))
+  const mockupPlan = (section, key) => {
+    if (autoCfg.mockups === 'approved-only') { const g = mockupGateOk(section, key, verdicts, gateCfg); return g.ok ? { stage: false } : { block: g.why + '(규칙 6)' } }
+    const m = mockupEntries(section, key, verdicts, gateCfg)
+    if (!m.applies) return { stage: false }
+    if (m.entries.length === 0) return { stage: true, note: 'AI 목업 초안 생성(목업 부재)' }
+    const names = (list) => list.map((e) => e.file.split('/').pop()).join(', ')
+    const rejected = m.entries.filter((e) => e.verdict === 'rejected')
+    if (rejected.length && !m.entries.some((e) => e.verdict === 'approved')) return { stage: true, note: '목업 재작성(rejected: ' + names(rejected) + ')' }
+    const pending = m.entries.filter((e) => e.verdict === 'pending')
+    if (pending.length) humanGates.push({ key, type: 'post-hoc', text: '목업 사후 확인: ' + names(pending) })
+    return { stage: false }
+  }
+  const judgeAuto = (r, section, text) => {
+    const streak = unproductiveStreak(r.key)
+    const overLimit = () => streak >= 2 && replansOf(r.key) >= autoCfg.maxReplansPerStory
+    const limitWhy = () => '자율 한계 — 사람 질문 필요(무진전 ' + streak + '회 · replan ' + replansOf(r.key) + '회)'
+    if (text === null) {
+      const mp = mockupPlan(section, r.key)
+      if (mp.block) return exclude(r.key, mp.block), null
+      if (overLimit()) return gateOut(r.key, 'question', limitWhy())
+      if (streak >= 2) state.replans[r.key] = replansOf(r.key) + 1 // 신규는 replan 단계가 없다(파일 부재) — 회차만 센다
+      const stages = mp.stage ? ['create', 'mockup', 'dev', 'review'] : ['create', 'dev', 'review']
+      return { ...r, kind: 'new', files: [], stages, force: false, notes: [mp.note].filter(Boolean) }
+    }
+    const s = readStorySignals(text)
+    depsOf.set(r.key, parseDependsOn(text))
+    if (s.blockedOnHuman) return gateOut(r.key, 'question', '사람 질문 대기: ' + s.blockedOnHuman)
+    if (s.unfinishedTasks === 0 && s.humanGateTasks > 0 && s.openPatches === 0 && r.status !== 'review') {
+      return gateOut(r.key, 'gate', '사람 게이트만 남음: ' + String(s.humanGateLines[0] ?? '').slice(0, 120))
+    }
+    const recovery = r.status === 'review' || r.status === 'in-progress'
+    const notes = []
+    let kind, stages
+    if (r.status === 'review' && s.unfinishedTasks === 0 && s.openPatches === 0 && !s.openDecision) { kind = 'closeout'; stages = ['review'] }
+    else {
+      kind = recovery ? 'recovery' : 'new'
+      stages = kind === 'recovery' ? ['dev'] : ['create', 'dev', 'review']
+      const why = []
+      if (s.openDecision) why.push('AI 결정 ' + s.openDecisions + '건 채택')
+      if (s.unfinishedTasks === 0 && s.openPatches > 0) why.push('회수 라운드 개방(열린 Patch ' + s.openPatches + ')')
+      else if (s.unfinishedTasks === 0 && recovery) why.push('남은 일 재계획(미완 Task 0)')
+      if (s.banPresent) why.push('재투입 금지 표기는 조언으로만 봄')
+      if (why.length) { stages = ['replan', ...stages]; notes.push(...why) }
+    }
+    const mp = kind === 'closeout' ? { stage: false } : mockupPlan(section, r.key) // 마감 재검수엔 목업 초안을 붙이지 않는다
+    if (mp.block) return exclude(r.key, mp.block), null
+    if (mp.stage) { stages = ['mockup', ...stages]; notes.push(mp.note) }
+    let replanHint = null
+    if (streak >= 2) {
+      if (overLimit()) return gateOut(r.key, 'question', limitWhy())
+      const n = replansOf(r.key) + 1
+      state.replans[r.key] = n
+      if (!stages.includes('replan')) stages = ['replan', ...stages]
+      replanHint = '무진전 편성 ' + streak + '회 — 접근을 바꿔라(과제 재작성·분할·다른 구현 경로)'
+      notes.push('무진전 ' + streak + '회 → replan ' + n + '/' + autoCfg.maxReplansPerStory)
+    }
+    return { ...r, kind, files: s.files, stages, force: kind !== 'new', notes, ...(replanHint ? { replanHint } : {}) }
+  }
 
   const judge = (r) => {
     const section = epicSection(epicsText, r.key)
     if (/⏸|이연 확정/.test(section)) return exclude(r.key, 'epics 이연 확정 문언(⏸) — 편성 제외(규칙 1)'), null
     const text = readIf(join(ART, r.key + '.md'))
+    if (AUTO) return judgeAuto(r, section, text)
     if (text === null) {
       const gate = mockupGateOk(section, r.key, verdicts, gateCfg)
       if (!gate.ok) return exclude(r.key, gate.why + '(규칙 6)'), null
@@ -226,12 +307,17 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   // 규칙 1: 순서상 첫 「후보 보유」 에픽까지만 편성한다. 전부 막힌 에픽은 다음 에픽에 길을 내준다.
   const candidates = []
   let currentEpic = null
-  for (const epic of EPIC_ORDER) {
-    const epicRows = rows.filter((r) => r.epic === epic)
-    const got = epicRows.map(judge).filter(Boolean)
-    if (got.length > 0) { currentEpic = epic; candidates.push(...got); break }
+  if (AUTO) {
+    // full: 에픽 순서는 우선순위일 뿐 댐이 아니다 — 유효 순서의 모든 에픽을 훑어 후보를 전부 모은다(진행 에픽 개념 없음).
+    for (const epic of EPIC_ORDER_EFF) for (const r of rows.filter((x) => x.epic === epic)) { const got = judge(r); if (got) candidates.push(got) }
+  } else {
+    for (const epic of EPIC_ORDER) {
+      const epicRows = rows.filter((r) => r.epic === epic)
+      const got = epicRows.map(judge).filter(Boolean)
+      if (got.length > 0) { currentEpic = epic; candidates.push(...got); break }
+    }
   }
-  if (currentEpic !== null) {
+  if (!AUTO && currentEpic !== null) {
     for (const epic of EPIC_ORDER.slice(EPIC_ORDER.indexOf(currentEpic) + 1)) {
       for (const r of rows.filter((x) => x.epic === epic)) {
         const shortKey = r.key.split('-').slice(0, 2).join('-')
@@ -253,7 +339,7 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   }
 
   // 규칙 7: 하루 상한
-  const capText = cap + (capBonus > 0 ? '(기본 ' + capBase + ' + 연장 ' + capBonus + ')' : '')
+  const capText = Number.isFinite(cap) ? cap + (capBonus > 0 ? '(기본 ' + capBase + ' + 연장 ' + capBonus + ')' : '') : '제한 없음'
   // 규칙 7(P0-b): 재편성(오늘 이미 편성된 스토리)은 **무과금**이라 잘라내지 않는다 —
   // slice 로 앞에서 N개만 취하면 dev↔review 왕복이 상한을 거듭 먹어 새 스토리가 밀린다.
   const capped = []
@@ -298,13 +384,22 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   const modelsForBatch = (kind, group) => {
     const base = modelsFor(kind)
     if (!base) return null
-    return assignBatchModels({
+    const res = assignBatchModels({
       base,
       stories: group.map((c) => ({ key: c.key, kind, files: c.files ?? [] })),
       providers: cfg.providers ?? {},
       history: assignHistory,
       config: { split: Boolean(cfg.providers?.codex?.split) },
     })
+    const assigned = res ? { ...res } : res
+    if (AUTO && assigned) {
+      // 재계획·목업 단계 모델 — 지휘/판정은 최상위(fable) · 소진 시 opus(교차검증 짝과 무관한 단독 단계)
+      const top = exhausted.includes('fable') ? 'opus' : 'fable'
+      const st = group[0]?.stages ?? []
+      if (st.includes('replan') && !assigned.replan) assigned.replan = top
+      if (st.includes('mockup') && !assigned.mockup) assigned.mockup = top
+    }
+    return assigned
   }
 
   // 규칙 5: 회수끼리 File List 서로소면 2개까지 한 배치 · 신규는 단독 배치
@@ -325,7 +420,9 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
         const mateIdx = pool.findIndex((c) => {
           const mateFiles = realFiles(c)
           return c.kind === head.kind && c.epic === head.epic && mateFiles.length > 0 &&
-            mateFiles.every((f) => !used.includes(f))
+            (c.stages ?? []).join() === (head.stages ?? []).join() && (c.replanHint ?? '') === (head.replanHint ?? '') && // 단계 서명이 같은 것끼리만(replan 유무)
+            mateFiles.every((f) => !used.includes(f)) &&
+            parallelHazardsExtended([...batch.map((b) => b.files ?? []), c.files ?? []]).parallelOk // 검증기와 같은 잣대로 짝을 고른다
         })
         if (mateIdx < 0) break
         batch.push(pool.splice(mateIdx, 1)[0])
@@ -340,15 +437,15 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   // 실패해도 throw 하지 않는다(밤이 서면 안 된다): 걸린 스토리만 빼고 사유를 큐에 남긴다.
   const dag = buildDag({
     stories: batches.flat().map((c) => ({ key: c.key, epic: c.epic, kind: c.kind, files: c.files ?? [], deps: depsOf.get(c.key) ?? [] })),
-    epicOrder: EPIC_ORDER,
+    epicOrder: EPIC_ORDER_EFF,
   })
   const validation = validatePlan(
     { batches: batches.map((b) => ({ stories: b.map((c) => c.key), stages: b[0].stages, ...(modelsForBatch(b[0].kind, b) ? { models: modelsForBatch(b[0].kind, b) } : {}) })) },
     dag,
     {
       knownKeys: allRows.map((r) => r.key),
-      doneKeys,
-      epicOrder: EPIC_ORDER,
+      doneKeys: depSatisfiedKeys,
+      epicOrder: EPIC_ORDER_EFF,
       currentEpic,
       parallelAllow: PARALLEL_ALLOW,
       cap: { limit: cap, plannedToday: day.planned },
@@ -368,11 +465,14 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   }
 
   const KIND_LABEL = { recovery: (c) => '회수(' + c.status + ')', closeout: () => '마감 재검수(review→done 후보 · 규칙 10)', new: () => '신규(backlog)' }
-  const picked = batches.flat().map((c) => ({ key: c.key, why: (KIND_LABEL[c.kind] ?? KIND_LABEL.new)(c) }))
+  const picked = batches.flat().map((c) => ({
+    key: c.key,
+    why: (KIND_LABEL[c.kind] ?? KIND_LABEL.new)(c) + ((c.notes ?? []).length ? ' · ' + c.notes.join(' · ') : '') + (AUTO ? ' · ' + (c.stages ?? []).join('→') : ''),
+  }))
 
   const queue = {
     planned: 'auto',
-    updated: today + ' 자동 편성(plan-queue · 상한 ' + capBase + (capBonus > 0 ? '+' + capBonus : '') +
+    updated: today + (AUTO ? ' 자율 편성(full · plan-queue · 상한 ' : ' 자동 편성(plan-queue · 상한 ') + (Number.isFinite(capBase) ? capBase : '없음') + (capBonus > 0 ? '+' + capBonus : '') +
       ' · 오늘 기편성 ' + day.planned.length + (chainAgeDays > 0 ? ' · 체인 ' + chainAgeDays + '일' : '') + ')',
     // parallel ≥ 2 = 병렬 점화 — File List 서로소 2스토리 dev 배치(규칙 5 짝)만 러너가
     // 워크트리 분리 병렬로 돌린다. 조건 미달 배치는 러너가 순차 폴백(runner-rules.parallelPlan).
@@ -383,6 +483,7 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
       stories: b.map((c) => c.key),
       stages: b[0].stages,
       force: b[0].force,
+      ...(b[0].replanHint ? { replanHint: b[0].replanHint } : {}),
       ...(modelsForBatch(b[0].kind, b) ? { models: modelsForBatch(b[0].kind, b) } : {}),
     })),
     // 자기 검증 결과 — ok=false 여도 큐는 나간다(걸린 스토리는 위에서 이미 뺐다).
@@ -390,7 +491,7 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     validation,
     // cap = 실효 상한(기본 + /extend 연장) · capBonus = 연장분 · chainAgeDays = 미머지 체인 나이
     // notes = 스토리별이 아닌 편성 전체의 단서(예: 목업 게이트 미구성)
-    _편성: { date: today, picked, excluded, notes: gateNotes, cap, capBonus, chainAgeDays, alreadyPlannedToday: day.planned.length },
+    _편성: { date: today, mode: AUTO ? 'full' : 'guarded', picked, excluded, humanGates, notes: gateNotes, cap: Number.isFinite(cap) ? cap : null, capBonus, chainAgeDays, alreadyPlannedToday: day.planned.length },
   }
   return { queue, state, statePath, day }
 }
@@ -413,12 +514,13 @@ if (isMain) {
   const maxOpt = opt('max', '')
   const { queue, state, statePath, day } = plan({ root: process.cwd(), stateDir, max: maxOpt ? Number(maxOpt) : undefined, config: cfg })
   const info = queue._편성
-  console.log('# 편성 ' + info.date + ' — 고름 ' + info.picked.length + ' · 뺌 ' + info.excluded.length + ' · 배치 ' + queue.batches.length +
-    ' · 상한 ' + info.cap + (info.capBonus > 0 ? '(연장 +' + info.capBonus + ')' : '') +
+  console.log('# 편성 ' + info.date + (info.mode === 'full' ? ' [자율운전 full]' : '') + ' — 고름 ' + info.picked.length + ' · 뺌 ' + info.excluded.length + ' · 배치 ' + queue.batches.length +
+    ' · 상한 ' + (info.cap ?? '없음') + (info.capBonus > 0 ? '(연장 +' + info.capBonus + ')' : '') +
     (info.chainAgeDays > 0 ? ' · 체인 ' + info.chainAgeDays + '일' : ''))
   for (const n of info.notes ?? []) console.log('  ! ' + n)
   for (const p of queue._편성.picked) console.log('  V ' + p.key + ' — ' + p.why)
   for (const e of queue._편성.excluded) console.log('  X ' + e.key + ' — ' + e.why)
+  for (const g of info.humanGates ?? []) console.log('  ? ' + g.key + ' [' + g.type + '] ' + g.text)
   if (!dry && out) {
     writeFileSync(resolve(out), JSON.stringify(queue, null, 2) + '\n', 'utf8')
     if (!argv.includes('--no-ledger')) {

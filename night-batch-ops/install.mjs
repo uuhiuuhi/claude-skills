@@ -146,6 +146,13 @@ if (!existsSync(cfgPath)) {
       '  cacheHours = 같은 후보 지문(후보 키·kind·상태 · 봉쇄 · 남은 상한 · parallel · 체인 나이 · 모델 가용성)이면 지난 계획을 그대로 다시 쓴다(0 이면 매 슬롯 호출).',
       '  적중은 [ORCHESTRATOR] source=fable(cache) (cache hit) — 30분 슬롯마다 같은 질문을 사지 않는다. 실행기가 연속 3회 죽으면 그 시간만큼 호출을 쉰다(runner-cooldown).',
       '⚠️ providers.codex.max 는 동시 상한이자 **배치당 Codex 몫**이다 — max:1 + 2폭이면 배치의 첫 스토리만 Codex 리뷰를 받는다.',
+      '── 자율운전(2026-09-03) ──',
+      'autonomy.mode: guarded(기본 = 위 규칙 그대로 · 결정·회수 라운드·목업 승인·무진전은 사람 몫) | full(24시간 자율운전).',
+      '  full: main 머지 · 배포 · 운영 DB 쓰기 · 삭제 · 외부 발송 · 시크릿은 종전대로 사람 승인이고, 그 밖의 편성 판단은 편성기·오케스트레이터가 한다 —',
+      '  결정은 replan/dev 가 ⭐추천안을 채택해 인박스 「🔵 사후 확인」에 근거를 남기며(사람이 사후 확인·되돌리기), 열린 Patch 만 남은 스토리는 replan 이 회수 Task 를 연다.',
+      '  무진전은 replan(접근 변경)으로 풀고 maxReplansPerStory 회를 넘기면 그 스토리만 「자율 한계」로 사람 질문에 올린다.',
+      '  epicScope all = epicOrder 뒤에 나머지 에픽을 번호순으로 잇는다(listed = 종전처럼 자른다) · mockups ai-draft = 새 화면은 AI 목업 초안 후 진행(approved-only = 사람 승인 대기).',
+      '  dailyCap 0 = 무제한(full 에서만) · 남은 사람 몫은 <상태 폴더>/human-gates.json 에 남고 「내가 할 일 뭐야」가 읽는다.',
     ],
     project,
     epicOrder: [],
@@ -168,6 +175,7 @@ if (!existsSync(cfgPath)) {
     quality: { autoRepair: true, sameRootCauseMaxRetries: 3, totalRepairAttempts: 5, integrity: 'auto' },
     integrationGate: { enabled: true },
     orchestrator: { enabled: true, model: 'fable', timeoutMin: 5, cacheHours: 12 },
+    autonomy: { mode: 'guarded', maxReplansPerStory: 2, epicScope: 'all', mockups: 'ai-draft' },
   }, null, 2) + '\n', 'utf8')
   console.log('✔ tools/auto/auto.config.json (epicOrder 를 채워야 자동 편성이 돈다)')
 } else notes.push('· auto.config.json 이미 있음 — 유지')

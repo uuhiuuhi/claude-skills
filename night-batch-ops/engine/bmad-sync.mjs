@@ -22,7 +22,8 @@
 import { createHash } from 'node:crypto'
 import * as nodeFs from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
-import { setSprintStatus, setStoryStatus } from '../../auto-story-finish/story-writes.mjs'
+import { resolveAsf } from './asf-resolve.mjs'
+const { setSprintStatus, setStoryStatus } = await import(resolveAsf('story-writes.mjs'))
 
 export const BMAD_PLAN_SCHEMA = 'night-batch-ops/bmad-write-plan/1'
 export const BMAD_APPLY_SCHEMA = 'night-batch-ops/bmad-apply/1'

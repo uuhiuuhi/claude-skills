@@ -34,8 +34,9 @@ import { spawnWithDeadline } from './spawn-deadline.mjs'
 import { assignWorkers } from './assign.mjs'
 import { parallelHazardsExtended } from './conflicts.mjs'
 import { summarizeTimeline } from './metrics.mjs'
-import { escalationReport } from '../../auto-story-finish/quality-rules.mjs'
-import { assertSafeModel, assertSafePath } from '../../auto-story-finish/providers/spawn-safe.mjs'
+import { resolveAsf } from './asf-resolve.mjs'
+const { escalationReport } = await import(resolveAsf('quality-rules.mjs'))
+const { assertSafeModel, assertSafePath } = await import(resolveAsf('providers/spawn-safe.mjs'))
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 

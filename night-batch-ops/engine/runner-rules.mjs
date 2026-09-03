@@ -99,7 +99,9 @@ export function parallelPlan({ storyCount, stages, parallel }) {
   // dev→qa→review 까지 돌고 커밋 1개로 landing 한다. create 는 스토리 파일 실재 시 skip 되고
   // File List 실측 대조(호출부)가 그 실재를 전제한다. dev 없는 배치(재검수 등)는 순차.
   if (!Array.isArray(stages) || !stages.includes('dev')) return 1
-  if (stages.some((s) => !['create', 'dev', 'review'].includes(s))) return 1
+  // replan(시니어 재계획 · 스토리 md 만 씀)은 워크트리 안에서 함께 돌아도 된다. mockup 은 공유 장부
+  // (tools/dev-status/mockup-verdicts.json)를 쓰므로 순차(landing 충돌 방지).
+  if (stages.some((s) => !['create', 'dev', 'review', 'replan'].includes(s))) return 1
   if (!Number.isInteger(storyCount) || storyCount < 2) return 1
   return Math.min(parallel, PARALLEL_MAX, storyCount)
 }
@@ -403,8 +405,10 @@ export function providerConfig(cfg = {}) {
   // 통합 게이트는 안전장치가 아니라 권고가 된다. 남아 있는 키는 **무시하고 경고**한다(조용히 먹지 않는다).
   const integrationGate = { enabled: c.integrationGate !== undefined && g.enabled !== false }
   if (g.pushOnFail !== undefined) warnings.push('[INTEGRATION] pushOnFail 은 폐지됨 — RED 는 항상 rollback')
-  const configured = c.providers !== undefined || c.workers !== undefined || c.quality !== undefined || c.integrationGate !== undefined
-  return { configured, workers, providers: { claude, codex }, quality, integrationGate, warnings }
+  // 자율운전(2026-09-03): mode 'full' 만 켜짐 — 편성기(plan-queue)와 엔진(--autonomy)이 같은 값을 본다.
+  const autonomy = { mode: c.autonomy?.mode === 'full' ? 'full' : 'guarded' }
+  const configured = c.providers !== undefined || c.workers !== undefined || c.quality !== undefined || c.integrationGate !== undefined || c.autonomy !== undefined
+  return { configured, workers, providers: { claude, codex }, quality, integrationGate, autonomy, warnings }
 }
 
 /** 병렬 폭 — `maxWorkers` 는 설정이 준 총 상한(기본 = 종전 하드캡 3 → parallelPlan 과 바이트 단위로 같은 결과). 절대 상한 6. */
@@ -579,6 +583,7 @@ export function engineFlagsFromConfig(pc) {
   // (2026-09-02) `--integrity` 는 **항상 명시**한다 — 엔진 기본값이 `on` 으로 바뀌어, 생략하면 설정의
   // `auto`(= autoRepair>0 일 때만)가 조용히 `on` 으로 승격된다. 설정이 곧 실행이어야 한다.
   a.push('--integrity', pc.quality.integrity)
+  if (pc.autonomy?.mode === 'full') a.push('--autonomy', 'full') // 엔진 프롬프트(AI 결정 채택 · 사후 확인 기록)와 인박스 절 제목을 바꾼다
   if (pc.providers.codex.enabled) {
     a.push('--providers', 'claude,codex', '--codex-roles', pc.providers.codex.roles.join(',') || 'review', '--codex-max', String(pc.providers.codex.max))
     if (pc.providers.codex.network) a.push('--codex-network', 'on')

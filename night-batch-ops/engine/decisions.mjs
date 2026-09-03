@@ -11,7 +11,8 @@
 // 이 모듈은 **쓰지 않는다** — 계획(op)만 만들어 `bmad-sync.applyBmadWrites` 에 넘긴다.
 
 import { createHash } from 'node:crypto'
-import { appendDecisionsInbox } from '../../auto-story-finish/story-writes.mjs'
+import { resolveAsf } from './asf-resolve.mjs'
+const { appendDecisionsInbox } = await import(resolveAsf('story-writes.mjs'))
 
 /** 질문이 허용되는 8범주(SPEC §6). 이 밖은 질문 자체를 만들지 않는다. */
 export const QUESTION_CATEGORIES = Object.freeze([

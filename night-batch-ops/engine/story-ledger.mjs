@@ -37,7 +37,8 @@ export const isHumanGateLine = (line) => /사람 게이트|박사장|👤/.test(
 
 /** 스토리 파일 판정 재료 */
 export function readStorySignals(text) {
-  const openDecision = openFindings(text, 'Decision') > 0
+  const openDecisions = openFindings(text, 'Decision')
+  const openDecision = openDecisions > 0
   const openPatches = openFindings(text, 'Patch')
   const banPresent = /재투입 금지|마지막 구현 라운드/.test(text)
   // Tasks/Subtasks 절 안의 미완 체크박스만 센다 — Review Findings 의 [ ] 는 dev 엔진 Step 1 이
@@ -47,12 +48,18 @@ export function readStorySignals(text) {
   // 다만 사람 게이트 항목은 dev 가 코드로 못 푸므로 기계 일감에서 뺀다 — 그것만 남은 스토리를
   // 편성하면 no-op STOP 이 예약된다.
   const tasksSection = /## Tasks[^\n]*\n([\s\S]*?)(?=\n## )/.exec(text)?.[1] ?? ''
-  const unfinishedTasks = (tasksSection.match(/^\s*- \[ \] [^\n]*/gm) ?? [])
-    .filter((l) => !isHumanGateLine(l)).length
+  const openTaskLines = tasksSection.match(/^\s*- \[ \] [^\n]*/gm) ?? []
+  const unfinishedTasks = openTaskLines.filter((l) => !isHumanGateLine(l)).length
+  // 자율운전(full · 2026-09-03) 재료 — 사람 게이트 줄 수/원문과, replan 이 남기는 「사람 질문 대기」 표식.
+  // 표식은 'BLOCKED-ON-HUMAN: <질문>' 한 줄이고, 취소선(~~)으로 감싸면 해소된 것으로 본다.
+  const humanGateTasks = openTaskLines.length - unfinishedTasks
+  const humanGateLines = openTaskLines.filter((l) => isHumanGateLine(l)).map((l) => l.trim())
+  const blockedLine = /^[ \t>*_-]*BLOCKED-ON-HUMAN:[^\n]*/m.exec(text)?.[0] ?? null
+  const blockedOnHuman = blockedLine ? blockedLine.replace(/^[ \t>*_-]*/, '').trim() : null
   // File List 절의 백틱 경로(규칙 5 재료) — 경로형(슬래시 포함)만
   const fileSection = /### File List\n([\s\S]*?)(?=\n#{2,3} )/.exec(text)?.[1] ?? ''
   const files = [...fileSection.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]).filter((p) => p.includes('/'))
-  return { openDecision, openPatches, banPresent, unfinishedTasks, files }
+  return { openDecision, openDecisions, openPatches, banPresent, unfinishedTasks, files, humanGateTasks, humanGateLines, blockedOnHuman }
 }
 
 /** sprint-status.yaml → [{key, status, epic}] (스토리 키 행만 — 주석·벌크 무시) */
@@ -100,4 +107,16 @@ export function mockupGateOk(section, key, verdicts, gate = MOCKUP_GATE_DEFAULT)
   const bad = mine.filter(([, v]) => v.verdict !== 'approved')
   if (bad.length > 0) return { ok: false, why: '목업 미승인: ' + bad.map(([k]) => k.split('/').pop()).join(', ') }
   return { ok: true }
+}
+
+/** 목업 항목 실측(자율운전 재료) — 이 스토리 접두('<dir>/story-<에픽>-<번호>-')의 verdict 목록.
+ *  applies=false 면 게이트 대상 스토리가 아니다(marker/ruleId 판정은 mockupGateOk 와 같다). */
+export function mockupEntries(section, key, verdicts, gate = MOCKUP_GATE_DEFAULT) {
+  const marker = gate?.marker
+  if (!marker || !section.includes(marker) || (gate.ruleId && !section.includes(gate.ruleId))) return { applies: false, entries: [] }
+  const dir = String(gate.mockupsDir ?? MOCKUP_GATE_DEFAULT.mockupsDir).replace(/[/\\]+$/, '')
+  const prefix = dir + '/story-' + key.split('-').slice(0, 2).join('-') + '-'
+  const entries = Object.entries(verdicts?.items ?? {}).filter(([k]) => k.startsWith(prefix))
+    .map(([file, v]) => ({ file, verdict: String(v?.verdict ?? 'pending') }))
+  return { applies: true, entries }
 }

@@ -21,10 +21,11 @@ import { spawnSync } from 'node:child_process'
 import { join, basename, extname } from 'node:path'
 import { parseSprint, epicSection, readStorySignals } from './story-ledger.mjs'
 import { parseFileList } from './runner-rules.mjs'
-import { detectGates, parseQaChain, classifyQaFailure, TEST_FILE_RE } from '../../auto-story-finish/quality-rules.mjs'
+import { resolveAsf } from './asf-resolve.mjs'
+const { detectGates, parseQaChain, classifyQaFailure, TEST_FILE_RE } = await import(resolveAsf('quality-rules.mjs'))
 // 시크릿 마스킹 단일 소스 — 진단·보고서·자율 마무리가 **같은 마스커**를 쓴다(codex-review-r3 H1).
 // 값 그물(`redactSecrets`)과 깊은 마스킹(`deepRedact`) 둘 다 여기서 온다 — 사본은 하나도 두지 않는다.
-import { deepRedact, redactSecrets } from '../../auto-story-finish/providers/redact.mjs'
+const { deepRedact, redactSecrets } = await import(resolveAsf('providers/redact.mjs'))
 // 게이트 실행의 기본 spawn — 마감 시 **프로세스 트리 전체**를 끊는다(codex-review-r6 Medium).
 import { spawnWithDeadline } from './spawn-deadline.mjs'
 

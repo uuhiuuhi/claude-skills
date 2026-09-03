@@ -536,3 +536,23 @@ node night-batch-ops/engine/bench.mjs --stub                              # 하�
 먼저 볼 것: `--diagnose-only --no-gates` 는 **대상 저장소에 한 바이트도 쓰지 않고** 판정만 낸다.
 
 옵션·산출물 경로·안전 경계·문제 해결은 `AUTOFINISH.md` 에 있다.
+
+## 자율운전(full) 모드 — 2026-09-04
+
+`auto.config.json` 의 `autonomy.mode` 가 `full` 이면 편성기·오케스트레이터·엔진이 「판단을 사람에게 넘기는 기준」 없이 24시간 돈다.
+guarded(기본)는 종전 규칙 그대로다. 두 모드의 차이는 `engine/autonomy.test.mjs` 와 `auto-story-finish/engine-e2e.test.mjs` 의 `[autonomy]` 묶음이 문다.
+
+| 종전(guarded) | full |
+|---|---|
+| 열린 [Review][Decision] → 결정 대기로 제외 | `replan` 단계가 ⭐추천안을 채택하고 인박스 「🔵 사후 확인」에 근거를 남긴다 |
+| 열린 Patch 만 있고 미완 Task 0 → 제외(사람이 라운드 개방) | `replan` 이 회수 라운드 Task 를 연다 |
+| 재투입 금지 표기 → 제외 | 조언으로만 본다(replan 이 접근을 바꾼다) |
+| 무진전 편성 2회 → 제외(사람 판단) | `replan`(접근 변경) → `maxReplansPerStory`(2) 초과 시에만 「자율 한계」로 사람 질문 |
+| 미머지 체인 2일 → 신규 착수 보류 · 하루 상한 30 · 에픽 댐 | 막지 않는다(`dailyCap 0` = 무제한 · 에픽 순서는 우선순위 · 나머지 에픽은 번호순으로 이음 · ⏸ 이연 확정만 제외) |
+| 새 화면 목업 미승인 → 제외 | `mockup` 단계가 AI 초안(pending)을 만들고 진행 · 사람은 사후 approved/rejected |
+| 선행 done 만 허용 | 선행이 review(코드 실재)여도 허용 |
+
+남는 사람 몫은 ① 스토리가 스스로 남긴 `BLOCKED-ON-HUMAN: <질문> — 풀리는 조건: …`(취소선으로 해소) ② 사람 게이트 Task 만 남은 스토리 ③ 자율 한계 ④ 되돌릴 수 없는 실행(main 머지·배포·운영 DB·삭제·외부 발송·시크릿)뿐이며,
+러너가 편성마다 `<상태 폴더>/human-gates.json` 에 `{ humanGates[], excluded[], unmergedBranches[], chainAgeDays, planSource }` 로 남긴다 — 프로젝트의 「내가 할 일 뭐야」 스킬이 이 파일을 읽는다.
+
+새 단계 2종(엔진 `--stages`): `replan`(시니어 재계획 · 스토리 md·인박스·sprint-status 만 씀 · 사후조건 = 결정 닫힘/Task 증가/질문 표식/Replan 절 중 하나) · `mockup`(AI 목업 초안 · 장부에 pending 항목이 늘어야 성공 · 배치는 순차). 러너는 `--autonomy full` · `--replan-hint` · mockup 배치의 `--commit-paths`(목업 폴더 포함) 를 엔진에 넘긴다.

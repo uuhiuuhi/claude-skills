@@ -52,11 +52,24 @@ export const countOpenFindings = (text, tag) =>
 
 /** DECISIONS-INBOX.md 맨 위(H1 아래)에 결정 대기 절을 끼운다 — 편성기 규칙 2 는 인박스에 스토리 번호(예 2.3)가
  *  있는지 본다(단일 창구). 형식은 현행 인박스 관례(`## 🟠 결정 대기 — … (등재 <날짜> …)`). */
-export function appendDecisionsInbox(text, { storyKey, date, decisions = [], source = 'Codex 교차리뷰(무인 배치)' }) {
+export function appendDecisionsInbox(text, { storyKey, date, decisions = [], source = 'Codex 교차리뷰(무인 배치)', mode = 'wait' }) {
   const t = String(text ?? '')
   if (!decisions.length) return t
   const nl = eol(t)
   const short = storyKey.split('-').slice(0, 2).join('.')
+  // mode 'post-hoc'(자율운전 full · 2026-09-03): 사람 결정 대기가 아니라 **AI 결정 후보**로 등재한다 —
+  // 다음 라운드(replan/dev)가 ⭐추천안을 자동 채택하고 근거를 이 인박스에 남기며, 사람은 사후 확인만 한다.
+  if (mode === 'post-hoc') {
+    const section = [
+      `## 🔵 사후 확인 — AI 결정 후보 Story ${short} ${source} Decision ${decisions.length}건 (등재 ${date} · 자율운전: 다음 라운드가 추천안을 자동 채택)`,
+      '',
+      `스토리 파일 \`${storyKey}.md\` 의 Review Findings 절에 \`- [ ] [Review][Decision]\` 로 기재됨. 다음 replan/dev 라운드가 ⭐추천안을 채택해 \`- [x] ~~원문~~ — ✅ AI 결정(날짜 · 선택 · 사후 확인)\` 로 닫고 근거를 아래 절에 남긴다. 되돌리려면 「내가 할 일 뭐야」에서 그 항목을 뒤집는다.`,
+      '',
+      ...decisions.map((d) => `- ${d}`),
+      '',
+    ].join(nl)
+    return insertBelowH1(t, section, nl)
+  }
   const section = [
     `## 🟠 결정 대기 — Story ${short} ${source} Decision ${decisions.length}건 (등재 ${date} · 무인 규칙 ③ 정책/UX 판단은 즉시 대기)`,
     '',
@@ -65,6 +78,11 @@ export function appendDecisionsInbox(text, { storyKey, date, decisions = [], sou
     ...decisions.map((d) => `- ${d}`),
     '',
   ].join(nl)
+  return insertBelowH1(t, section, nl)
+}
+
+/** H1 바로 아래에 절을 끼운다(H1 이 없으면 맨 앞) — 결정 대기·사후 확인 절이 같은 자리를 쓴다. */
+function insertBelowH1(t, section, nl) {
   const h1End = t.search(/\r?\n/)
   if (!t.startsWith('#') || h1End < 0) return section + nl + t
   const head = t.slice(0, h1End)

@@ -42,6 +42,14 @@ import { buildDag, parseDependsOn } from './plan-dag.mjs'
 import { applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, notifyChannel, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = join(homedir(), '.claude', 'skills', 'auto-story-finish', 'auto-story-pipeline.mjs')
+// mockup 단계가 든 배치는 목업 폴더(config mockupGate.mockupsDir · 기본 mockups)를 스토리 커밋에 함께 싣는다 —
+// 장부(tools/dev-status)만 커밋되고 HTML 이 워크트리에 남으면 landing 뒤 사라져 장부가 없는 파일을 가리킨다.
+// 엔진 기본 화이트리스트(--commit-paths 기본값)를 그대로 옮기고 목업 폴더 하나만 더한다.
+const ENGINE_COMMIT_PATHS = 'src,tests,supabase,tools,public,.github,_bmad-output,package.json,package-lock.json,wrangler.jsonc,.env.example,.gitignore,index.html,vite.config.ts,tsconfig.json,tsconfig.app.json,tsconfig.node.json,eslint.config.js,components.json,CLAUDE.md,README.md'
+const mockupCommitPaths = (cfg) => {
+  const dir = String(cfg?.mockupGate?.mockupsDir ?? 'mockups').replace(/[\/]+$/, '')
+  return /^[A-Za-z0-9._-]+$/.test(dir) ? `${ENGINE_COMMIT_PATHS},${dir}` : ENGINE_COMMIT_PATHS
+}
 const ART = resolve('_bmad-output/implementation-artifacts')
 const LOG_DIR = join(ART, 'auto-pipeline-logs')
 const SUMMARY = join(LOG_DIR, 'night-last-run.md')
@@ -346,14 +354,33 @@ async function archiveEvidence(wt) {
 const NTFY_BRIEF = '상세는 상태 폴더 로그를 확인한다.'
 const pendingNotifies = new Set()
 const flushNotify = () => Promise.allSettled([...pendingNotifies])
+/** 종료 — 알림 배출 → undici 전역 디스패처 정리 → 한 틱 뒤 exit. (2026-09-03 실측: fetch 직후 process.exit 가
+ *  Windows 에서 libuv 단언(async.c:94)으로 abort 해 Task Scheduler 결과가 0xC0000409 로 남았다. 일과 lock 해제는
+ *  이미 끝난 뒤였지만, 매 슬롯 비정상 종료 코드는 진짜 크래시를 가린다.) */
+async function shutdown(code) {
+  await flushNotify()
+  try {
+    const d = globalThis[Symbol.for('undici.globalDispatcher.1')]
+    if (d && typeof d.destroy === 'function') await Promise.race([d.destroy(), new Promise((r) => { setTimeout(r, 2000).unref?.() })])
+  } catch { /* 정리 실패는 종료를 막지 않는다 */ }
+  await new Promise((r) => setImmediate(r))
+  process.exit(code)
+}
 const notify = (rawTitle, rawBody, rawBrief) => {
   // 본문은 배치 로그·git 오류 문장을 그대로 인용하는 자리다 — 밖으로 나가기 전에 마스킹한다(N3/정책 2).
   const title = REDACT(rawTitle)
   const body = REDACT(rawBody)
   const brief = rawBrief === undefined ? undefined : REDACT(rawBrief)
+  // AbortSignal.timeout 대신 수동 타이머 — 종료 직전까지 살아 있는 타이머 핸들이 Windows 에서
+  // `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` (2026-09-03 실측) 을 만들었다. 끝나면 반드시 지운다.
   const send = async (url, init) => {
-    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000) })
-    try { await res.arrayBuffer() } catch { /* 응답 본문은 쓰지 않는다 — 소켓만 비운다 */ }
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), 10_000)
+    timer.unref?.()
+    try {
+      const res = await fetch(url, { ...init, signal: ac.signal })
+      try { await res.arrayBuffer() } catch { /* 응답 본문은 쓰지 않는다 — 소켓만 비운다 */ }
+    } finally { clearTimeout(timer) }
   }
   const task = (async () => {
     try {
@@ -458,8 +485,7 @@ function touchLock() { // 심박 — 라운드 시작·배치 경계마다. 자�
       day.notified.lockUnknown = true
       save()
     }
-    await flushNotify()
-    process.exit(autoPlan ? 0 : 1)
+    await shutdown(autoPlan ? 0 : 1)
   }
   if (action === 'takeover') {
     console.log('죽은 lock 교체(pid ' + (info.parsed?.pid ?? '?') + ' 사망/심박 초과)')
@@ -538,7 +564,7 @@ if (autoPlan) {
           day.notified ??= {}
           console.log(`선형 승계 — ${inh.ref} 위에서 ${BRANCH} 시작(체인 ${inh.chainAgeDays}일 · 미머지 ${inh.branches.length}브랜치)`)
           if (!day.notified.inherit && !dryRun) {
-            notify('선형 승계로 밤 계속', `미머지 ${inh.branches.join(', ')} 위에서 ${BRANCH} 시작.\n체인 ${inh.chainAgeDays}일차${inh.chainAgeDays >= 2 ? ' — 신규 착수는 보류(회수·재검수만). /merge 로 체인을 비우면 전부 재개' : ''}.\n아침 /merge 는 최신 브랜치 1개면 된다(선형)`,
+            notify('선형 승계로 밤 계속', `미머지 ${inh.branches.join(', ')} 위에서 ${BRANCH} 시작.\n체인 ${inh.chainAgeDays}일차${CFG.autonomy?.mode === 'full' ? ' — 자율운전은 계속 진행(머지는 사람 몫 · 「머지해줘」)' : (inh.chainAgeDays >= 2 ? ' — 신규 착수는 보류(회수·재검수만). /merge 로 체인을 비우면 전부 재개' : '')}.\n아침 /merge 는 최신 브랜치 1개면 된다(선형)`,
               `미머지 ${inh.branches.length}건 위에서 계속(체인 ${inh.chainAgeDays}일차). ${NTFY_BRIEF}`)
             day.notified.inherit = true
           }
@@ -554,8 +580,7 @@ if (autoPlan) {
             day.notified.unmerged = true
           }
           save()
-          await flushNotify()
-          process.exit(0)
+          await shutdown(0)
         }
       } else {
         ref = 'origin/main'
@@ -582,8 +607,7 @@ if (autoPlan) {
       day.notified.stopBlocked = winId
       save()
     }
-    await flushNotify()
-    process.exit(0)
+    await shutdown(0)
   }
 }
 
@@ -751,6 +775,7 @@ async function applyOrchestrator(q, outPath) {
       key,
       epic: Number(String(key).split('-')[0]) || null,
       kind: /회수/.test(b.label ?? '') ? 'recovery' : /마감/.test(b.label ?? '') ? 'closeout' : 'new',
+      force: Boolean(b.force),
       files: text ? parseFileList(text) : [],
       deps: text ? parseDependsOn(text) : [],
       stages: b.stages ?? [],
@@ -764,8 +789,18 @@ async function applyOrchestrator(q, outPath) {
   const externalDeps = [...new Set(stories.flatMap((s) => s.deps).filter((d) => !inSet.has(d) && ![...inSet].some((k) => k.startsWith(`${d}-`) || k === d)))]
   const dag = buildDag({ stories, epicOrder: Array.isArray(CFG.epicOrder) ? CFG.epicOrder : [] })
 
+  const noteOf = (key) => {
+    const p = (q._편성?.picked ?? []).find((x) => x.key === key)
+    return p?.why ? [String(p.why)] : []
+  }
+  const hintOf = (key) => batches.find((x) => (x.stories ?? []).includes(key))?.replanHint ?? null
   const planArgs = {
-    context: { date: today(), candidates: stories },
+    context: {
+      date: today(),
+      candidates: stories.map((s) => ({ ...s, notes: noteOf(s.key), ...(hintOf(s.key) ? { replanHint: hintOf(s.key) } : {}) })),
+      mode: q._편성?.mode === 'full' ? 'full' : 'guarded',
+      parallel: Number(q.defaults?.parallel) || null,
+    },
     dag,
     constraints: { knownKeys: keys, doneKeys: externalDeps, batchMax: PCFG.workers.batchSize },
     deterministic: q,
@@ -776,13 +811,20 @@ async function applyOrchestrator(q, outPath) {
     PLAN_SOURCE = source
     PLAN_CACHE_NOTE = cacheState
     console.log(`[ORCHESTRATOR] source=${PLAN_SOURCE} (${cacheState})`)
-    q.batches = plan.batches.map((b, i) => ({
-      label: b.label || `FABLE-${i + 1}: ${(b.stories ?? []).join(' · ')}`,
-      enabled: true,
-      stories: b.stories ?? [],
-      stages: b.stages ?? (batches.find((x) => (x.stories ?? []).includes(b.stories?.[0]))?.stages ?? ['dev']),
-      ...(b.models ? { models: b.models } : {}),
-    }))
+    // 규칙 큐의 배치 속성(force · models · replanHint)은 **승계**한다 — 종전에는 force 가 떨어져 회수 배치의 dev 가
+    // state.json 완료 기록으로 skip 되는 길이 열려 있었다(무진전의 숨은 원인 후보 · 2026-09-03 자율운전 개편에서 발견).
+    q.batches = plan.batches.map((b, i) => {
+      const src = batches.find((x) => (x.stories ?? []).includes(b.stories?.[0])) ?? {}
+      return {
+        label: b.label || `FABLE-${i + 1}: ${(b.stories ?? []).join(' · ')}`,
+        enabled: true,
+        stories: b.stories ?? [],
+        stages: b.stages ?? (src.stages ?? ['dev']),
+        ...(src.force ? { force: true } : {}),
+        ...(b.models ? { models: b.models } : (src.models ? { models: src.models } : {})),
+        ...(src.replanHint ? { replanHint: src.replanHint } : {}),
+      }
+    })
     q._orchestrator = { source, model: ORCH.model, at: new Date().toISOString(), rationale: plan.rationale ?? '' }
     try { writeFileSync(outPath, JSON.stringify(q, null, 2) + '\n', 'utf8'); return true } catch (e) {
       console.log(`⚠ [ORCHESTRATOR] 채택 계획 기록 실패 — 규칙 큐로 계속: ${e?.message ?? e}`)
@@ -859,6 +901,20 @@ async function applyOrchestrator(q, outPath) {
   else clearRunnerErrors()
 }
 
+/** 사람 몫 파일 — 「내가 할 일 뭐야」 스킬이 읽는다(자율운전 · 2026-09-03). 편성마다 덮어쓴다. 실패해도 밤은 계속. */
+function writeHumanGates(meta, queueFile) {
+  try {
+    const list = spawnSync('git', ['for-each-ref', 'refs/heads/auto', 'refs/remotes/origin/auto', '--format=%(refname:short)'], { encoding: 'utf8' })
+    const unmerged = [...new Set((list.stdout ?? '').split('\n').map((s) => s.trim()).filter(Boolean))]
+      .filter((b) => Number((spawnSync('git', ['rev-list', '--count', `origin/main..${b}`], { encoding: 'utf8' }).stdout ?? '0').trim()) > 0)
+    writeJsonAtomic(join(STATE_DIR, 'human-gates.json'), {
+      at: new Date().toISOString(), project: PROJECT, mode: meta?.mode ?? 'guarded', planSource: PLAN_SOURCE,
+      humanGates: meta?.humanGates ?? [], excluded: meta?.excluded ?? [], picked: (meta?.picked ?? []).length,
+      chainAgeDays: meta?.chainAgeDays ?? 0, unmergedBranches: unmerged, queueFile,
+    })
+  } catch (e) { console.log(`⚠ human-gates.json 기록 실패(무시하고 계속): ${e?.message ?? e}`) }
+}
+
 // ④ 큐 선택 — 사람이 쓴 큐(planned!=='auto')가 항상 이긴다. 단 하루 1회(소비 표식).
 //    반환: 큐 경로(자동 편성 0건이면 null — 오늘 몫 소진).
 async function selectQueue() {
@@ -892,10 +948,16 @@ async function selectQueue() {
     console.log(`[PLAN][VALIDATION] RED — 오류 ${PLAN_VALIDATION.errors.length}건: ${PLAN_VALIDATION.errors.slice(0, 3).map((e) => `${e.code}${e.key ? `[${e.key}]` : ''}`).join(', ')}`)
   }
   await applyOrchestrator(q, autoOut)
+  writeHumanGates(meta, autoOut)
   if ((q.batches ?? []).length === 0) {
     console.log('편성 결과 0건 — 이 슬롯은 할 일이 없다')
+    const humanN = (meta?.humanGates ?? []).length
     const blocked = (meta?.excluded ?? []).filter((e) => e.why.includes('결정 대기')).length
-    if (blocked > 0 && !dryRun) notify('할 일 0 · 결정 대기', `결정 대기가 스토리 ${blocked}개를 막고 있다 — DECISIONS-INBOX.md`,
+    if (meta?.mode === 'full') {
+      // 자율운전: 남은 것은 전부 사람 몫(질문·게이트·사후 확인)이다 — 「내가 할 일 뭐야」 한마디로 모아 본다
+      if (humanN > 0 && !dryRun) notify(`할 일 0 — 사람 몫 ${humanN}건`, `자율운전이 스스로 풀 수 없는 항목 ${humanN}건이 남았다 — 「내가 할 일 뭐야」로 확인`,
+        `사람 몫 ${humanN}건. ${NTFY_BRIEF}`)
+    } else if (blocked > 0 && !dryRun) notify('할 일 0 · 결정 대기', `결정 대기가 스토리 ${blocked}개를 막고 있다 — DECISIONS-INBOX.md`,
       `결정 대기가 스토리 ${blocked}개를 막는 중. ${NTFY_BRIEF}`)
     return null
   }
@@ -1216,6 +1278,8 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
     if (wt.dev) a.push('--dev-model', wt.dev)
     if (wt.review) a.push('--review-model', wt.review)
     if (batch.force) a.push('--force')
+    if (batch.replanHint) a.push('--replan-hint', String(batch.replanHint))
+    if ((batch.stages ?? []).includes('mockup')) a.push('--commit-paths', mockupCommitPaths(CFG), '--mockups-dir', String(CFG.mockupGate?.mockupsDir ?? 'mockups'), '--mockup-verdicts', String(CFG.mockupGate?.verdictsPath ?? 'tools/dev-status/mockup-verdicts.json'))
     a.push('--commit') // 브랜치·푸시 없음 — detached HEAD 커밋(엔진 기존 지원 경로). landing 은 아래 직렬.
     a.push(...engineFlagsFromConfig(PCFG)) // 설정 없으면 [] — 종전 명령줄 그대로
     return a
@@ -1416,8 +1480,7 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
       record('**중단: 작업 트리가 clean 이 아니다** — 커밋 배치는 남의 변경을 자기 커밋에 쓸어 담는다.')
       dirty.slice(0, 20).forEach((line) => record(`  ${line}`))
       writeSummary()
-      await flushNotify()
-      process.exit(4)
+      await shutdown(4)
     }
   }
 
@@ -1490,6 +1553,8 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
       if (model) args.push(`--${stage}-model`, model)
     }
     if (batch.force) args.push('--force')
+    if (batch.replanHint) args.push('--replan-hint', String(batch.replanHint)) // 자율운전: 무진전 접근 변경 힌트(replan 단계)
+    if ((batch.stages ?? []).includes('mockup')) args.push('--commit-paths', mockupCommitPaths(CFG), '--mockups-dir', String(CFG.mockupGate?.mockupsDir ?? 'mockups'), '--mockup-verdicts', String(CFG.mockupGate?.verdictsPath ?? 'tools/dev-status/mockup-verdicts.json'))
     if (defaults.commit || defaults.push) args.push('--commit', '--branch', BRANCH)
     // (N1) 배치 통합 게이트가 켜져 있으면 **엔진의 스토리별 push 를 보류시킨다**(`--defer-push`) —
     // 엔진이 스토리마다 즉시 밀면 합쳐진 트리가 RED 여도 원격에는 이미 RED 조합이 남는다.
@@ -1611,8 +1676,9 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
       }
     }
     save()
-    const blocked = (autoQueueMeta?.excluded ?? []).filter((e) => e.why.includes('결정 대기')).length
-    const exhausted = (autoQueueMeta?.excluded ?? []).filter((e) => e.why.includes('소진')).length
+    const fullMode = autoQueueMeta?.mode === 'full'
+    const blocked = fullMode ? (autoQueueMeta?.humanGates ?? []).length : (autoQueueMeta?.excluded ?? []).filter((e) => e.why.includes('결정 대기')).length
+    const exhausted = fullMode ? 0 : (autoQueueMeta?.excluded ?? []).filter((e) => e.why.includes('소진')).length
     // 지출 한도 차단(2026-08-30 회수) — 한 건도 못 한 exit 5 라운드는 **원인을 이름으로** 말하고
     // 매 라운드 같은 말을 반복하지 않는다. 성공 라운드가 나오면 연속 카운트를 0 으로 되돌린다.
     const nowIso = new Date().toISOString()
@@ -1630,9 +1696,9 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     }
     if (spend.speak) notify(spend.title, spend.body)
     else if (!spendBlocked) notify(worst ? `슬롯 STOP(exit ${worst.code}) · 라운드 ${round}` : `슬롯 완주 ${done}배치 · 라운드 ${round}`,
-      `${results.map((r) => `${r.code === 0 ? 'OK' : 'STOP'} ${r.label}`).join('\n')}${blocked ? `\n결정 대기가 스토리 ${blocked}개를 막는 중 — DECISIONS-INBOX.md` : ''}${exhausted ? `\n무인 소진 ${exhausted}건 — 사람 판단 필요(아침 브리핑)` : ''}`,
+      `${results.map((r) => `${r.code === 0 ? 'OK' : 'STOP'} ${r.label}`).join('\n')}${blocked ? (fullMode ? `\n사람 몫 ${blocked}건 — 「내가 할 일 뭐야」` : `\n결정 대기가 스토리 ${blocked}개를 막는 중 — DECISIONS-INBOX.md`) : ''}${exhausted ? `\n무인 소진 ${exhausted}건 — 사람 판단 필요(아침 브리핑)` : ''}`,
       // 공개 폴백에는 배치 라벨을 싣지 않는다 — 건수·exit 코드까지만.
-      `완주 ${done}건${worst ? ` · STOP exit ${worst.code}` : ''}${blocked ? ` · 결정 대기 ${blocked}건` : ''}. ${NTFY_BRIEF}`)
+      `완주 ${done}건${worst ? ` · STOP exit ${worst.code}` : ''}${blocked ? ` · ${fullMode ? '사람 몫' : '결정 대기'} ${blocked}건` : ''}. ${NTFY_BRIEF}`)
   }
 
   return {
@@ -1667,8 +1733,7 @@ const headSha = () => {
 if (!autoPlan) {
   const r = await runQueue(manualQueuePath, null, 1)
   console.log(`\n==== 야간 배치 종료 — ${SUMMARY} ====`)
-  await flushNotify()
-  process.exit(r.worstCode ?? 0)
+  await shutdown(r.worstCode ?? 0)
 }
 
 let lastWorst = null
@@ -1709,5 +1774,4 @@ for (let round = 1; ; round++) {
 }
 
 console.log(`\n==== 야간 배치 종료 — ${SUMMARY} ====`)
-await flushNotify() // fetch 알림 배출 — process.exit 이 전송을 잘라먹지 않게
-process.exit(lastWorst ?? 0)
+await shutdown(lastWorst ?? 0) // fetch 알림 배출 — process.exit 이 전송을 잘라먹지 않게

@@ -11,7 +11,7 @@
 //
 // 이 파일은 실제 LLM 을 **호출하지 않는다**(호출은 주입된 runner 가 한다 — 테스트는 스텁).
 
-import { isValidModelSpec, validatePlan } from './plan-dag.mjs'
+import { STAGE_NAMES, isValidModelSpec, validatePlan } from './plan-dag.mjs'
 import { spawnWithDeadline } from './spawn-deadline.mjs'
 
 /** 계획 응답 JSON 스키마 — 프롬프트에 그대로 실어 형식을 강제한다. */
@@ -31,11 +31,11 @@ export const PLAN_SCHEMA = Object.freeze({
         properties: {
           label: { type: 'string' },
           stories: { type: 'array', minItems: 1, items: { type: 'string' } },
-          stages: { type: 'array', items: { enum: ['create', 'dev', 'review'] } },
+          stages: { type: 'array', items: { enum: [...STAGE_NAMES] } },
           models: {
             type: 'object',
             additionalProperties: false,
-            properties: { dev: { type: 'string' }, review: { type: 'string' } },
+            properties: { create: { type: 'string' }, mockup: { type: 'string' }, replan: { type: 'string' }, dev: { type: 'string' }, review: { type: 'string' } },
           },
           parallel: { type: 'integer', minimum: 1, maximum: 6 },
           risk: { type: 'number', minimum: 0, maximum: 10 },
@@ -49,20 +49,32 @@ export const PLAN_SCHEMA = Object.freeze({
 
 /** 프롬프트 + 스키마 생성(순수). context = { date, candidates[], dag, constraints, history[], notes[] } */
 export function buildPlanPrompt(context = {}) {
-  const { date = '', candidates = [], dag = null, constraints = {}, history = [], notes = [] } = context
+  const { date = '', candidates = [], dag = null, constraints = {}, history = [], notes = [], mode = 'guarded', parallel = null } = context
+  const full = mode === 'full' // 자율운전(2026-09-03) — 시니어 기획자 역할 · 후보 전부 편성 · 진행 에픽 댐 없음
   const cand = candidates.map((c) => ({
     key: c.key, epic: c.epic ?? null, kind: c.kind ?? 'new',
     stages: c.stages ?? [], files: (c.files ?? []).slice(0, 20),
     difficulty: c.difficulty ?? null, risk: c.risk ?? null,
+    ...(Array.isArray(c.notes) && c.notes.length ? { notes: c.notes } : {}),
+    ...(c.replanHint ? { replanHint: c.replanHint } : {}),
   }))
+  const capLimit = Number(constraints.cap?.limit)
   const edges = (dag?.edges ?? []).map((e) => `${e.from} → ${e.to} (${e.why})`)
   const lines = [
     '# 야간 배치 편성 계획 요청',
     `날짜: ${date}`,
     '',
     '## 역할',
-    '너는 무인 야간 배치의 **지휘자**다. 아래 후보 스토리만 써서 오늘 밤 실행 계획(배치 목록)을 짠다.',
-    '코드를 고치지 않고, 스토리를 새로 만들지 않는다. 계획은 기계 검증기를 통과해야 채택된다.',
+    ...(full ? [
+      '너는 **시니어 개발 기획자**이고 이 배치는 **24시간 자율운전**이다. 사람이 결정을 기다리게 하지 않는다.',
+      '아래 후보는 규칙이 「지금 돌릴 수 있다」고 판정한 스토리 전부다. **실행 가능한 후보는 전부 계획에 넣는다**(후보가 있는데 빈 계획을 내지 않는다).',
+      '가치 순서: ① 진행 중·회수(recovery)·마감 재검수(closeout) 먼저 ② 그다음 신규(new) — 에픽 우선순위와 선행 관계를 지킨다 ③ 같은 에픽 안에서는 번호 순.',
+      '각 후보의 stages 는 규칙이 정한 것이다(replan = 시니어 재계획 · mockup = AI 목업 초안) — 바꾸지 말고 순서·짝·모델·병렬 폭만 정한다. notes/replanHint 는 판단 재료다.',
+      '코드를 고치지 않고, 스토리를 새로 만들지 않는다. 계획은 기계 검증기를 통과해야 채택된다.',
+    ] : [
+      '너는 무인 야간 배치의 **지휘자**다. 아래 후보 스토리만 써서 오늘 밤 실행 계획(배치 목록)을 짠다.',
+      '코드를 고치지 않고, 스토리를 새로 만들지 않는다. 계획은 기계 검증기를 통과해야 채택된다.',
+    ]),
     '',
     '## 후보 (이 목록 **밖의 스토리 키를 쓰면 계획 전체가 폐기**된다)',
     '```json',
@@ -73,9 +85,14 @@ export function buildPlanPrompt(context = {}) {
     edges.length ? edges.map((e) => '- ' + e).join('\n') : '- (없음)',
     '',
     '## 제약 (어기면 폐기)',
-    `- 하루 상한(고유 스토리): ${constraints.cap?.limit ?? '제한 없음'} · 오늘 이미 편성: ${(constraints.cap?.plannedToday ?? []).length}`,
-    `- 에픽 우선순위: ${(constraints.epicOrder ?? []).join(' → ') || '(없음)'} · 진행 에픽: ${constraints.currentEpic ?? '(없음)'}`,
-    '- 신규 착수는 진행 에픽에서만. 회수·마감 재검수는 뒤 에픽도 가능.',
+    `- 하루 상한(고유 스토리): ${Number.isFinite(capLimit) ? capLimit : '제한 없음'} · 오늘 이미 편성: ${(constraints.cap?.plannedToday ?? []).length}`,
+    ...(full ? [
+      `- 에픽 우선순위: ${(constraints.epicOrder ?? []).join(' → ') || '(없음)'} — 우선순위일 뿐 댐이 아니다(앞 에픽 후보를 먼저 두되 뒤 에픽 후보도 편성한다).`,
+      ...(parallel ? [`- 병렬 폭: ${parallel} — 한 배치에 File List 서로소 스토리를 ${constraints.batchMax ?? 2}개까지 묶으면 러너가 워크트리를 나눠 동시에 돌린다.`] : []),
+    ] : [
+      `- 에픽 우선순위: ${(constraints.epicOrder ?? []).join(' → ') || '(없음)'} · 진행 에픽: ${constraints.currentEpic ?? '(없음)'}`,
+      '- 신규 착수는 진행 에픽에서만. 회수·마감 재검수는 뒤 에픽도 가능.',
+    ]),
     '- 한 배치의 스토리들은 File List 가 서로소여야 한다. 마이그레이션·스키마·API 계약·공유 설정·테스트 환경이 겹치면 배치를 나눠 순차로 돌린다.',
     `- 한 배치 최대 스토리 수: ${constraints.batchMax ?? 2}`,
     '- 모델 스펙은 `opus`·`fable`·`sonnet`·`codex`·`codex:<모델>` 형식만. 공백·특수문자 금지.',
@@ -103,11 +120,11 @@ export function validatePlanShape(obj) {
     if (!b || typeof b !== 'object') { errs.push(`batches[${i}] 가 객체가 아니다`); return }
     if (!Array.isArray(b.stories) || b.stories.length === 0) errs.push(`batches[${i}].stories 가 비었다`)
     else if (b.stories.some((s) => typeof s !== 'string' || !s.trim())) errs.push(`batches[${i}].stories 에 빈 값이 있다`)
-    if (b.stages !== undefined && (!Array.isArray(b.stages) || b.stages.some((s) => !['create', 'dev', 'review'].includes(s)))) errs.push(`batches[${i}].stages 형식 위반`)
+    if (b.stages !== undefined && (!Array.isArray(b.stages) || b.stages.some((s) => !STAGE_NAMES.includes(s)))) errs.push(`batches[${i}].stages 형식 위반`)
     if (b.models !== undefined) {
       if (!b.models || typeof b.models !== 'object' || Array.isArray(b.models)) errs.push(`batches[${i}].models 형식 위반`)
       else for (const [k, v] of Object.entries(b.models)) {
-        if (!['dev', 'review'].includes(k)) errs.push(`batches[${i}].models.${k} 는 허용되지 않는다`)
+        if (!STAGE_NAMES.includes(k)) errs.push(`batches[${i}].models.${k} 는 허용되지 않는다`)
         else if (!isValidModelSpec(v)) errs.push(`batches[${i}].models.${k} 모델 스펙 형식 위반`)
       }
     }

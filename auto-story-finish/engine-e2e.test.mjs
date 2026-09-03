@@ -24,7 +24,7 @@ const ok = (r, what) => { if (r.status !== 0) throw new Error(`${what}: ${r.stde
 // ── 스텁: claude ──────────────────────────────────────────────────────────────────────────
 // 동작은 전부 env 로 고른다. `E2E_DEV_ACTION` = normal | push | commit-reset | untracked-test | sensitive | auth-code
 const CLAUDE_STUB = String.raw`
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 const argv = process.argv.slice(2)
@@ -116,6 +116,44 @@ if (m) {
   const f = join(art, findStory(key))
   writeFileSync(f, readFileSync(f, 'utf8').replace(/^Status:\s*\S+/m, 'Status: done') + '\n### Review Findings — claude 스텁\n\n- ✅ Clean review — 발견 0건\n')
   console.log('review 완료')
+  process.exit(0)
+}
+// 재계획 스텁 — 결정 줄을 닫고 회수 Task 를 하나 열고 인박스에 사후 확인 절을 남긴다(E2E_REPLAN_ACTION: normal|noop|blocked)
+m = /\[REPLAN\] 스토리 (\S+)/.exec(prompt)
+if (m) {
+  const key = m[1]
+  log('replan ' + key)
+  const action = process.env.E2E_REPLAN_ACTION || 'normal'
+  if (action === 'noop') { console.log('replan: 변경 없음'); process.exit(0) }
+  const f = join(art, findStory(key))
+  let md = readFileSync(f, 'utf8')
+  if (action === 'blocked') {
+    md = md.replace(/^(# [^\n]*\n)/, '$1BLOCKED-ON-HUMAN: 운영 DB 키 필요 — 풀리는 조건: 키 발급\n')
+  } else {
+    md = md.replace(/^- \[ \] \[Review\]\[Decision\] ([^\n]*)$/m, '- [x] ~~[Review][Decision] $1~~ — ✅ AI 결정(2026-09-03 · (가) · 사후 확인)')
+    md = md.replace('- [ ] T1 구현\n', '- [ ] T1 구현\n- [ ] T2 결정 반영\n')
+    const inbox = join(art, 'DECISIONS-INBOX.md')
+    const base = existsSync(inbox) ? readFileSync(inbox, 'utf8') : '# 결정 인박스\n'
+    writeFileSync(inbox, base.replace(/^(# [^\n]*\n)/, '$1\n## 🔵 사후 확인 — AI 결정 ' + key + ' (2026-09-03)\n\n- 무엇: 문구 / 선택: (가) / 근거: 추천안 / 대안: (나) / 되돌리는 방법: 문구 교체\n'))
+  }
+  writeFileSync(f, md)
+  console.log('replan 완료')
+  process.exit(0)
+}
+// 목업 스텁 — HTML 1개 + 장부(pending) 항목 1개
+m = /\[MOCKUP\] 스토리 (\S+)/.exec(prompt)
+if (m) {
+  const key = m[1]
+  log('mockup ' + key)
+  const short = key.split('-').slice(0, 2).join('-')
+  mkdirSync(join(cwd, 'mockups'), { recursive: true })
+  writeFileSync(join(cwd, 'mockups', 'story-' + short + '-main.html'), '<html><body>stub mockup ' + key + '</body></html>\n')
+  const vp = join(cwd, 'tools', 'dev-status', 'mockup-verdicts.json')
+  mkdirSync(dirname(vp), { recursive: true })
+  const v = existsSync(vp) ? JSON.parse(readFileSync(vp, 'utf8')) : { items: {} }
+  v.items['mockups/story-' + short + '-main.html'] = { verdict: 'pending', story: short.replace('-', '.'), note: 'AI 초안(2026-09-03 · 사후 확인)' }
+  writeFileSync(vp, JSON.stringify(v, null, 2))
+  console.log('mockup 완료')
   process.exit(0)
 }
 console.error('stub: 알 수 없는 프롬프트'); process.exit(1)
@@ -869,5 +907,69 @@ describe('[engine-e2e][push-guard] `--push --branch main` 은 시작조차 못 �
     assert.equal(r.status, 0, r.out.slice(-2000))
     assert.ok(originHeads(fx.proj).includes('refs/heads/auto/2026-09-03'))
     assert.equal((r.out.match(/push origin\/auto\/2026-09-03/g) ?? []).length, 1, 'push 는 정확히 1회')
+  })
+})
+
+// ── 자율운전(2026-09-03) — replan / mockup 단계 · --autonomy full ────────────────────────────
+describe('[engine-e2e][autonomy] replan 단계 — 결정 채택·회수 Task 개설·인박스 사후 확인', { timeout: 180_000 }, () => {
+  it('replan→dev→review 가 한 배치로 돌고 열린 Decision 이 AI 결정으로 닫힌다', () => {
+    const fx = makeFixture({ inbox: '# 결정 인박스\n' })
+    const md = join(fx.art, '2-1-a.md')
+    writeFileSync(md, readFileSync(md, 'utf8').replace('## Dev Notes', '### Review Findings\n\n- [ ] [Review][Decision] 문구 ⭐추천 (가)\n\n## Dev Notes'))
+    ok(git(fx.proj, ['add', '-A']), 'add')
+    ok(git(fx.proj, ['commit', '-q', '-m', 'decision']), 'commit')
+    const r = runEngine(fx, { args: ['--stages', 'replan,dev,review', '--autonomy', 'full', '--force'] })
+    assert.equal(r.status, 0, r.out.slice(-2000))
+    assert.match(r.calls, /replan 2-1-a[\s\S]*dev 2-1-a[\s\S]*review 2-1-a/, r.calls)
+    assert.match(readFileSync(md, 'utf8'), /✅ AI 결정\(/)
+    assert.match(readFileSync(join(fx.art, 'DECISIONS-INBOX.md'), 'utf8'), /🔵 사후 확인 — AI 결정/)
+    assert.match(r.log('run-summary.log'), /autonomy=full/)
+  })
+  it('replan 이 아무것도 바꾸지 않으면 NO-OP exit 4(무변경을 성공으로 세지 않는다)', () => {
+    const fx = makeFixture()
+    const r = runEngine(fx, { args: ['--stages', 'replan', '--autonomy', 'full'], env: { E2E_REPLAN_ACTION: 'noop' } })
+    assert.equal(r.status, 4, r.out.slice(-1500))
+    assert.match(r.out, /NO-OP STOP/)
+  })
+  it('replan 이 사람 질문 표식(BLOCKED-ON-HUMAN)만 남겨도 사후조건은 충족 — 다음 편성이 사람 몫으로 뺀다', () => {
+    const fx = makeFixture()
+    const r = runEngine(fx, { args: ['--stages', 'replan', '--autonomy', 'full'], env: { E2E_REPLAN_ACTION: 'blocked' } })
+    assert.equal(r.status, 0, r.out.slice(-1500))
+    assert.match(readFileSync(join(fx.art, '2-1-a.md'), 'utf8'), /^BLOCKED-ON-HUMAN:/m)
+  })
+  it('모르는 단계 이름은 시작 전에 exit 2 — 워커 0회', () => {
+    const fx = makeFixture()
+    const r = runEngine(fx, { args: ['--stages', 'dev,frobnicate'] })
+    assert.equal(r.status, 2, r.out.slice(-800))
+    assert.ok(!/dev 2-1-a/.test(r.calls), '워커가 돌면 안 된다')
+  })
+  it('guarded(기본)에서는 dev 프롬프트에 자율운전 문단이 없다 · full 에서만 붙는다', () => {
+    const g = runEngine(makeFixture(), { args: ['--stages', 'dev'] })
+    assert.equal(g.status, 0)
+    assert.ok(!g.log('2-1-a-dev.log').includes('[자율운전]'))
+    const f = runEngine(makeFixture(), { args: ['--stages', 'dev', '--autonomy', 'full'] })
+    assert.equal(f.status, 0)
+    assert.ok(f.log('2-1-a-dev.log').includes('[자율운전]'))
+  })
+})
+
+describe('[engine-e2e][autonomy] mockup 단계 — AI 초안 + 장부 pending', { timeout: 180_000 }, () => {
+  it('장부에 pending 항목이 생기고, 커밋 화이트리스트에 목업 폴더를 주면 HTML 도 같은 커밋에 실린다', () => {
+    const fx = makeFixture()
+    const r = runEngine(fx, { args: ['--stages', 'mockup', '--autonomy', 'full', '--commit', '--branch', 'auto/2026-09-03', '--commit-paths', 'src,tests,tools,_bmad-output,mockups'] })
+    assert.equal(r.status, 0, r.out.slice(-2000))
+    const v = JSON.parse(readFileSync(join(fx.proj, 'tools', 'dev-status', 'mockup-verdicts.json'), 'utf8'))
+    assert.equal(v.items['mockups/story-2-1-main.html']?.verdict, 'pending')
+    const files = git(fx.proj, ['show', '--name-only', '--format=', 'HEAD']).stdout
+    assert.match(files, /mockups\/story-2-1-main\.html/, '목업 HTML 이 커밋에 없다: ' + files)
+    assert.match(files, /mockup-verdicts\.json/)
+  })
+  it('장부에 항목이 늘지 않으면 NO-OP exit 4', () => {
+    const fx = makeFixture()
+    // 스텁이 장부에 쓰기 전에 같은 키가 이미 있으면 「늘지 않음」 — 사전 항목을 심어 둔다
+    mkdirSync(join(fx.proj, 'tools', 'dev-status'), { recursive: true })
+    writeFileSync(join(fx.proj, 'tools', 'dev-status', 'mockup-verdicts.json'), JSON.stringify({ items: { 'mockups/story-2-1-main.html': { verdict: 'pending' } } }))
+    const r = runEngine(fx, { args: ['--stages', 'mockup', '--autonomy', 'full'] })
+    assert.equal(r.status, 4, r.out.slice(-1500))
   })
 })

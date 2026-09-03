@@ -15,7 +15,8 @@
 import { createHash } from 'node:crypto'
 import { CONFLICT_RULES, SHARED_BOOKKEEPING_DEFAULT, parallelHazardsExtended } from './conflicts.mjs'
 import { storyRisk, storyDifficulty, HIGH_RISK_MIN } from './assign.mjs'
-import { classifyQaFailure } from '../../auto-story-finish/quality-rules.mjs'
+import { resolveAsf } from './asf-resolve.mjs'
+const { classifyQaFailure } = await import(resolveAsf('quality-rules.mjs'))
 import { tierOfFinding, SECRET_PATH_RE, SECRET_PATH_EXAMPLE_RE } from './diagnose.mjs'
 
 export const BACKLOG_SCHEMA = 'night-batch-ops/backlog/1'

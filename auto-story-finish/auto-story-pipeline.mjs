@@ -102,10 +102,33 @@ const flag = (name) => argv.includes(`--${name}`);
 
 const stories = (opt("stories", "") || "").split(",").map((s) => s.trim()).filter(Boolean);
 const stages = (opt("stages", "create,dev,review") || "").split(",").map((s) => s.trim()).filter(Boolean);
+// 단계 화이트리스트 — mockup(AI 목업 초안)·replan(시니어 재계획)은 자율운전(2026-09-03)에서 추가됐다.
+// 모르는 단계 이름은 조용히 아무것도 안 하는 대신 **시작 전에** 거부한다(exit 2).
+const KNOWN_STAGES = ["create", "mockup", "replan", "dev", "review"];
+{
+  const bad = stages.filter((s) => !KNOWN_STAGES.includes(s));
+  if (bad.length) {
+    console.error(`✖ 알 수 없는 단계: ${bad.join(", ")} — 허용 = ${KNOWN_STAGES.join(",")}`);
+    process.exit(2);
+  }
+}
+// 자율운전(--autonomy full · 2026-09-03 👤): 결정을 사람에게 넘기지 않는다 — dev/replan 이 ⭐추천안을 채택하고
+// 인박스 「🔵 사후 확인」에 근거를 남긴다. 사람 몫은 되돌릴 수 없는 실행(main 머지·배포·운영 DB·외부 발송)뿐이다.
+const autonomy = opt("autonomy", "guarded");
+if (!["guarded", "full"].includes(autonomy)) {
+  console.error(`✖ --autonomy 는 guarded | full 만 허용: ${JSON.stringify(autonomy)}`);
+  process.exit(2);
+}
+const FULL = autonomy === "full";
+const replanHint = opt("replan-hint", ""); // 프롬프트 본문(stdin)에만 실린다 — argv 로 나가지 않는다
+const mockupsDir = (opt("mockups-dir", "mockups") || "mockups").replace(/[\\/]+$/, "");
+const mockupVerdicts = opt("mockup-verdicts", "tools/dev-status/mockup-verdicts.json") || "tools/dev-status/mockup-verdicts.json";
 // 빈 값 = --model 플래그 생략 = 현재 CLI 기본 모델 (환경 불문 안전 기본값)
 // v3: 값은 「모델 스펙」이다 — 접두사 없으면 claude 별칭(종전) · "codex" · "codex:<model>".
 const models = {
   create: opt("create-model", ""),
+  mockup: opt("mockup-model", ""),
+  replan: opt("replan-model", ""),
   dev: opt("dev-model", ""),
   review: opt("review-model", ""),
 };
@@ -311,8 +334,36 @@ function storyArtifactsMaxMtime(story) {
 }
 function postconditionOk(stage, story, beforeMaxMtime) {
   if (stage === "create") return findStoryFile(story) !== null;
+  // replan: md 가 전진했고 **실제로 계획이 바뀌었다**(결정 닫힘 · Task 증가 · 사람 질문 표식 · Replan 절) — 둘 다여야 한다.
+  if (stage === "replan") {
+    if (!(storyArtifactsMaxMtime(story) > beforeMaxMtime)) return false;
+    const a = stageSnapshot ?? replanSignals(story), b = replanSignals(story);
+    return b.openDecisions < a.openDecisions || b.openTasks > a.openTasks || (b.blocked && !a.blocked) || b.replanNotes > a.replanNotes;
+  }
+  // mockup: 판정 장부에 이 스토리 접두 항목이 늘었는가(파일만 있고 장부에 없으면 편성기가 못 본다)
+  if (stage === "mockup") return mockupKeys(story).length > (stageSnapshot?.mockups ?? 0);
   // dev/review: 단계 실행 전 스냅샷보다 산출물 mtime이 실제로 전진했는지
   return storyArtifactsMaxMtime(story) > beforeMaxMtime;
+}
+let stageSnapshot = null; // 단계 실행 직전 스냅샷(replan/mockup 사후조건 재료) — runClaude 가 채운다
+function replanSignals(story) {
+  const file = findStoryFile(story);
+  let text = "";
+  try { text = file ? readFileSync(file, "utf8") : ""; } catch { text = ""; }
+  const tasks = /## Tasks[^\n]*\n([\s\S]*?)(?=\n## |$)/.exec(text)?.[1] ?? "";
+  return {
+    openDecisions: countOpenFindings(text, "Decision"),
+    openTasks: (tasks.match(/^[ \t]*- \[ \] /gm) ?? []).length,
+    blocked: /^[ \t>*_-]*BLOCKED-ON-HUMAN:/m.test(text),
+    replanNotes: (text.match(/^#{2,4} Replan /gm) ?? []).length,
+  };
+}
+function mockupKeys(story) {
+  try {
+    const items = JSON.parse(readFileSync(resolve(mockupVerdicts), "utf8"))?.items ?? {};
+    const prefix = `${mockupsDir}/story-${story.split("-").slice(0, 2).join("-")}-`;
+    return Object.keys(items).filter((k) => k.startsWith(prefix));
+  } catch { return []; }
 }
 
 // ---- (U3) 인증 오류 패턴 ----
@@ -674,10 +725,40 @@ function pushDeferred() {
 // GUARD는 프로젝트 중립 — 프로젝트 특화 제약(법정 보수성·보호 파일 등)은 실행 cwd의
 // 프로젝트 CLAUDE.md가 nested 인스턴스에 자동 로드되어 주입된다(계층화 원칙, 2026-08-08).
 const GUARD = "[비대화형] 승인/질문 없이 합리적 기본값으로 끝까지 진행하라. ⚠️ git commit·push 절대 금지. 프로젝트 CLAUDE.md에 명시된 절대 제약(보호 파일·보수성 규칙)을 최우선 준수하라. 임시 파일(diff 덤프·qa 로그 등)은 저장소 루트가 아니라 _bmad-output/implementation-artifacts/auto-pipeline-logs/ 아래에만 써라 — 루트 스크래치는 다음 배치를 dirty STOP 시킨다(실사고 반복).";
+// 자율운전 문단 — dev/review 에 덧붙는다(guarded 에서는 빈 문자열 = 종전 프롬프트 바이트 동일).
+// 결정은 「대기」가 아니라 「추천안 채택 + 근거 기록」이고, 사람은 인박스 「🔵 사후 확인」에서 되돌릴 수 있다.
+const AUTO_DEV = FULL ? " [자율운전] 열린 [Review][Decision] 이 있으면 결정 대기로 멈추지 말고 ⭐/추천 표시가 있는 안을(없으면 되돌리기 가장 싼 안을) 채택해 구현하고, 그 줄을 `- [x] ~~원문~~ — ✅ AI 결정(YYYY-MM-DD · 선택 · 사후 확인)` 로 닫은 뒤 _bmad-output/implementation-artifacts/DECISIONS-INBOX.md 의 H1 바로 아래에 `## 🔵 사후 확인 — AI 결정 <스토리 짧은키> (<날짜>)` 절로 무엇/선택/근거/대안/되돌리는 방법을 적어라(사람이 사후 확인한다). 사람 게이트(「사람 게이트」·「박사장」·👤 표기) Task 는 그대로 두고 나머지를 전부 끝내라." : "";
+const AUTO_REVIEW = FULL ? " [자율운전] Decision 을 남길 때는 각 Decision 에 ⭐추천안과 되돌리는 비용을 함께 적어라 — 다음 라운드(replan/dev)가 추천안을 채택하고 사람은 사후 확인한다." : "";
 const prompts = {
   create: (s) => `/bmad-create-story ${s}\n\n${GUARD} 스토리 스펙(AC·파일 그라운딩)을 작성·저장하고 종료.`,
-  dev: (s) => `/bmad-dev-story ${s}\n\n${GUARD} 구현 후 검증까지 자동 실행.`,
-  review: (s) => `/bmad-code-review ${s}\n\n${GUARD} 다른 LLM 관점에서 적대적으로. findings 리포트만 작성(코드 자동수정·commit 금지). ⚠️ 판정은 발견 0건·재오픈 불요 결론이어도 **반드시 스토리 파일의 Review Findings 절에 라운드 기록으로 기재**하라 — stdout 채팅 보고만 하고 파일을 안 쓰면 엔진이 산출물 부재(NO-OP exit 4)로 실패 처리한다(실사고 3회).`,
+  dev: (s) => `/bmad-dev-story ${s}\n\n${GUARD} 구현 후 검증까지 자동 실행.${AUTO_DEV}`,
+  review: (s) => `/bmad-code-review ${s}\n\n${GUARD} 다른 LLM 관점에서 적대적으로. findings 리포트만 작성(코드 자동수정·commit 금지). ⚠️ 판정은 발견 0건·재오픈 불요 결론이어도 **반드시 스토리 파일의 Review Findings 절에 라운드 기록으로 기재**하라 — stdout 채팅 보고만 하고 파일을 안 쓰면 엔진이 산출물 부재(NO-OP exit 4)로 실패 처리한다(실사고 3회).${AUTO_REVIEW}`,
+  // replan — 시니어 개발 기획자 재계획(자율운전 · 2026-09-03). 스토리 md·인박스·sprint-status 만 쓴다(코드 0줄).
+  replan: (s) => [
+    `[REPLAN] 스토리 ${s} 재계획 — 너는 시니어 개발 기획자다. 결정이 필요한 항목은 스스로 판단해 기록하고(사람은 인박스에서 사후 확인한다) 스토리 파일(_bmad-output/implementation-artifacts/${s}*.md)을 갱신하라. 코드는 고치지 않는다.`,
+    "",
+    GUARD,
+    "",
+    "절차:",
+    "1) 스토리 파일 · epics.md 의 해당 절 · 열린 [Review][Patch]/[Review][Decision] · Dev Agent Record · Status 를 읽는다.",
+    "2) 열린 `- [ ] [Review][Decision]` 마다: ⭐/추천 표시가 있는 안을, 없으면 되돌리기 가장 싼 안을 고른다. 그 줄을 `- [x] ~~<원문>~~ — ✅ AI 결정(<YYYY-MM-DD> · <선택> · 사후 확인)` 로 바꾸고, _bmad-output/implementation-artifacts/DECISIONS-INBOX.md 의 H1 바로 아래에 `## 🔵 사후 확인 — AI 결정 <스토리 짧은키 예 2.16> (<날짜>)` 절을 추가해 결정마다 「무엇 / 선택 / 근거 / 대안 / 되돌리는 방법」을 적는다.",
+    "3) 열린 `- [ ] [Review][Patch]` 가 있는데 Tasks/Subtasks 절에 미완 기계 Task 가 없으면, Tasks 절 끝에 `### 회수 라운드 <날짜>` 소제목과 각 Patch 를 고치는 구체적 `- [ ] ` Task 를 적는다(「사람 게이트」·「박사장」·👤 표기는 쓰지 않는다 — 그 표기는 사람만 풀 수 있다는 뜻이다).",
+    "4) 「재투입 금지」·「마지막 구현 라운드」 표기나 아래 힌트가 있으면 같은 방법을 반복하지 말고 접근을 바꾼다(스토리를 더 작은 Task 로 쪼개기 · 단순화 · 다른 구현 경로) — `### Replan <날짜>` 절에 무엇을 왜 바꿨는지 적는다.",
+    "5) 사람만 풀 수 있는 것(자격증명·시크릿 · 운영 DB 적용 · 외부 승인 · epics/PRD 가 답하지 않는 제품 범위)이 남은 일의 **전부**일 때만, 제목 바로 아래에 한 줄 `BLOCKED-ON-HUMAN: <정확한 질문 하나> — 풀리는 조건: <무엇이 풀리면 되는지>` 를 적고 Task 를 지어내지 않는다.",
+    "6) Task 를 추가했으면 `Status: in-progress`, 남은 일이 리뷰뿐이면 `Status: review` 로 두고 sprint-status.yaml 의 같은 키도 맞춘다.",
+    "7) 바꾼 것이 없으면 안 된다 — 위 2~5 중 하나는 반드시 파일에 남아야 한다(그렇지 않으면 엔진이 무변경으로 실패 처리한다).",
+    replanHint ? `\n힌트(러너): ${replanHint}` : "",
+  ].join("\n"),
+  // mockup — AI 목업 초안(자율운전). 사람은 사후에 approved/rejected 만 정한다.
+  mockup: (s) => [
+    `[MOCKUP] 스토리 ${s} 새 화면 목업 초안 — /baro-design 스킬을 사용해 이 스토리의 AC 가 요구하는 새 화면마다 목업 HTML 을 만든다.`,
+    "",
+    GUARD,
+    "",
+    `- 파일: ${mockupsDir}/story-<에픽>-<번호>-<화면-slug>.html (확정 디자인 시스템 DESIGN.md·EXPERIENCE.md 준수 · 스토리 파일의 AC·Dev Notes 근거).`,
+    `- 만든 파일마다 ${mockupVerdicts} 의 items 에 항목을 추가한다: { "verdict": "pending", "story": "<에픽>.<번호>", "note": "AI 초안(<날짜> · 사후 확인 — 사람이 approved/rejected 로 바꾼다)" } — 기존 항목은 보존하고 유효한 JSON 을 유지한다(이 장부에 없는 목업은 편성기가 보지 못한다).`,
+    "- 스토리 파일 Dev Notes 에 목업 파일 경로를 한 줄 적는다.",
+  ].join("\n"),
 };
 
 // ---- (P2) Codex 리뷰 재료 — 이번 라운드 diff 를 파일로 만든다(대상: 워킹트리 vs HEAD · 비면 baseline..HEAD) ----
@@ -755,6 +836,7 @@ const INBOX_TEMPLATE = () => [
   "",
   `> 무인 배치가 ${today()} 에 자동 생성했다(파일이 없었다). 결정 대기의 **단일 창구**다 — 스토리 파일 안에만 있는 결정은 며칠씩 정체한다.`,
   "",
+  ...(FULL ? ["## 🔵 사후 확인 (AI 결정 — 자율운전)", "", "(replan/dev 가 채택한 결정을 근거와 함께 등재한다 · 사람이 사후 확인하고 되돌릴 수 있다)", ""] : []),
   "## 🟠 결정 대기",
   "",
   "(아래에 배치가 등재한다)",
@@ -805,7 +887,7 @@ function applyCodexReview(story, res, w) {
         return { ok: false, why: `Decision ${r.decisions.length}건을 인박스(${rel(decisionsInboxFile)})에 등재하지 못했다: 기존 내용을 읽을 수 없다(${e?.code ?? e?.message}) — 단일 창구가 비면 사람이 결정을 못 본다(스토리·sprint 는 원상 유지)` };
       }
     } else inboxCreated = true;
-    writes.push({ path: decisionsInboxFile, text: appendDecisionsInbox(base, { storyKey, date: today(), decisions: r.decisions }), label: "인박스" });
+    writes.push({ path: decisionsInboxFile, text: appendDecisionsInbox(base, { storyKey, date: today(), decisions: r.decisions, mode: FULL ? "post-hoc" : "wait" }), label: "인박스" });
   }
   writes.push({ path: storyFile, text: next, label: "스토리" });
   if (existsSync(sprintStatusFile)) {
@@ -849,8 +931,12 @@ function applyCodexReview(story, res, w) {
 
 // ---- (P1) 워커 준비 — 프로바이더 분기는 여기서만 ----
 function prepareWorker(stage, story, variant) {
-  const role = variant?.role ?? stage; // dev | review | create | repair
+  const role = variant?.role ?? stage; // dev | review | create | repair | replan | mockup
   const avoid = stage === "review" && stages.includes("dev") ? models.dev : null;
+  if ((stage === "replan" || stage === "mockup") && parseModelSpec(models[stage]).provider === "codex") {
+    note(`⇄ [${story}] ${stage}: codex 는 이 단계를 돌릴 수 없다(파일 쓰기·프로젝트 스킬 필요) → claude 기본 모델`);
+    models[stage] = "";
+  }
   const wantsCodex = parseModelSpec(models[stage]).provider === "codex";
   const resolved = resolveWorkerSpec({ spec: models[stage], availability: wantsCodex ? providerAvailability() : {}, avoid, codexCwd: wantsCodex ? codexCwdInfo() : { ok: true } });
   if (resolved.fallback) {
@@ -927,6 +1013,7 @@ function runClaude(stage, story, variant = null) {
     return "ok";
   }
   const beforeMaxMtime = storyArtifactsMaxMtime(story); // 사후조건용 전-스냅샷
+  stageSnapshot = stage === "replan" ? replanSignals(story) : stage === "mockup" ? { mockups: mockupKeys(story).length } : null;
   const headBefore = w.guardCommit ? headSha() : "";
   const branchBefore = w.guardCommit ? currentBranch() : "";
   const stashBefore = w.guardCommit ? stashCount() : 0;
@@ -1396,7 +1483,7 @@ function storyNeedsWork(story) {
 // ---- 메인 루프 (순차 = 의존성 순서) ----
 // (U4) append — 이전 배치 기록 보존. 배치 경계는 구분선으로.
 const modelsShown = Object.fromEntries(Object.entries(models).map(([k, v]) => [k, shownModel(v)]));
-appendFileSync(runLog, `\n${"=".repeat(70)}\n[${stamp()}] BATCH START stories=[${stories.join(", ")}] stages=[${stages.join(", ")}] models=${JSON.stringify(modelsShown)} perm=${permMode} dryRun=${dryRun} force=${force} waitAuthMin=${waitAuthMin} e2e=${e2eCmd || "-"} ntfy=${ntfyTopic ? "on" : "off"} commit=${doCommit} branch=${branchName || "-"} push=${doPush} autoRepair=${autoRepair} integrity=${integrityEnabled ? "on" : "off"} codexRoles=${codexRoles.join(",") || "-"}\n`);
+appendFileSync(runLog, `\n${"=".repeat(70)}\n[${stamp()}] BATCH START stories=[${stories.join(", ")}] stages=[${stages.join(", ")}] models=${JSON.stringify(modelsShown)} perm=${permMode} dryRun=${dryRun} force=${force} waitAuthMin=${waitAuthMin} e2e=${e2eCmd || "-"} ntfy=${ntfyTopic ? "on" : "off"} commit=${doCommit} branch=${branchName || "-"} push=${doPush} autoRepair=${autoRepair} integrity=${integrityEnabled ? "on" : "off"} codexRoles=${codexRoles.join(",") || "-"} autonomy=${autonomy}\n`);
 note(`=== auto-story-pipeline v2: ${stories.length} 스토리 × [${stages.join(", ")}] ===`);
 // (N2 · 2026-09-02 2차 리뷰) 종전에는 경고만 남기고 계속했다 — nested 인스턴스의 commit/push deny 가
 // 통째로 빠진 채 무인 배치가 돌았다는 뜻이다(fail-open). 이제 없으면 시작하지 않는다.
@@ -1484,6 +1571,7 @@ for (const story of stories) {
 
     // ---- 실행 전 하위 단계 기록 무효화 (재실행 정합) ----
     if (stage === "create") invalidate(story, "dev", "qa", "review");
+    if (stage === "replan" || stage === "mockup") invalidate(story, "dev", "qa", "review"); // 계획·화면이 바뀌면 구현부터 다시
     if (stage === "dev") invalidate(story, "qa", "review");
 
     runStage(stage, story); // 실패 시 내부에서 exit (인증 오류는 대기 모드 시 자동 재시도)
