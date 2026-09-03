@@ -139,9 +139,12 @@ if (!existsSync(cfgPath)) {
       '  codex 는 배치 워크트리에서만 실행되며(본 트리 실데이터 반출 방지) 미설치·미인증·한도면 엔진이 claude 로 폴백한다 — 배치는 서지 않는다.',
       'quality: { autoRepair: true|숫자(총 수리 시도 · 기본 0 = qa RED 즉시 STOP), sameRootCauseMaxRetries(기본 3), integrity: auto|on|off }',
       'integrationGate: { enabled(병렬 landing 뒤 통합 트리에서 qa 1회) } — RED 는 **설정으로 우회 불가**: 항상 landing 되돌림 + STOP + push 금지(옛 pushOnFail 은 폐지 · 남아 있으면 무시하고 경고)',
-      'orchestrator: { enabled(기본 false = 규칙 편성 그대로), model(기본 fable), timeoutMin(기본 5) }',
+      'orchestrator: { enabled(기본 true), model(기본 fable), timeoutMin(기본 5), cacheHours(기본 12) }',
+      '  👤 2026-09-03 결정: 「(가) 캐시 추가 후 Fable 계획을 켠다 · BaroOS 프로젝트 중에는 항상 켜 두어 최대 작업량으로」 — 그래서 기본값이 켜짐이다.',
       '  켜면 --auto-plan 의 규칙 큐를 지휘 모델이 재편성한다. 후보는 규칙이 고른 스토리뿐이고(추가 불가) 검증기를 통과할 때만 채택 —',
       '  거부·오류·타임아웃은 전부 규칙 큐 폴백이다(로그 [ORCHESTRATOR] source=…). LLM 때문에 밤이 서지 않는다.',
+      '  cacheHours = 같은 후보 지문(후보 키·kind·상태 · 봉쇄 · 남은 상한 · parallel · 체인 나이 · 모델 가용성)이면 지난 계획을 그대로 다시 쓴다(0 이면 매 슬롯 호출).',
+      '  적중은 [ORCHESTRATOR] source=fable(cache) (cache hit) — 30분 슬롯마다 같은 질문을 사지 않는다. 실행기가 연속 3회 죽으면 그 시간만큼 호출을 쉰다(runner-cooldown).',
       '⚠️ providers.codex.max 는 동시 상한이자 **배치당 Codex 몫**이다 — max:1 + 2폭이면 배치의 첫 스토리만 Codex 리뷰를 받는다.',
     ],
     project,
@@ -164,7 +167,7 @@ if (!existsSync(cfgPath)) {
     },
     quality: { autoRepair: true, sameRootCauseMaxRetries: 3, totalRepairAttempts: 5, integrity: 'auto' },
     integrationGate: { enabled: true },
-    orchestrator: { enabled: false, model: 'fable', timeoutMin: 5 },
+    orchestrator: { enabled: true, model: 'fable', timeoutMin: 5, cacheHours: 12 },
   }, null, 2) + '\n', 'utf8')
   console.log('✔ tools/auto/auto.config.json (epicOrder 를 채워야 자동 편성이 돈다)')
 } else notes.push('· auto.config.json 이미 있음 — 유지')

@@ -909,13 +909,164 @@ describe('[e2e][#18] Fable 계획 — 채택 · 거부 폴백 · 기본 꺼짐',
     }
   })
 
-  it('기본(꺼짐)이면 실행기를 부르지 않고 종전 로그 그대로다', () => {
+  // 2026-09-03: 설치 템플릿의 기본값이 **켜짐**으로 바뀌었다(👤 「(가)」). 그래서 이 시험은
+  // 「기본」이 아니라 **설정에 명시된 false**를 문다 — 끄고 싶다고 적은 프로젝트에서 실행기가
+  // 불리지 않는지가 지켜야 할 계약이다(설정 키가 아예 없는 구판은 아래 #20 회귀가 문다).
+  it('설정에 enabled:false 를 명시하면 실행기를 부르지 않고 종전 로그 그대로다', () => {
     const fx = orchFixture(false)
+    const cfg = JSON.parse(readFileSync(join(fx.proj, 'tools', 'auto', 'auto.config.json'), 'utf8'))
+    assert.equal(cfg.orchestrator.enabled, false, '이 시험의 전제 — 설정이 명시적으로 꺼져 있다')
     // 스텁을 붙여 두어도 **부르지 않는다** — 껐다는 말이 진짜인지 문다
     const r = runRunner(fx, { args: ['--auto-plan', '--dry-run'], env: { AUTO_PLAN_RUNNER_STUB: planStub(fx, '{"batches":[]}') } })
     assert.equal(r.status, 0, r.out.slice(-3000))
     assert.ok(!/\[ORCHESTRATOR\]/.test(r.out), '오케스트레이터 로그 없음')
     assert.match(r.summary, /- 계획 출처: `deterministic`/, r.summary)
+    assert.ok(!/- 계획 캐시:/.test(r.summary), '꺼져 있으면 캐시 줄도 없다')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 계획 캐시 (2026-09-03 👤 「(가) 캐시 추가 후 Fable 계획을 켠다 · 항상 켜 두어 최대 작업량으로」)
+// 상시로 켜면 30분 슬롯마다 같은 질문을 사게 된다 — 후보 지문이 같으면 지난 계획을 그대로 쓴다.
+// 여기서 「부르지 않았다」는 **실행기 스텁이 실제로 몇 번 실행됐는지**(파일에 남긴 호출 수)로 센다.
+const PLAN_BODY = JSON.stringify({
+  rationale: '스텁 계획', batches: [
+    { label: '스텁 A', stories: ['2-1-a'], stages: ['dev', 'review'] },
+    { label: '스텁 B', stories: ['2-2-b'], stages: ['dev', 'review'] },
+  ],
+})
+/** 호출 수를 세는 계획 실행기 스텁 — exitCode 를 주면 그 코드로 죽는다(실행기 오류 재현). */
+const countingPlanStub = (fx, body, { exitCode = 0 } = {}) => {
+  const p = join(fx.bin, `plan-count-${Math.random().toString(36).slice(2)}.mjs`)
+  writeFileSync(p, [
+    "import { readFileSync, appendFileSync } from 'node:fs'",
+    "const prompt = readFileSync(0, 'utf8')",
+    "if (!prompt.includes('야간 배치 편성 계획')) { process.exit(3) }",
+    `appendFileSync(${JSON.stringify(join(fx.state, 'plan-calls.log'))}, 'call\\n')`,
+    exitCode ? `process.exit(${exitCode})` : `process.stdout.write(${JSON.stringify(body)})`,
+  ].join('\n') + '\n')
+  return p
+}
+const planCalls = (fx) => {
+  const p = join(fx.state, 'plan-calls.log')
+  return existsSync(p) ? readFileSync(p, 'utf8').split('\n').filter(Boolean).length : 0
+}
+const cachePath = (fx) => join(fx.state, 'orchestrator-cache.json')
+const readCache = (fx) => JSON.parse(readFileSync(cachePath(fx), 'utf8'))
+const writeCache = (fx, o) => writeFileSync(cachePath(fx), JSON.stringify(o, null, 2) + '\n', 'utf8')
+/** 러너가 남긴 최신 자동 큐 — `_orchestrator` 형태(현황판이 읽는 자리)를 그대로 본다 */
+const latestAutoQueue = (fx) => {
+  const f = readdirSync(fx.state).filter((n) => /^auto-queue-.*\.json$/.test(n)).sort().pop()
+  return f ? JSON.parse(readFileSync(join(fx.state, f), 'utf8')) : null
+}
+const runOrch = (fx, stub) => runRunner(fx, { args: ['--auto-plan', '--dry-run'], env: { AUTO_PLAN_RUNNER_STUB: stub } })
+
+describe('[e2e][계획 캐시] 같은 후보면 다시 묻지 않는다 · 바뀌면 다시 묻는다', { timeout: 600_000 }, () => {
+  it('같은 후보로 두 슬롯을 돌리면 실행기는 1회만 불린다(2회차 = cache hit)', () => {
+    const fx = orchFixture(true)
+    const stub = countingPlanStub(fx, PLAN_BODY)
+    const r1 = runOrch(fx, stub)
+    assert.equal(r1.status, 0, r1.out.slice(-3000))
+    assert.match(r1.out, /\[ORCHESTRATOR\] source=fable \(cache miss\)/, r1.out.slice(-2000))
+    assert.equal(planCalls(fx), 1, '첫 슬롯은 실제로 물어봐야 한다')
+    const c = readCache(fx)
+    assert.match(c.fingerprint, /^[0-9a-f]{64}$/, JSON.stringify(c).slice(0, 300))
+    assert.equal(c.source, 'fable')
+    assert.equal(c.model, 'fable')
+    assert.deepEqual(c.plan.batches.map((b) => b.stories), [['2-1-a'], ['2-2-b']])
+    assert.ok(!('source' in c.plan), '캐시에는 계획 본문만 — 출처는 그때그때 다시 붙인다')
+
+    const r2 = runOrch(fx, stub)
+    assert.equal(r2.status, 0, r2.out.slice(-3000))
+    assert.match(r2.out, /\[ORCHESTRATOR\] source=fable\(cache\) \(cache hit\)/, r2.out.slice(-2000))
+    assert.equal(planCalls(fx), 1, '두 번째 슬롯이 실행기를 다시 불렀다 — 캐시가 죽었다')
+    assert.match(r2.summary, /- 계획 출처: `fable\(cache\)`/, r2.summary)
+    assert.match(r2.summary, /- 계획 캐시: cache hit \(유효 12시간\)/, r2.summary)
+    // 현황판이 읽는 형태는 그대로 — 값만 fable(cache)
+    const orch = latestAutoQueue(fx)?._orchestrator
+    assert.deepEqual(Object.keys(orch ?? {}).sort(), ['at', 'model', 'rationale', 'source'])
+    assert.equal(orch.source, 'fable(cache)')
+    assert.equal(orch.rationale, '스텁 계획')
+  })
+
+  it('후보가 바뀌면 지문이 달라져 다시 묻는다', () => {
+    const fx = orchFixture(true)
+    const stub = countingPlanStub(fx, PLAN_BODY)
+    assert.equal(runOrch(fx, stub).status, 0)
+    assert.equal(planCalls(fx), 1)
+    // 후보 하나를 더한다 — 지문의 「정렬된 후보 키」가 바뀐다
+    writeFileSync(join(fx.art, '2-3-c.md'), readFileSync(join(fx.art, '2-1-a.md'), 'utf8').replace('2-1-a', '2-3-c').replace('src/a.ts', 'src/c.ts'))
+    writeFileSync(join(fx.art, 'sprint-status.yaml'), readFileSync(join(fx.art, 'sprint-status.yaml'), 'utf8') + '  2-3-c: ready-for-dev\n')
+    ok(git(fx.proj, ['add', '-A']), 'add'); ok(git(fx.proj, ['commit', '-qm', 'new candidate']), 'commit')
+    const r2 = runOrch(fx, stub)
+    assert.equal(r2.status, 0, r2.out.slice(-3000))
+    assert.equal(planCalls(fx), 2, '후보가 바뀌었는데 캐시를 재사용했다')
+    assert.match(r2.out, /\[ORCHESTRATOR\] source=\S+ \(cache miss\)/, r2.out.slice(-2000))
+  })
+
+  it('캐시가 유효 시간을 넘기면 다시 묻는다', () => {
+    const fx = orchFixture(true)
+    const stub = countingPlanStub(fx, PLAN_BODY)
+    assert.equal(runOrch(fx, stub).status, 0)
+    assert.equal(planCalls(fx), 1)
+    writeCache(fx, { ...readCache(fx), at: new Date(Date.now() - 13 * 3_600_000).toISOString() }) // 13시간 전 > 기본 12시간
+    const r2 = runOrch(fx, stub)
+    assert.equal(r2.status, 0, r2.out.slice(-3000))
+    assert.equal(planCalls(fx), 2, '만료된 캐시를 그대로 썼다')
+    assert.match(r2.out, /\[ORCHESTRATOR\] source=fable \(cache miss\)/, r2.out.slice(-2000))
+  })
+
+  it('캐시된 계획이 지금 규칙을 통과하지 못하면 버리고 다시 묻는다', () => {
+    const fx = orchFixture(true)
+    const stub = countingPlanStub(fx, PLAN_BODY)
+    assert.equal(runOrch(fx, stub).status, 0)
+    // 지문은 그대로 두고 **계획만** 후보 밖 스토리로 바꾼다 — 나이·지문은 적중, 검증은 실패
+    const c = readCache(fx)
+    writeCache(fx, { ...c, plan: { rationale: '오염', batches: [{ label: 'X', stories: ['9-9-없는스토리'] }] } })
+    const r2 = runOrch(fx, stub)
+    assert.equal(r2.status, 0, r2.out.slice(-3000))
+    assert.match(r2.out, /캐시 계획이 지금 규칙을 통과하지 못한다\(deterministic-fallback\(invented-story/, r2.out.slice(-2000))
+    assert.equal(planCalls(fx), 2, '검증에 떨어진 캐시를 그대로 썼다')
+    assert.match(r2.out, /\[ORCHESTRATOR\] source=fable \(cache miss\)/, r2.out.slice(-2000))
+    assert.deepEqual(readCache(fx).plan.batches.map((b) => b.stories), [['2-1-a'], ['2-2-b']], '캐시가 다시 정상 계획으로 갱신됐다')
+  })
+
+  it('폴백(규칙 큐)은 캐시하지 않는다 — 다음 슬롯이 다시 시도한다', () => {
+    const fx = orchFixture(true)
+    const stub = countingPlanStub(fx, '이건 JSON 이 아니다')
+    const r1 = runOrch(fx, stub)
+    assert.equal(r1.status, 0, r1.out.slice(-3000))
+    assert.match(r1.out, /\[ORCHESTRATOR\] source=deterministic-fallback\(parse:not-json\) \(cache miss\)/, r1.out.slice(-2000))
+    assert.ok(!existsSync(cachePath(fx)) || !readCache(fx).plan, '폴백이 캐시로 남았다')
+    const r2 = runOrch(fx, stub)
+    assert.equal(r2.status, 0, r2.out.slice(-3000))
+    assert.equal(planCalls(fx), 2, '폴백 뒤 슬롯이 다시 시도하지 않았다')
+  })
+
+  it('실행기 오류가 연속 3회면 그 뒤 유효 시간 동안 부르지 않는다(cooldown)', () => {
+    const fx = orchFixture(true)
+    const stub = countingPlanStub(fx, '', { exitCode: 1 })
+    for (let i = 1; i <= 3; i++) {
+      const r = runOrch(fx, stub)
+      assert.equal(r.status, 0, r.out.slice(-3000))
+      assert.match(r.out, /\[ORCHESTRATOR\] source=deterministic-fallback\(runner-error\) \(cache miss\)/, `${i}회차: ${r.out.slice(-1500)}`)
+      assert.equal(planCalls(fx), i, `${i}회차까지는 계속 시도한다`)
+    }
+    const c = readCache(fx)
+    assert.equal(c.runnerErrors, 3)
+    assert.ok(Date.parse(c.cooldownUntil) > Date.now(), `쿨다운 미설정: ${c.cooldownUntil}`)
+    assert.ok(!c.plan, '실패는 계획을 캐시하지 않는다')
+    const r4 = runOrch(fx, stub)
+    assert.equal(r4.status, 0, r4.out.slice(-3000))
+    assert.match(r4.out, /\[ORCHESTRATOR\] source=deterministic-fallback\(runner-cooldown\) \(cache cooldown\)/, r4.out.slice(-2000))
+    assert.equal(planCalls(fx), 3, '쿨다운 중에 실행기를 불렀다')
+    assert.match(r4.summary, /- 계획 캐시: cache cooldown/, r4.summary)
+  })
+
+  it('설치 템플릿의 orchestrator 기본값은 켜짐 + 캐시 12시간이다 (👤 2026-09-03 「(가)」)', () => {
+    const src = readFileSync(join(REPO, 'night-batch-ops', 'install.mjs'), 'utf8')
+    assert.match(src, /orchestrator: \{ enabled: true, model: 'fable', timeoutMin: 5, cacheHours: 12 \}/, '설치 기본값이 꺼짐으로 되돌아갔다')
+    assert.match(src, /👤 2026-09-03 결정/, '기본값을 켠 근거(👤 결정) 인용이 없다')
   })
 })
 

@@ -98,12 +98,18 @@ const QA_CMD = typeof CFG.qa === 'string' && CFG.qa.trim() ? CFG.qa : 'npm run q
 // 켜면 규칙 편성(plan-queue)이 낸 큐를 지휘 모델에게 **재편성**시킨다. 후보 집합은 규칙이 정한
 // 그대로이고(추가 불가), 검증(plan-dag.validatePlan)을 통과할 때만 채택한다. 하나라도 어긋나면
 // 규칙 큐로 되돌아간다 — 밤이 LLM 때문에 서는 일은 없다.
+// 2026-09-03 👤 「(가) 캐시 추가 후 Fable 계획을 켠다 · BaroOS 프로젝트 중에는 항상 켜 두어 최대 작업량으로」 —
+// 상시로 켜니 **30분 슬롯마다 같은 질문을 다시 하는 것**이 문제가 된다. `cacheHours`(기본 12) 안에서
+// 후보 지문이 같으면 지난 계획을 그대로 다시 쓴다(호출 0). 설치 템플릿의 기본값은 enabled:true 다 —
+// 여기 `=== true` 는 **설정 키가 아예 없는 구판 프로젝트**의 종전 동작(꺼짐)을 지키는 자리다.
 const ORCH = {
   enabled: CFG.orchestrator?.enabled === true,
   model: typeof CFG.orchestrator?.model === 'string' && CFG.orchestrator.model ? CFG.orchestrator.model : 'fable',
   timeoutMin: Math.max(1, Number(CFG.orchestrator?.timeoutMin) || 5),
+  cacheHours: Number.isFinite(Number(CFG.orchestrator?.cacheHours)) && Number(CFG.orchestrator?.cacheHours) >= 0 ? Number(CFG.orchestrator.cacheHours) : 12,
 }
 let PLAN_SOURCE = 'deterministic' // run-summary·매니페스트에 남길 계획 출처
+let PLAN_CACHE_NOTE = null // 계획 캐시 판정 한 줄(요약 전용 · 오케스트레이터가 꺼져 있으면 null)
 let PLAN_VALIDATION = null // 편성기 자기 검증 요약
 let codexAvailability = null // codex 가 켜졌을 때만 1회 감지 — 감지 코드는 엔진의 providers/ 계층 하나(중복 판정기 금지)
 /** 능력 감지 실행기 — **셸 문자열 결합을 쓰지 않는다**(2026-09-02 hardening #6/#8).
@@ -686,13 +692,52 @@ function makePlanRunner() {
   return makeClaudePlanRunner({ bin: process.env.CLAUDE_BIN || 'claude', model: ORCH.model, cwd: process.cwd(), timeoutMs })
 }
 
+// ── 계획 캐시 (2026-09-03 👤 「(가)」) ────────────────────────────────────────
+// 무엇을 캐시하나: **후보 지문 → 채택된 계획**. 지문 = 정렬된 후보(키·kind·상태) · 봉쇄 목록 ·
+// 남은 상한 · parallel · 미머지 체인 나이 · 모델 가용성(codex 감지 결과)의 sha256. 이 중 하나라도
+// 바뀌면 밤의 판단 재료가 바뀐 것이니 다시 묻는다. 안 바뀌었으면 30분마다 같은 답을 사느라
+// 한도를 태우지 않는다.
+// 안전판 3개: ① 캐시된 계획도 **지금 다시 검증**해야 쓰인다(부분집합 + validatePlan — requestPlan 이
+// 캐시 replay 실행기로 같은 관문을 다시 통과시킨다) ② 나이가 `cacheHours` 를 넘으면 버린다
+// ③ 폴백(규칙 큐로 되돌아간 결과)은 **캐시하지 않는다** — 다음 슬롯에 다시 시도한다.
+// 예외 하나: 실행기 오류가 **연속 3회**면 그 뒤 `cacheHours` 동안은 부르지 않는다(cooldown).
+// claude CLI 가 죽어 있는 밤에 슬롯마다 3분씩 타임아웃을 사는 것을 막는 자리다.
+const ORCH_CACHE_PATH = join(STATE_DIR, 'orchestrator-cache.json')
+const ORCH_RUNNER_ERROR_RE = /^deterministic-fallback\((runner-error|runner-timeout|runner-nonzero|runner-reject)/
+const ORCH_COOLDOWN_AFTER = 3
+
+function readOrchCache() {
+  try {
+    const o = JSON.parse(readFileSync(ORCH_CACHE_PATH, 'utf8'))
+    return o && typeof o === 'object' && !Array.isArray(o) ? o : null
+  } catch { return null }
+}
+/** 원자 쓰기(tmp→rename) — 다음 슬롯이 반쪽 JSON 을 읽지 않는다. 실패해도 밤은 계속 간다. */
+function writeOrchCache(obj) {
+  try { writeJsonAtomic(ORCH_CACHE_PATH, obj) } catch (e) {
+    console.log(`⚠ [ORCHESTRATOR] 계획 캐시 기록 실패(무시하고 계속): ${e?.message ?? e}`)
+  }
+}
+/** 후보 지문 — 순서·서식이 아니라 **내용**만 본다(정렬 후 sha256). */
+function orchFingerprint({ stories = [], blocked = [], capLeft = null, parallel = null, chainAgeDays = 0, models = {} }) {
+  const payload = {
+    v: 1,
+    candidates: stories.map((s) => [String(s.key), String(s.kind ?? ''), String(s.status ?? '')]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+    blocked: [...blocked].map(String).sort(),
+    capLeft, parallel, chainAgeDays, models,
+  }
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex')
+}
+
 /**
- * 규칙 큐를 지휘 모델에게 **재편성**시킨다(선택 · 기본 꺼짐).
+ * 규칙 큐를 지휘 모델에게 **재편성**시킨다(선택 · 설정 키가 없으면 꺼짐).
  * 후보는 규칙 큐가 이미 고른 스토리뿐이다 — 지휘는 **묶고 나누는 순서**만 바꾼다. 계획이
  * 검증을 통과하면 큐 파일을 갈아 끼우고, 아니면 규칙 큐 그대로 간다(사유를 로그에 남긴다).
+ * 같은 후보 지문이면 지난 계획을 재사용한다(캐시 — 실행기 호출 0).
  */
 async function applyOrchestrator(q, outPath) {
   PLAN_SOURCE = 'deterministic'
+  PLAN_CACHE_NOTE = null
   if (!ORCH.enabled) return
   const batches = q.batches ?? []
   const keys = batches.flatMap((b) => b.stories ?? [])
@@ -709,6 +754,7 @@ async function applyOrchestrator(q, outPath) {
       files: text ? parseFileList(text) : [],
       deps: text ? parseDependsOn(text) : [],
       stages: b.stages ?? [],
+      status: /^Status:\s*(\S+)/m.exec(text)?.[1] ?? '', // 지문 재료 — 같은 후보라도 상태가 바뀌면 다시 묻는다
     }
   }
   const stories = keys.map(metaFor)
@@ -718,36 +764,99 @@ async function applyOrchestrator(q, outPath) {
   const externalDeps = [...new Set(stories.flatMap((s) => s.deps).filter((d) => !inSet.has(d) && ![...inSet].some((k) => k.startsWith(`${d}-`) || k === d)))]
   const dag = buildDag({ stories, epicOrder: Array.isArray(CFG.epicOrder) ? CFG.epicOrder : [] })
 
-  let runner
-  try { runner = makePlanRunner() } catch (e) {
-    console.log(`[ORCHESTRATOR] source=deterministic(runner-reject:${e?.message ?? e})`)
-    PLAN_SOURCE = 'deterministic-fallback(runner-reject)'
-    return
-  }
-  const res = await requestPlan({
+  const planArgs = {
     context: { date: today(), candidates: stories },
     dag,
     constraints: { knownKeys: keys, doneKeys: externalDeps, batchMax: PCFG.workers.batchSize },
     deterministic: q,
-    runner,
-  })
-  PLAN_SOURCE = res.source
-  console.log(`[ORCHESTRATOR] source=${PLAN_SOURCE}`)
-  if (res.source !== 'fable') return
-
-  // 채택 — 배치만 갈아 끼운다(defaults·_편성·validation 은 규칙 큐의 것을 유지한다).
-  q.batches = res.plan.batches.map((b, i) => ({
-    label: b.label || `FABLE-${i + 1}: ${(b.stories ?? []).join(' · ')}`,
-    enabled: true,
-    stories: b.stories ?? [],
-    stages: b.stages ?? (batches.find((x) => (x.stories ?? []).includes(b.stories?.[0]))?.stages ?? ['dev']),
-    ...(b.models ? { models: b.models } : {}),
-  }))
-  q._orchestrator = { source: res.source, model: ORCH.model, at: new Date().toISOString(), rationale: res.plan.rationale ?? '' }
-  try { writeFileSync(outPath, JSON.stringify(q, null, 2) + '\n', 'utf8') } catch (e) {
-    console.log(`⚠ [ORCHESTRATOR] 채택 계획 기록 실패 — 규칙 큐로 계속: ${e?.message ?? e}`)
-    PLAN_SOURCE = 'deterministic-fallback(write-error)'
   }
+
+  /** 채택 — 배치만 갈아 끼운다(defaults·_편성·validation 은 규칙 큐의 것을 유지한다). */
+  const adopt = (plan, source, cacheState) => {
+    PLAN_SOURCE = source
+    PLAN_CACHE_NOTE = cacheState
+    console.log(`[ORCHESTRATOR] source=${PLAN_SOURCE} (${cacheState})`)
+    q.batches = plan.batches.map((b, i) => ({
+      label: b.label || `FABLE-${i + 1}: ${(b.stories ?? []).join(' · ')}`,
+      enabled: true,
+      stories: b.stories ?? [],
+      stages: b.stages ?? (batches.find((x) => (x.stories ?? []).includes(b.stories?.[0]))?.stages ?? ['dev']),
+      ...(b.models ? { models: b.models } : {}),
+    }))
+    q._orchestrator = { source, model: ORCH.model, at: new Date().toISOString(), rationale: plan.rationale ?? '' }
+    try { writeFileSync(outPath, JSON.stringify(q, null, 2) + '\n', 'utf8'); return true } catch (e) {
+      console.log(`⚠ [ORCHESTRATOR] 채택 계획 기록 실패 — 규칙 큐로 계속: ${e?.message ?? e}`)
+      PLAN_SOURCE = 'deterministic-fallback(write-error)'
+      return false
+    }
+  }
+
+  // ── 지문 ──
+  const meta = q._편성 ?? {}
+  const capNum = Number(meta.cap)
+  const fingerprint = orchFingerprint({
+    stories,
+    blocked: (meta.excluded ?? []).map((e) => `${e?.key ?? ''}|${e?.why ?? ''}`),
+    capLeft: Number.isFinite(capNum) ? Math.max(0, capNum - Number(meta.alreadyPlannedToday ?? 0)) : null,
+    parallel: Number(q.defaults?.parallel) || null,
+    chainAgeDays: Number(meta.chainAgeDays ?? 0),
+    models: { codex: PCFG.providers.codex.enabled ? await codexAvailable() : false },
+  })
+  const cache = readOrchCache()
+  const ageH = cache?.at ? (Date.now() - Date.parse(cache.at)) / 3_600_000 : NaN
+
+  // ① 캐시 적중 — 실행기를 부르지 않는다. 단 **지금 규칙으로 다시 검증**해서 통과할 때만 쓴다.
+  if (cache?.plan && cache.fingerprint === fingerprint && Number.isFinite(ageH) && ageH >= 0 && ageH <= ORCH.cacheHours) {
+    const hit = await requestPlan({ ...planArgs, runner: () => JSON.stringify(cache.plan) })
+    if (hit.source === 'fable') { adopt(hit.plan, 'fable(cache)', 'cache hit'); return }
+    console.log(`⚠ [ORCHESTRATOR] 캐시 계획이 지금 규칙을 통과하지 못한다(${hit.source}) — 다시 묻는다`)
+  }
+
+  // ② 쿨다운 — 실행기가 연속으로 죽은 뒤에는 `cacheHours` 동안 부르지 않는다(밤을 세우지 않는 쪽이 이긴다).
+  if (cache?.cooldownUntil && Date.parse(cache.cooldownUntil) > Date.now()) {
+    PLAN_SOURCE = 'deterministic-fallback(runner-cooldown)'
+    PLAN_CACHE_NOTE = 'cache cooldown'
+    console.log(`[ORCHESTRATOR] source=${PLAN_SOURCE} (cache cooldown)`)
+    return
+  }
+
+  /** 실행기 오류 누적 — 3회째에 쿨다운을 건다. 캐시된 계획(plan·fingerprint)은 건드리지 않는다. */
+  const noteRunnerError = () => {
+    const errors = Number(cache?.runnerErrors ?? 0) + 1
+    const next = { ...(cache ?? {}), runnerErrors: errors }
+    if (errors >= ORCH_COOLDOWN_AFTER) next.cooldownUntil = new Date(Date.now() + ORCH.cacheHours * 3_600_000).toISOString()
+    writeOrchCache(next)
+  }
+  /** 실행기는 살아 있었다(형식 불량·검증 거부) — 연속 오류 계수를 지운다. */
+  const clearRunnerErrors = () => {
+    if (!cache || !Number(cache.runnerErrors ?? 0)) return
+    writeOrchCache({ ...cache, runnerErrors: 0, cooldownUntil: null })
+  }
+
+  let runner
+  try { runner = makePlanRunner() } catch (e) {
+    PLAN_SOURCE = 'deterministic-fallback(runner-reject)'
+    PLAN_CACHE_NOTE = 'cache miss'
+    console.log(`[ORCHESTRATOR] source=${PLAN_SOURCE} (cache miss)`)
+    console.log(`⚠ [ORCHESTRATOR] 계획 실행기 거부: ${e?.message ?? e}`)
+    noteRunnerError()
+    return
+  }
+  const res = await requestPlan({ ...planArgs, runner })
+  if (res.source === 'fable') {
+    if (!adopt(res.plan, 'fable', 'cache miss')) return
+    const plan = { ...res.plan } // 캐시에는 계획 본문만 — 출처·오류 상세는 그때그때 다시 붙인다
+    delete plan.source
+    delete plan.errorDetail
+    writeOrchCache({ fingerprint, at: new Date().toISOString(), plan, source: 'fable', model: ORCH.model, runnerErrors: 0, cooldownUntil: null })
+    return
+  }
+  // 폴백은 **캐시하지 않는다** — 다음 슬롯에 다시 시도한다(실행기 오류만 계수한다).
+  PLAN_SOURCE = res.source
+  PLAN_CACHE_NOTE = 'cache miss'
+  console.log(`[ORCHESTRATOR] source=${PLAN_SOURCE} (cache miss)`)
+  if (ORCH_RUNNER_ERROR_RE.test(res.source)) noteRunnerError()
+  else clearRunnerErrors()
 }
 
 // ④ 큐 선택 — 사람이 쓴 큐(planned!=='auto')가 항상 이긴다. 단 하루 1회(소비 표식).
@@ -1436,6 +1545,8 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     record('')
     record('## 편성 (자동 — plan-queue)')
     record(`- 계획 출처: \`${PLAN_SOURCE}\``)
+    // 캐시 판정 — 아침 브리핑이 「오늘 Fable 을 몇 번 불렀나」를 이 줄로 센다(hit = 호출 0).
+    if (PLAN_CACHE_NOTE) record(`- 계획 캐시: ${PLAN_CACHE_NOTE} (유효 ${ORCH.cacheHours}시간)`)
     if (PLAN_VALIDATION) {
       const v = PLAN_VALIDATION
       record(`- 계획 자기 검증: ${v.ok ? 'GREEN' : `RED — 오류 ${v.errors.length}건`}${v.warnings?.length ? ` · 경고 ${v.warnings.length}건` : ''}`)

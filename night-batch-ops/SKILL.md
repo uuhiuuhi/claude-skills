@@ -140,7 +140,8 @@ commit/push deny 설정이 없으면 엔진이 배치를 **시작조차 하지 �
 |---|---|---|
 | **확장 충돌 판정** | `run-night.parallelHazards(lists, { judges: [conflicts.parallelHazardsCompat] })` | 항상 켬 — 걸리면 **순차 폴백** + 요약에 `[PARALLEL][HAZARD] …` |
 | **워커 배정** | `assign.assignWorkers(...)` (종전 홀짝 `assignProviders` 대체 · 하위 호환용으로 함수는 남음) | 설정 없으면 배치 `models` 그대로. 요약에 `[ASSIGN] <story> dev=… review=… — <근거>` |
-| **Fable 계획** | `orchestrate.requestPlan(...)` — `--auto-plan` 의 규칙 큐를 감싼다 | `orchestrator.enabled: false` = **종전 동작**. 켜도 검증 실패·거부·타임아웃은 전부 규칙 큐로 폴백 |
+| **Fable 계획** | `orchestrate.requestPlan(...)` — `--auto-plan` 의 규칙 큐를 감싼다 | **기본 켬**(👤 2026-09-03 · 설정 키가 없는 구판만 꺼짐). 검증 실패·거부·타임아웃은 전부 규칙 큐로 폴백 |
+| **계획 캐시** | 상태 폴더 `orchestrator-cache.json`(원자 쓰기) | `orchestrator.cacheHours: 12` — 후보 지문이 같으면 **실행기 호출 0**(`source=fable(cache)`) |
 | **계측** | `metrics.summarizeTimeline(...)` — 라운드 끝에 1회 | 항상 켬 — `auto-pipeline-logs/metrics-<batchId>.json` + 상태 폴더 `metrics-history.jsonl` + 요약 맨 뒤 `## 계측` 표 1개 |
 
 **배정 기록(`assign-history.json`)**: 상태 폴더에 있고 **러너가 유일한 작성자**다(라운드 끝 1회 · tmp→rename).
@@ -150,10 +151,24 @@ commit/push deny 설정이 없으면 엔진이 배치를 **시작조차 하지 �
 `max: 1` + 2폭이면 배치의 **첫 스토리만** Codex 리뷰를 받고 나머지는 Claude 교차로 간다(종전 홀짝 분할은 둘 다 Codex 였다).
 스토리마다 Codex 리뷰를 원하면 `max` 를 배치 폭만큼 올린다 — 다만 같은 `auth.json` 동시 사용은 실측 없이 올리지 말 것.
 
-**Fable 계획 켜기**: `auto.config.json` 에 `"orchestrator": { "enabled": true, "model": "fable", "timeoutMin": 5 }`.
+**Fable 계획**: `auto.config.json` 의 `"orchestrator": { "enabled": true, "model": "fable", "timeoutMin": 5, "cacheHours": 12 }` (설치 기본값).
 후보 집합은 **규칙 편성기가 고른 스토리 그대로**이고(추가 불가), 지휘는 묶고 나누는 순서만 바꾼다.
-검증(`plan-dag.validatePlan`)을 통과할 때만 채택하고, 시작 로그에 `[ORCHESTRATOR] source=fable|deterministic-fallback(사유)` 가 남는다.
+검증(`plan-dag.validatePlan`)을 통과할 때만 채택하고, 시작 로그에 `[ORCHESTRATOR] source=… (cache hit|miss|cooldown)` 가 남는다.
 시험용 주입: `AUTO_PLAN_RUNNER_STUB=<계획을 stdout 으로 내는 .mjs>` (실제 `claude -p` 를 부르지 않는다).
+
+**계획 캐시(2026-09-03 👤 「(가) … BaroOS 프로젝트 중에는 항상 켜 두어 최대 작업량으로」)** — 상시로 켜니
+30분 슬롯마다 같은 질문을 사는 것이 문제가 된다. 그래서 **후보 지문**이 같으면 지난 계획을 그대로 다시 쓴다.
+
+- 지문 = 정렬된 후보(키·kind·상태) · 봉쇄 목록(`_편성.excluded`) · 남은 상한(`cap - 오늘 기편성`) ·
+  `parallel` · 미머지 체인 나이 · 모델 가용성(codex 감지 결과)의 sha256. 하나라도 바뀌면 다시 묻는다.
+- 캐시 파일 = 상태 폴더 `orchestrator-cache.json`(`{fingerprint, at, plan, source, model}` · tmp→rename).
+- 적중해도 **지금 규칙으로 다시 검증**해야 쓰인다(후보 부분집합 + `validatePlan`) — 떨어지면 버리고 다시 묻는다.
+- **폴백은 캐시하지 않는다** — 다음 슬롯이 다시 시도한다. 단 실행기 오류(`runner-error|timeout|nonzero|reject`)가
+  **연속 3회**면 그 뒤 `cacheHours` 동안 쉰다(`source=deterministic-fallback(runner-cooldown)`).
+- **하루 호출 상한 관찰법**: 슬롯 로그(상태 폴더 `slots.log` — 예약 작업이 러너 stdout 을 여기 적는다)에서
+  `grep -c 'cache miss' slots.log` 가 그날 실제로 Fable 을 부른 슬롯 수다
+  (`cache hit`·`cache cooldown` 은 호출 0). `night-last-run.md` 의 `- 계획 캐시: …` 줄이 그 슬롯의 판정이다.
+  후보가 종일 그대로면 하루 호출은 사실상 **1~2회**(12시간 만료 + 후보 변동)로 수렴한다.
 
 **벤치**: `node night-batch-ops/engine/bench.mjs --stub` → `references/hardening-2026-09-02/bench-stub.md`.
 스텁이라 **절대 시간은 의미가 없다** — 뜻이 있는 것은 재시도·모델 호출 수·병렬 효율·유휴 비율·품질 게이트 통과 여부다.
@@ -221,7 +236,7 @@ API 키/크레딧 경로 · 벤더 3사 · Codex 세션 타임아웃 시 고아 
     "mockupsDir": "mockups",
     "verdictsPath": "tools/dev-status/mockup-verdicts.json"
   },
-  "orchestrator": { "enabled": false, "model": "fable", "timeoutMin": 5 }
+  "orchestrator": { "enabled": true, "model": "fable", "timeoutMin": 5, "cacheHours": 12 }
 }
 ```
 
@@ -246,10 +261,12 @@ API 키/크레딧 경로 · 벤더 3사 · Codex 세션 타임아웃 시 고아 
   - `mockupsDir` — 목업 파일 폴더(기본 `mockups`). 스토리 키로 `story-<에픽>-<번호>-` 접두사를 찾는다.
   - `verdictsPath` — 승인 판정 JSON 경로(기본 `tools/dev-status/mockup-verdicts.json`).
     파일이 없으면 판정 0건이므로 새 화면 스토리는 「목업 부재」로 보류된다.
-- `orchestrator` = **Fable 계획(선택 · 기본 꺼짐)**. `enabled: false` 면 편성은 규칙 그대로다.
+- `orchestrator` = **Fable 계획(설치 기본 켜짐 — 👤 2026-09-03 「(가)」)**. `enabled: false` 를 적으면
+  편성은 규칙 그대로다(설정 키가 아예 없는 구판 프로젝트도 꺼짐 = 종전 동작).
   켜면 규칙 큐를 지휘 모델에게 재편성시키되 **후보는 규칙이 고른 스토리뿐**이고, 검증기를
   통과할 때만 채택한다(실패·거부·타임아웃 = 규칙 큐 폴백 · 사유는 `[ORCHESTRATOR] source=…`).
   `timeoutMin` 을 넘기면 그 라운드는 규칙 큐로 간다 — **LLM 때문에 밤이 서지 않는다**.
+  `cacheHours`(기본 12 · 0 이면 매 슬롯 호출) = 후보 지문이 같을 때 지난 계획을 다시 쓰는 시간.
 - **상태 폴더는 3단계 우선순위**다 — ① 환경변수 `AUTO_BATCH_STATE_DIR` ② `auto.config.json` 의
   `stateDir` ③ 기본 `~/.claude-auto/<project>`. 러너·편성기·원격 폴러·설치기가 **같은 순서**를 쓴다
   (한 곳만 다르면 lock 과 원장이 갈라져 이중 기동이 난다). `project` 는 **`auto.config.json` 의

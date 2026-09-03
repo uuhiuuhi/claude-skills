@@ -99,6 +99,9 @@ buildDag/assign    선행·파일 충돌로 순서를 세우고, 만든 쪽과 �
   ↓
 requestPlan(fable) 지휘 모델이 「무엇부터 묶을까」를 낸다 → **검증기를 통과할 때만** 채택
   ↓                 (어긋나면 말없이 규칙 계획으로 — 밤은 서지 않는다)
+  ↓                 ※ 자율 마무리는 라운드마다 후보가 바뀌므로 **매 라운드 새로 묻는다**.
+  ↓                    후보 지문 캐시(`orchestrator-cache.json` · 기본 12시간)는 30분 슬롯이
+  ↓                    반복되는 `run-night --auto-plan` 쪽에만 있다(👤 2026-09-03 「(가)」).
 buildQueueFromPlan run-night 가 그대로 먹는 큐 JSON
   ↓
 run-night --queue  기존 러너 계약 그대로(워크트리 · `auto/*` 브랜치 · 커밋 가드 · 통합 게이트)
@@ -247,6 +250,8 @@ run-night --queue  기존 러너 계약 그대로(워크트리 · `auto/*` 브�
 | codex 를 켰는데 `codex 폴백 → claude` | 엔진은 Codex 를 **배치 워크트리에서만** 돌린다(본 트리 실데이터 반출 방지) | 병렬 배치로 돌리거나, 위험을 이해한 뒤에만 `AUTO_CODEX_ALLOW_CWD=1` |
 | 편성 0건 | 후보가 전부 봉쇄·자동 수리 금지·md 부재 | `round-N-queue.json` 의 `_편성.excluded` 에 스토리별 사유가 있다 |
 | 계획 출처가 늘 `deterministic-fallback(...)` | 지휘 모델이 없거나 응답이 형식에 안 맞는다 | 괄호 안이 사유다. 규칙 계획으로 도는 것 자체는 정상이다 |
+| 계획 출처가 `deterministic-fallback(runner-cooldown)` | (run-night 슬롯) 실행기 오류가 연속 3회라 `cacheHours` 동안 쉬는 중이다 | `claude --version` 으로 CLI 를 확인하고, 고쳤으면 상태 폴더의 `orchestrator-cache.json` 을 지운다 |
+| 계획 출처가 `fable(cache)` | 후보 지문이 지난 슬롯과 같아 **실행기를 부르지 않았다**(정상 · 한도 절약) | 강제로 다시 묻고 싶으면 `orchestrator-cache.json` 삭제 또는 `cacheHours: 0` |
 | 판정이 늘 `not-ready` | 그게 결론이다 | `report.md` 9절 「막고 있는 것」 목록부터 지운다 |
 
 ---
