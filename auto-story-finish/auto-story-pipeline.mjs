@@ -84,6 +84,7 @@ import { buildClaudeCommand, runClaudeWorker } from "./providers/claude.mjs";
 import { buildCodexCommand, runCodexWorker, classifyCodexFailure, codexFailureText, inspectCwdForCodex, codexReviewPrompt, codexDevPrompt, codexRepairPrompt, renderReviewFindings, parseReviewJson, validateReviewRun, redactSecrets, isSensitivePath, stripSensitiveFileSections, hideSensitiveFiles, restoreEnvFiles, withCodexSlot, slotStaleMsFor } from "./providers/codex.mjs";
 import { createGitGuard, findCredentialRemotes, stripRemoteCredentials } from "./providers/git-guard.mjs";
 import { assertSafeModel, assertSafePath, normalizeCommand, spawnSafe } from "./providers/spawn-safe.mjs";
+import { safeGitPush } from "./push-guard.mjs";
 import { strengthenCompletion } from "./completion-rules.mjs";
 import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendDecisionsInbox, countOpenFindings } from "./story-writes.mjs";
 import { detectGates, parseQaChain, classifyQaFailure, repairDecision, testIntegrityFindings, escalateRepairIntroduced, securityTriggers, performanceTriggers, buildVerificationManifest, escalationReport } from "./quality-rules.mjs";
@@ -595,6 +596,24 @@ function ensureBranch() {
   if (r.code !== 0) { note(`✖ COMMIT GUARD STOP — 브랜치 전환 실패: ${r.err.trim()}`); process.exit(6); }
   note(`ℹ 브랜치 ${exists ? (mergedIn ? "재기점(HEAD)" : "전환") : "생성"}: ${branchName} (base=${cur})`);
 }
+/** (2026-09-03 👤 「무료 운영 안전장치 ②」) 엔진의 **유일한** push 경로 — ref 를 push 직전에 다시 검사한다.
+ *  main·보호 이름·refspec(`HEAD:main`)·현재 브랜치 불일치 = 즉시 exit 6(밀지 않는다). 인자 파싱 시점의
+ *  `--branch auto/…` 검사는 그 뒤의 브랜치 전환·설정 오류를 못 잡는다 — GitHub Free 는 서버가 main 을 보호하지
+ *  못하므로(2026-09-03 실측 · 룰셋 API 403) 여기가 마지막 문이다. 반환값 = push 성공 여부. */
+function enginePush(label) {
+  const r = safeGitPush({ ref: branchName });
+  if (r.verdict) {
+    note(`✖ PUSH GUARD STOP — ${label}${r.verdict}. 정본 main 은 사람 승인 머지로만 바뀐다.`);
+    push("PUSH GUARD STOP", `${label}${r.verdict}`);
+    process.exit(6);
+  }
+  if (!r.ok) {
+    note(`⚠ ${label}git push 실패(계속): ${r.out.trim().split("\n").slice(-1)[0]}`);
+    push("PUSH FAILED", `${label}push 실패 — 아침에 사람 재시도`);
+    return false;
+  }
+  return true;
+}
 function commitStory(story, stagesDone) {
   if (!doCommit) return null;
   if (dryRun) { note(`   (dry-run) commit [${story}] paths=${commitPaths.length} push=${doPush}`); return null; }
@@ -640,18 +659,14 @@ function commitStory(story, stagesDone) {
     pendingPush = true;
     note(`   ⏸ push 보류 — 배치 ${e2eCmd ? "e2e" : "통합 게이트"} 통과 후 1회만 민다(로컬 ${branchName} 에는 커밋됨).`);
   } else if (doPush) {
-    const p = git(["push", "-u", "origin", branchName]);
-    if (p.code !== 0) { note(`⚠ [${story}] git push 실패(계속): ${(p.err || p.out).trim().split("\n").slice(-1)[0]}`); push("PUSH FAILED", `[${story}] push 실패 — 아침에 사람 재시도`); }
-    else note(`   ✔ push origin/${branchName}`);
+    if (enginePush(`[${story}] `)) note(`   ✔ push origin/${branchName}`);
   }
   return sha;
 }
 /** (N1) 배치 통합 게이트 GREEN 뒤의 **단 한 번**의 push. RED 면 절대 불리지 않는다(호출부가 그 전에 exit 1). */
 function pushDeferred() {
   if (!deferPush || !pendingPush || dryRun) return;
-  const p = git(["push", "-u", "origin", branchName]);
-  if (p.code !== 0) { note(`⚠ 보류했던 push 실패(계속): ${(p.err || p.out).trim().split("\n").slice(-1)[0]}`); push("PUSH FAILED", `보류 push 실패 — 아침에 사람 재시도`); }
-  else note(`   ✔ push origin/${branchName} (배치 게이트 GREEN 뒤 1회 · 스토리별 push 없음)`);
+  if (enginePush("보류했던 ")) note(`   ✔ push origin/${branchName} (배치 게이트 GREEN 뒤 1회 · 스토리별 push 없음)`);
   pendingPush = false;
 }
 

@@ -837,3 +837,37 @@ describe('[engine-e2e][M6] 변경 구현 파일 미열람 clean 은 리뷰로 �
     assert.equal(r.status, 0, r.out.slice(-3000))
   })
 })
+
+// ── 2026-09-03 👤 「무료 운영 안전장치 ②」 — 무인 엔진은 main 을 밀 수 없다 ──────────
+// GitHub Free 는 비공개 저장소 main 을 서버가 보호하지 못한다(룰셋 API 403 · Team 플랜 필요).
+// 그래서 「거부했다」는 출력이 아니라 **원격 ref 가 안 움직였다**는 사실로 문다.
+describe('[engine-e2e][push-guard] `--push --branch main` 은 시작조차 못 한다', { timeout: 180_000 }, () => {
+  it('exit ≠ 0 · 원격 ref 불변 · 워커 0회 · 로컬 커밋 0건', () => {
+    const fx = makeFixture()
+    const before = originHeads(fx.proj)
+    const mainBefore = git(fx.proj, ['ls-remote', 'origin', 'main']).stdout.trim()
+    const r = runEngine(fx, { args: ['--stages', 'dev', '--commit', '--branch', 'main', '--push'] })
+    assert.notEqual(r.status, 0, r.out.slice(-2000))
+    assert.match(r.out, /auto\//, '거부 사유에 auto\/ 규칙이 보여야 한다')
+    assert.deepEqual(originHeads(fx.proj), before, '원격 ref 가 움직였다')
+    assert.equal(git(fx.proj, ['ls-remote', 'origin', 'main']).stdout.trim(), mainBefore)
+    assert.equal(commitsAhead(fx.proj).length, 0, '로컬 커밋도 생기면 안 된다')
+    assert.ok(!/dev 2-1-a/.test(r.calls), '워커가 돌았다')
+  })
+  it('`--push --branch master`·`--branch release` 도 같다(보호 이름 전반)', () => {
+    for (const b of ['master', 'release', 'production']) {
+      const fx = makeFixture()
+      const before = originHeads(fx.proj)
+      const r = runEngine(fx, { args: ['--stages', 'dev', '--commit', '--branch', b, '--push'] })
+      assert.notEqual(r.status, 0, b)
+      assert.deepEqual(originHeads(fx.proj), before, b)
+    }
+  })
+  it('대조군 — `--branch auto/2026-09-03` 은 종전대로 1회 push 한다(자기 RED)', () => {
+    const fx = makeFixture()
+    const r = runEngine(fx, { args: ['--stages', 'dev', '--commit', '--branch', 'auto/2026-09-03', '--push'] })
+    assert.equal(r.status, 0, r.out.slice(-2000))
+    assert.ok(originHeads(fx.proj).includes('refs/heads/auto/2026-09-03'))
+    assert.equal((r.out.match(/push origin\/auto\/2026-09-03/g) ?? []).length, 1, 'push 는 정확히 1회')
+  })
+})

@@ -77,4 +77,4 @@ IMPLEMENTED §1·2·3·4·6·7·9·10 · PARTIAL §5(예산 hard stop 은 best-e
 ## 12. 커밋·엔진 교체 추천
 1. **claude-skills 커밋·푸시 = 추천(가능)**: Codex 8차 commit-ready · 813/813. 문서·테스트·증거 포함 1커밋(또는 hardening / autofinish / dashboard 3커밋).
 2. **jng-os `tools/dev-status`+morning-brief 커밋 = 추천(가능)**: 코드 변경이므로 승인 후 커밋(현황판은 읽기 전용 도구 · 밤 배치 무영향).
-3. **전역 엔진 교체(`~/.claude/skills/*` · jng-os `tools/auto` 이식판 전환) = 조건부**: ① INSTALL-ISOLATION A+D 적용 ② 러너 유휴(lock 없음) 시점 ③ 첫 야간은 `providers.codex.roles=["review"]` · 오케스트레이터 꺼짐 · autofinish 는 `--diagnose-only` 로 시작.
+3. **전역 엔진 교체(`~/.claude/skills/*` · jng-os `tools/auto` 이식판 전환) = 조건부**: ① **무료 운영 안전장치 ①~⑥ 실측 GREEN**(2026-09-03 👤 확정 — A+D 는 팀 개발 단계 전환 작업으로 이월 · `INSTALL-ISOLATION.md` 참조) ② 러너 유휴(lock 없음) 시점 ③ 첫 야간은 `providers.codex.roles=["review"]` · 오케스트레이터 꺼짐 · autofinish 는 `--diagnose-only` 로 시작.

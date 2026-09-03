@@ -32,6 +32,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { loadConfig } from './plan-queue.mjs'
+import { safeGitPush } from './push-guard.mjs'
 // 2026-09-02 「9점대 하네스」 배선 — 판정은 전부 순수 모듈이 소유하고 러너는 부르기만 한다.
 import { assignHistoryPath, assignWorkers, parseHistory, recordAssignResult, serializeHistory, specProvider } from './assign.mjs'
 import { parallelHazardsCompat } from './conflicts.mjs'
@@ -927,12 +928,20 @@ function writeRollbackManifests({ snapshots, integration, batchId, record }) {
   return { storyManifests, evidenceDir }
 }
 
-/** 브랜치 push 1회 — 게이트가 막았으면(`skipPush`) 어떤 설정으로도 나가지 않는다. */
+/** 브랜치 push 1회 — 게이트가 막았으면(`skipPush`) 어떤 설정으로도 나가지 않는다.
+ *  (2026-09-03 👤 「무료 운영 안전장치 ②④」) 실제 push 는 `safeGitPush` 가 소유한다 — ref 가 `auto/*` 가 아니거나
+ *  현재 브랜치와 다르면(설정 오류·승계 사고) 밀지 않고, 미는 몫의 diff 에 금지 경로·시크릿이 있어도 밀지 않는다
+ *  (러너가 cherry-pick·매니페스트 커밋을 직접 만들므로 엔진의 스테이징 검사만으로는 빈틈이 남는다). */
 function pushBranchOnce({ enabled, skipPush, record }) {
   let pushed = false
   if (enabled && !dryRun && !skipPush) {
-    const p = spawnSync('git', ['push', '-u', 'origin', BRANCH], { encoding: 'utf8' })
-    if (p.status !== 0) record(`⚠ push 실패(계속): ${(p.stderr ?? '').trim().split('\n').slice(-1)[0]} — 아침에 사람 재시도`)
+    const r = safeGitPush({ ref: BRANCH })
+    if (r.verdict) {
+      record(`✖ PUSH GUARD STOP — ${r.verdict}. push 하지 않았다(로컬 커밋은 그대로) — 사람 확인 필요.`)
+      notify('PUSH GUARD STOP', `${r.verdict}\npush 를 멈췄다 — 로컬 커밋은 남아 있다.`, `PUSH GUARD STOP — ${r.verdict}`)
+      return false
+    }
+    if (!r.ok) record(`⚠ push 실패(계속): ${r.out.trim().split('\n').slice(-1)[0]} — 아침에 사람 재시도`)
     else pushed = true
   }
   return pushed

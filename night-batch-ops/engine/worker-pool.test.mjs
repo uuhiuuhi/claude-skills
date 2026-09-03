@@ -308,7 +308,9 @@ describe('[run-night] 배선 앵커 — 순수 규칙이 실제로 러너에 꽂
     // 2026-09-02 N1 — push 는 병렬·순차가 **같은 함수**(pushBranchOnce)를 쓴다. 게이트가 막으면
     // 어떤 경로도 나가지 않는다는 조건은 그 함수 한 곳에 있다(종전 앵커 `if (defaults.push && !dryRun && !skipPush) {` 의 이사).
     assert.ok(src.includes('if (enabled && !dryRun && !skipPush) {'), 'push 는 skipPush 를 무조건 존중해야 한다')
-    assert.equal((src.match(/spawnSync\('git', \['push',/g) ?? []).length, 1, '러너의 push 경로는 하나뿐이어야 한다(우회 경로 금지)')
+    // (2026-09-03) 실제 push 는 push-guard.mjs 의 safeGitPush 가 소유한다 — 러너 안에 날 push 가 남으면 게이트를 우회한다.
+    assert.equal((src.match(/spawnSync\('git', \['push',/g) ?? []).length, 0, '러너에 날 git push 가 남았다(우회 경로 금지)')
+    assert.equal((src.match(/safeGitPush\(/g) ?? []).length, 1, '러너의 push 경로는 하나뿐이어야 한다')
     assert.ok(src.includes("pushBranchOnce({ enabled: Boolean(defaults.push), skipPush: gateOut.skipPush, record })"), '병렬·순차 모두 같은 push 함수를 쓴다')
     assert.ok(src.includes("`archive/integration-fail-${l.story}-${Date.now()}`"))
     assert.ok(src.includes('landedStories.push({ story: wt.story, head })'), 'landing 목록은 충돌 분기의 boolean `landed` 와 다른 변수여야 한다(2026-09-02 e2e 실측 충돌)')
