@@ -298,6 +298,8 @@ describe('[run-night] 배선 앵커 — 순수 규칙이 실제로 러너에 꽂
     assert.ok(src.includes("detectProviders({ want: ['codex'], exec: safeExec })"))
     assert.ok(src.includes('shell: false') && src.includes('SHELL_META_RE'))
     assert.ok(src.includes('windowsVerbatimArguments: true'), 'Windows .cmd 심은 cmd.exe 전용 경로로(공백 경로 대응)')
+    // 2026-09-04 — 확장자 없는 bare 이름(`codex`)은 PATH 의 `.cmd` 심을 `where` 로 찾아야 한다(ENOENT → 「미설치」 오판 방지)
+    assert.ok(src.includes("spawnSync('where', [file]"), '확장자 없는 bare 이름은 where 로 심을 찾는다')
     // 실동작은 e2e 가 문다 — CODEX_BIN 이 .cmd 스텁일 때 `[PROVIDERS] codex=YES(...)` 가 나온다
   })
   it('병렬 경로는 리허설(dry-run)에서 열리지 않는다 · 통합 게이트도 리허설이면 실행하지 않는다', () => {

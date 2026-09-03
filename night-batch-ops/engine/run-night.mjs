@@ -129,12 +129,19 @@ let codexAvailability = null // codex 가 켜졌을 때만 1회 감지 — 감�
  *  cmd.exe 전용 경로로 부른다(그때도 메타문자가 있으면 실행 자체를 거부한다). */
 const SHELL_META_RE = /[&|<>^"`$;\r\n]/
 function safeExec(bin, args = []) {
-  const file = String(bin ?? '')
+  let file = String(bin ?? '')
   const argv = (args ?? []).map(String)
   if (file === '' || SHELL_META_RE.test(file) || argv.some((a) => SHELL_META_RE.test(a))) {
     return { status: 1, stdout: '', stderr: `실행 거부 — 실행파일·인자에 셸 메타문자가 있다: ${file}` }
   }
   const o = { encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024, shell: false }
+  if (process.platform === 'win32' && !/[\\/]/.test(file) && !/\.[A-Za-z0-9]{1,4}$/.test(file)) {
+    // 확장자 없는 bare 이름(`codex`)은 CreateProcess 가 `.exe` 만 붙여 찾는다 — npm `.cmd` 심은 ENOENT 로
+    // 「codex CLI 미설치」 오판(2026-09-04 실측 · 러너가 밤새 Claude 전용으로 돎). PATH 에서 1회 조회해 심이면 아래 cmd.exe 경로로.
+    const w = spawnSync('where', [file], { ...o, timeout: 15_000 })
+    const hit = String(w.stdout ?? '').split(/\r?\n/).map((l) => l.trim()).find((l) => /\.(cmd|bat|exe)$/i.test(l))
+    if (hit) file = hit
+  }
   const r = /\.(cmd|bat)$/i.test(file) && process.platform === 'win32'
     // Node 는 shell 없이 .cmd 를 직접 spawn 하지 못한다(CVE-2024-27980 이후 차단). cmd.exe 를 명시적으로
     // 부르되 인자는 우리가 따옴표로 감싸고, 메타문자는 위에서 이미 거부했다 — 셸 해석 여지가 없다.
