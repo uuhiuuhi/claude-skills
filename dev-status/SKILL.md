@@ -1,6 +1,6 @@
 ---
 name: dev-status
-description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현황판 열어줘", "스토리 진척 보여줘" 같은 요청에 사용한다. epics.md(목록 SoT)·sprint-status.yaml(상태 SoT)·스토리 md·auto-pipeline-logs 를 규칙만으로 판정해 에픽·스토리 진행률, 단계 배지 4칸, File List 겹침 판정, 불일치 경고, 다음 할 일 추천을 로컬 HTML 한 장으로 보여준다. 외부 의존성 0, LLM 호출 0, Node 20 이상. 커밋·게시 등 쓰기 작업은 하지 않는다.
+description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현황판 열어줘", "스토리 진척 보여줘", "어젯밤 배치 어떻게 됐어", "배포해도 되나" 같은 요청에 사용한다. epics.md(목록 SoT)·sprint-status.yaml(상태 SoT)·스토리 md·auto-pipeline-logs 와 무인 배치 하네스 산출물(배치·검증 매니페스트·계측·예정 큐·자율 진단·결정 인박스)을 규칙만으로 판정해 배포 가능 판정, 결정 인박스, 지난밤 배치(프로바이더/모델·병렬·통합 게이트), 오늘 예정 큐, 3일 계측, 자율 마무리 진단, 에픽·스토리 진행률, 단계 배지 4칸, File List 겹침 판정, 불일치 경고, 다음 할 일 추천을 로컬 HTML 한 장으로 보여준다. 외부 의존성 0, LLM 호출 0, Node 20 이상. 커밋·게시 등 쓰기 작업은 하지 않는다.
 ---
 
 # dev-status — BMad 개발 현황판 (최소판)
@@ -21,11 +21,12 @@ description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현
 - 포트: `DEV_STATUS_PORT`(기본 5180). 점유돼 있으면 5181…5189 로 자동 증가하고, **확정된 주소를 stdout 첫 줄에 출력**한다. 범용 포트 변수는 읽지 않는다.
 - `NO_OPEN=1` 이면 브라우저 자동 열기를 생략한다.
 - 화면 파일만 만들기: `node …/build.mjs --root <경로>` · 데이터(JSON)만 보기: `node …/scan.mjs --root <경로>`
+- `--out <폴더>`: 화면을 정본 폴더(`_bmad-output/dev-status/`) 대신 다른 곳에 쓴다(스모크·미리보기용). 스토리 문서 상대 링크는 **정본 폴더 기준**이라 다른 폴더에 쓰면 그 링크만 어긋난다.
 - `package.json` 이 없는 프로젝트에서는 npm 스크립트가 없으므로 **위 전역 스킬 직접 호출이 유일한 실행법**이다.
 
 ## 원천 계약 (무엇을 읽는가)
 
-- 산출물 경로: `_bmad/bmm/config.yaml` 의 `planning_artifacts`·`implementation_artifacts`(`{project-root}` 치환). 없으면 `_bmad/config.toml` 의 `[modules.bmm]` 아래 같은 두 키. **둘 다 실패하면 exit 2 + 확인한 경로 진단** — 기본 이름 폴백·글롭 탐색은 하지 않는다.
+- 산출물 경로: `_bmad/bmm/config.yaml` 의 `planning_artifacts`·`implementation_artifacts`(`{project-root}` 치환). 없으면 `_bmad/config.toml` 의 `[modules.bmm]` 아래 같은 두 키. **둘 다 실패하면 확인한 경로 진단**(CLI 실행이면 exit 2 · import 경로면 `scan().error`) — 기본 이름 폴백·글롭 탐색은 하지 않는다.
 - `{planning_artifacts}/epics.md` — 에픽·스토리 목록 SoT
 - `{implementation_artifacts}/sprint-status.yaml` — 상태 SoT(`development_status:` 블록). `story_location`·`last_updated` 는 주석줄로 와도 읽는다.
 - 스토리 `.md` 파일 — File List(겹침 판정)·수용기준
@@ -45,6 +46,68 @@ description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현
 
 요구 환경: Node 20+. 외부 패키지 0(node 빌트인만), LLM 호출 0(전부 규칙 판정).
 
+## 새 배치 하네스 블록 (2026-09-03 · 목업 승인분)
+
+무인 배치(`night-batch-ops` 러너 + `auto-story-finish` 엔진)를 쓰는 프로젝트라면 그 산출물을 읽어 블록 6개를 **추가**한다. **기존 블록(다음 할 일·불일치·진행률·스토리 표)은 그대로다** — 새 블록은 끼워 넣기지 대체가 아니다. 하네스를 안 쓰는 프로젝트에서는 전부 「없음」으로 뜨고 화면의 나머지는 종전과 같다.
+
+| 블록 | 무엇 | 원천 |
+|---|---|---|
+| ① 헤더 히어로 | 배포 가능 판정 배지 + 이유 1줄 · 슬롯 심박 · 오늘의 숫자 5칸 | 아래 전부 |
+| ② 오늘 정하실 것 | 결정 대기 · 사람 게이트(3일 이상은 맨 위·주황) · 사후 확인 접기 | `DECISIONS-INBOX.md` |
+| ④ 지난밤 배치 | 스토리별 **프로바이더/모델** · 병렬 폭 · 통합 게이트 · 되돌림 설명 · 재시도 · 증거 폴더 | `batch-<id>-manifest.json` + `<story>-verification.json` + `metrics-<id>.json` + `archive/*-evidence/` |
+| ⑤ 오늘 밤 예정 | 편성 방식 · 자기 검증 경고 · 빠진 스토리 · 배치 순서 · 병렬 짝 · 배정 이유 · 사용 LLM | `auto-queue-*.json`(없으면 `tools/auto/night-queue.json`) + `assign-history.json` |
+| ⑥ 얼마나 잘 돌았나 | 지표 6종 + 모델 호출량을 **지난 1/2/3일**(18:00 접기)로 · 추세 · 「제외 N」 | `metrics-history.jsonl` + 위 매니페스트 2종 |
+| ⑦ 자율 마무리 진단 | 5분류 · 우선순위 7단계 · 배포 차단 목록 · 확인 못 한 것 | `<state>/autofinish/<runId>/{diagnosis,backlog,readiness,report}.json` |
+
+스토리 표에는 **워커 · 라운드 · 마지막 리뷰어** 3칸을 덧붙인다 — 값이 하나라도 있을 때만 그린다(빈 칸 3개는 화면만 좁힌다).
+
+### 상태 폴더 해석 (원장이 갈라지지 않게)
+
+`AUTO_BATCH_STATE_DIR` → `tools/auto/auto.config.json` 의 `stateDir` → `~/.claude-auto/<project>` → `~/.baroos-auto`(jng-os 호환 폴백 · 실존할 때만). **러너·편성기와 같은 순서**다(`run-night.mjs` · `plan-queue.mjs`). 화면 footer 에 실제로 고른 폴더와 그 사유를 적는다.
+
+### 판정 규칙 — 확인 못 한 것을 통과로 적지 않는다
+
+`verdict.mjs` 하나가 판정하고, 규칙은 셋뿐이다.
+
+- **RED**: 통합 게이트 `fail`·`rollback` / 배치 `worst ≥ 7` / 진단 우선순위 ①②③ 잔여 > 0 / readiness `not-ready`.
+- **AMBER**: 계측 품질 게이트 미통과 / 큐 자기 검증 실패 / 검증 매니페스트 `checks` 에 fail·required-missing / 결정 대기·사람 게이트 > 0 / 미머지 `auto/*` 체인 ≥ 1일 / 진단 ④⑤ 잔여 > 0 / readiness `not-verified`.
+- **GREEN — 전부 「적극 조건」이다**(2026-09-02 교차리뷰 H2). 막는 것이 없다는 것만으로는 GREEN 이 못 된다. 다음이 **실제로 있어야** 한다: 지난밤 배치 ≥ 1 이고 전부 통합 `pass` · 계측 ≥ 1건이고 전부 `qualityGate.passed === true` · 검증 기록이 존재하고(지난밤 배치가 돌린 스토리는 전부) 검사 실패 0 · `diagnosis` 존재 · `readiness.verdict === 'ready'`. 하나라도 없으면 GREEN 이 아니다.
+- **판정 불가(회색)**: 재료가 하나도 없을 때, 그리고 위 적극 조건 중 무엇이 빠졌을 때. **GREEN 이 아니다.**
+- **상한 AMBER**: 막는 것이 없어도 **`diagnosis` 가 없으면 GREEN 으로 올리지 않는다.** `backlog`·`readiness` 유무와 **무관한 단독 조건**이다 — 예전에는 셋 다 없을 때만 상한이 걸려서 backlog 하나만 있어도 상한을 뚫었다. 진단을 안 돌린 것을 「이상 없음」으로 그리면 화면이 사람을 속인다.
+- RED 와 GREEN 이 동시에 성립하면 RED 다.
+- 이유 문장은 **센 것만** 적는다 — 계측 0건인데 「품질 게이트 통과」라고 쓰지 않는다.
+
+### 손상 내성
+
+JSON 하나가 깨져도 **그 블록만** 「읽지 못했습니다(파일 · 사유)」가 되고 나머지는 그대로 그려진다. 예상 밖 `schema` 는 「알 수 없는 형식」 + 원문 경로만 적고 **추측해서 그리지 않는다**. `metrics-history.jsonl` 은 깨진 줄만 버리고 몇 줄을 버렸는지 화면에 적는다.
+
+파일 읽기도 같다(2026-09-02 교차리뷰 M4). `scan.mjs` 의 모든 읽기는 `readSafe(path)` → `{value, error}` 다 — 「존재 확인 → 읽기」 사이에 파일이 지워지거나(ENOENT) 잠기거나(EBUSY·EPERM) 같은 이름의 폴더로 바뀌어도(EISDIR) **던지지 않고** 그 블록만 빈 값이 되며 사유가 `READ_ERRORS` 에 쌓인다.
+
+- `scan()` 은 **던지지 않는다.** 원천을 못 찾거나 조립 중 예외가 나면 `{ error: { code, message, checked[], readErrors[] }, epics: [], … }` 를 돌려준다.
+- **`process.exit` 는 CLI 진입일 때만**이다(`import.meta.url === pathToFileURL(process.argv[1]).href`). 라이브러리로 import 한 상위 도구(build.mjs·테스트·아침 브리핑)를 죽이지 않는다.
+- `build()` 는 `data.error` 를 보면 **예외 없이** 「원천을 읽지 못했습니다(파일 · 사유)」 화면 한 장을 만들고 `{ error: <code> }` 를 돌려준다. CLI 는 그 뒤 exit 2 로 알린다. 그 화면에는 진척·배포 판정을 **그리지 않는다**.
+
+### 모듈 (프로젝트 이식판이 그대로 복사해 쓰는 4개)
+
+| 파일 | export | 성격 |
+|---|---|---|
+| `batch-sources.mjs` | `collectBatchSources` · `parse*` 9종 · `resolveStateDir` · `nightKey`/`lastNightManifests` · `slotHeartbeat` · `assignByStory` · `findAutofinishDir` | 파서(읽기 전용) |
+| `verdict.mjs` | `deployVerdict` · `batchWarnings` · `tierRemaining` | 순수 함수 |
+| `daily-metrics.mjs` | `dailyMetrics` · `nightKeys` · `trendOf` · `formatValue`/`formatDuration` | 순수 함수 |
+| `render-batch.mjs` | `renderHero`/`renderInbox`/`renderNight`/`renderQueue`/`renderMetrics`/`renderDiagnosis`/`renderVerdictTick`/`renderError` · `storyExtras` · `BATCH_CSS` · `esc` | 순수 문자열 |
+
+CSS 클래스는 전부 `b-` 접두다 — 목업의 `.chip`·`.it`·`.row`·`.sec` 는 기존 화면의 필터 칩·항목 카드와 이름이 겹쳐서 그대로 쓰면 기존 UI 가 깨진다. 색 토큰(`--orange`·`--green`·`--lblue`)은 목업 그대로이며 **빨강을 새로 만들지 않는다**(RED = 주황 채움).
+
+### 플러그인 계약 (프로젝트 고유 블록)
+
+`build({ plugins })` 의 계약은 하나뿐이다.
+
+```js
+{ name: '이름', sections(data) { return ['<section>…</section>'] } }
+```
+
+반환한 HTML 을 **스토리 표 아래·footer 위**에 순서대로 끼운다. 플러그인이 던지면 그 플러그인 자리만 경고 박스가 되고 나머지 화면은 그대로다. jng-os 의 목업 갤러리·앱 미리보기·파일럿 게이트·deferred RC1 이 이 자리에 온다.
+
 ## 리뷰 반복 게이트 (review-gated)
 
 **이 게이트는 `auto-story-finish` 로그가 있는 프로젝트에서만 동작한다.** 엔진을 쓰지 않는 BMad 프로젝트에서는 `review` 상태에 늘 자동 리뷰가 추천되므로(종전 동작), 몇 라운드를 돌았는지는 사람이 판단해야 한다. BMad 자체 산출물인 `state.json` 으로 범위를 넓히는 길은 막혀 있다 — `slug::review` 가 `slug::dev` 보다 새롭다는 조합은 실측(내부 프로젝트)에서 dev·review 기록이 둘 다 있는 슬러그 30건 **전부**(그중 19건이 `done`)에 성립했다. 정상 라운드의 지문이지 비수렴 신호가 아니다.
@@ -63,7 +126,7 @@ description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현
 
 ## 이 스킬에 없는 기능과 이유
 
-파일럿 게이트 카드·보류(사람 대기) 항목·목업 갤러리 탭·앱 실행기는 특정 프로젝트 전용 원천(게이트 원장 문서, 판정 JSON, 고정 포트 dev 서버 설정)에 붙어 있는 기능이라 이 전역 스킬에는 없다.
+파일럿 게이트 카드·보류(사람 대기) 항목·목업 갤러리 탭·앱 실행기는 특정 프로젝트 전용 원천(게이트 원장 문서, 판정 JSON, 고정 포트 dev 서버 설정)에 붙어 있는 기능이라 이 전역 스킬에는 없다 — **대신 위 플러그인 계약이 그 자리를 연다.**
 
 마이그레이션 실프로브(외부 DB CLI 를 실제로 호출해 적용 상태를 실측하는 기능)도 없다 — 외부 CLI 설치·로그인·네트워크를 전제하므로 "외부 의존성 0(node 빌트인만)"과 충돌하고, 마이그레이션·DB 는 BMad v6 산출물 계약에 없는 개념이라 중립 코어가 아니다. 원본 프로젝트에는 있다.
 

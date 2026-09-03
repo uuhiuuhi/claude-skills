@@ -30,9 +30,25 @@
 //        같은 폴링 루프로 리셋을 기다렸다가 자동 재개한다. 즉시 중단 시 exit 5.
 //   (테스트) CLAUDE_BIN env 로 claude 실행 파일 오버라이드 가능(스텁 테스트용, 기본 "claude").
 //
+// v3 — 다중 프로바이더 하네스 (2026-09-02 · 설계: night-batch-ops/references/multi-provider-design.md):
+//   (P1) 워커 프로바이더 계층 providers/{index,claude,codex}.mjs — 모델 스펙 문자열로 고른다.
+//        "opus" = claude(종전 그대로) · "codex" · "codex:<model>". 큐·러너 스키마 무변경(하위 호환).
+//        codex 는 스펙이 요청됐을 때만 감지(`codex --version` + `login status`)하고, 불가(미설치·미인증·
+//        cwd 프라이버시)면 claude 대체 모델로 **폴백 + 경고** — Codex 문제로 배치가 서지 않는다.
+//   (P2) Codex 리뷰 = read-only 샌드박스 + 구조화 JSON(--output-schema) → **엔진이** 원장 형식으로
+//        스토리 파일에 기재하고 bmad-code-review 와 같은 상태 전이(findings → in-progress · 0건 → done)를
+//        스토리 Status + sprint-status.yaml 에 반영. Codex dev/repair = workspace-write(네트워크 옵션).
+//   (P3) 한도 사다리 확장 — 같은 프로바이더 차순위 → 다른 프로바이더(허용 역할 · 전환 1회 상한). spend 불변.
+//   (P4) 품질 루프 — dev 뒤 테스트 무결성 검사 + qa 게이트 RED 시 자동 수리(--auto-repair N · 같은 원인
+//        --repair-same-cause N). 기본 0 = 종전 동작(qa RED 즉시 STOP). 예산 소진 = 종전 STOP + 에스컬레이션 6절.
+//   (P5) 검증 매니페스트 auto-pipeline-logs/<story>-verification.json (--no-manifest 로 끔).
+//   (P6) 워커 커밋 가드 — dev/repair 워커가 HEAD 를 움직이면(직접 커밋) COMMIT GUARD STOP(exit 6).
+//   (P7) 관찰 로그 `[<story>][CLAUDE|CODEX][DEV|REVIEW|REPAIR]` · `[<story>][QUALITY][PASS|FAIL]` —
+//        현황판이 읽는 종전 줄(`→ [story] stage (…)` · `exit=`)은 그대로 둔다.
+//
 // 가드레일 (하드코딩 — 호출자가 끌 수 없음, v1과 동일):
 //   · 스토리 순차 처리(호출자가 준 순서 = 의존성 순서)
-//   · dev 후 qa 게이트 RED → 배치 즉시 중단(거짓 PASS 차단)
+//   · dev 후 qa 게이트 RED → 배치 즉시 중단(거짓 PASS 차단) — v3: 수리 예산이 있으면 그 안에서만 재시도
 //   · nested claude 인스턴스는 git commit/push 절대 안 함 (프롬프트 금지 + pipeline-settings deny)
 //   · (U9, 2026-08-17 승인) 엔진 자체의 스토리 단위 커밋·푸시는 **옵트인** — `--commit`(+`--branch auto/<x>` +`--push`).
 //     기본(플래그 없음) = 커밋·푸시 0. 켜도 하드 가드: 화이트리스트 pathspec 스테이징 · 금지 경로(.env*, 외부 *.log, scratch-*, *.local.*, 키 파일) 검출 시 STOP ·
@@ -47,18 +63,33 @@
 //   node ~/.claude/skills/auto-story-finish/auto-story-pipeline.mjs \
 //     --stories "11-1,11-2,11-3" \
 //     --stages create,dev,review \
-//     [--create-model X] [--dev-model X] [--review-model X] [--probe-model X] \
+//     [--create-model X] [--dev-model X] [--review-model X] [--probe-model X]   (X = claude 별칭 | codex | codex:<model>)
 //     [--qa "npm run qa"] [--e2e "<배치 종료 후 1회 실행할 e2e 명령>"] [--ntfy-topic X] \
 //     [--force] [--stage-timeout-min 120] [--wait-auth-min 0] [--dry-run]
 //     [--commit] [--branch auto/<이름>] [--push] [--commit-paths "src,tests,..."]
-//   (모델 플래그 전부 선택사항 — 미지정 = CLI 기본 모델 / 커밋 플래그 전부 옵트인 — 미지정 = 커밋·푸시 0)
+//     [--auto-repair 0] [--repair-same-cause 3] [--integrity on|auto|off] [--no-manifest] [--defer-push] [--pipeline-settings <경로>]
+//     [--providers claude,codex] [--codex-roles review] [--codex-network on|off] [--codex-cwd-marker <파일>] [--no-codex]
+//   (모델 플래그 전부 선택사항 — 미지정 = CLI 기본 모델 / 커밋 플래그 전부 옵트인 — 미지정 = 커밋·푸시 0 / v3 플래그 미지정 = 종전 동작)
 
 import { spawnSync } from "node:child_process";
 import {
-  mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync, readdirSync, statSync,
+  mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync,
 } from "node:fs";
-import { resolve, join } from "node:path";
+import { resolve, join, basename, dirname } from "node:path";
 import { homedir } from "node:os";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { parseModelSpec, formatModelSpec, shownSpec, detectProviders, providersLine, resolveWorkerSpec, nextWorkerDown, enforceCrossSpec } from "./providers/index.mjs";
+import { buildClaudeCommand, runClaudeWorker } from "./providers/claude.mjs";
+import { buildCodexCommand, runCodexWorker, classifyCodexFailure, codexFailureText, inspectCwdForCodex, codexReviewPrompt, codexDevPrompt, codexRepairPrompt, renderReviewFindings, parseReviewJson, validateReviewRun, redactSecrets, isSensitivePath, stripSensitiveFileSections, hideSensitiveFiles, restoreEnvFiles, withCodexSlot, slotStaleMsFor } from "./providers/codex.mjs";
+import { createGitGuard, findCredentialRemotes, stripRemoteCredentials } from "./providers/git-guard.mjs";
+import { assertSafeModel, assertSafePath, normalizeCommand, spawnSafe } from "./providers/spawn-safe.mjs";
+import { strengthenCompletion } from "./completion-rules.mjs";
+import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendDecisionsInbox, countOpenFindings } from "./story-writes.mjs";
+import { detectGates, parseQaChain, classifyQaFailure, repairDecision, testIntegrityFindings, escalateRepairIntroduced, securityTriggers, performanceTriggers, buildVerificationManifest, escalationReport } from "./quality-rules.mjs";
+
+const SKILL_DIR = dirname(fileURLToPath(import.meta.url));
+const CODEX_REVIEW_SCHEMA = join(SKILL_DIR, "providers", "codex-review.schema.json");
 
 // ---- 인자 파싱 ----
 const argv = process.argv.slice(2);
@@ -71,13 +102,24 @@ const flag = (name) => argv.includes(`--${name}`);
 const stories = (opt("stories", "") || "").split(",").map((s) => s.trim()).filter(Boolean);
 const stages = (opt("stages", "create,dev,review") || "").split(",").map((s) => s.trim()).filter(Boolean);
 // 빈 값 = --model 플래그 생략 = 현재 CLI 기본 모델 (환경 불문 안전 기본값)
+// v3: 값은 「모델 스펙」이다 — 접두사 없으면 claude 별칭(종전) · "codex" · "codex:<model>".
 const models = {
   create: opt("create-model", ""),
   dev: opt("dev-model", ""),
   review: opt("review-model", ""),
 };
 const probeModel = opt("probe-model", process.env.PROBE_MODEL || "");
-const shownModel = (m) => m || "cli-default";
+// (2026-09-02 #6/§8) 모델 스펙은 큐·설정 파일에서 온다 — `opus & git push origin HEAD:main` 같은 값이
+// 워커 명령줄로 흘러가면 안 된다. 파싱 직후 허용 문자집합 밖이면 **실행 전에** 거부한다(exit 2 · 부작용 0).
+for (const [k, v] of [...Object.entries(models), ["probe", probeModel]]) {
+  if (!v) continue;
+  try { assertSafeModel(v, `--${k}-model`); } catch (e) {
+    console.error(`✖ 모델 스펙 거부 — --${k}-model 에 셸 메타문자 또는 허용되지 않은 문자가 있다: ${JSON.stringify(String(v))}`);
+    console.error(`   허용 = 영문·숫자와 . _ - : / @ (공백·& | ; 등 금지). 큐·설정의 모델 값을 고친 뒤 재실행하세요. (${e?.code ?? "UNSAFE_ARGUMENT"})`);
+    process.exit(2);
+  }
+}
+const shownModel = (m) => shownSpec(m); // 종전 "cli-default" 문구 보존 · codex 는 "codex:default"
 const qaCmd = opt("qa", "npm run qa");
 const e2eCmd = opt("e2e", ""); // 배치 종료(전 스토리 완주) 후 1회 실행 — 프로젝트가 명령을 지정한 경우에만
 // (2026-08-08) 배치 상태 전이 푸시 알림 — ntfy.sh, fire-and-forget. 미설정 = 무음.
@@ -106,9 +148,33 @@ if (branchName && !/^auto\//.test(branchName)) {
   console.error("✖ --branch 는 auto/ 접두사만 허용(정본 main 은 사람 승인 머지로만 바뀐다).");
   process.exit(2);
 }
+// (N1 · 2026-09-02 2차 리뷰) 순차 경로는 **스토리마다 즉시 push** 했고 배치 e2e 는 전 스토리 처리 뒤에 돌았다 —
+// 두 스토리가 각자 qa GREEN 으로 원격에 올라간 뒤 결합 e2e 가 RED 면 프로세스는 exit 1 인데 **원격에는 이미
+// RED 조합이 남는다**. 통합 게이트(`--e2e`)가 있으면 스토리별 push 를 보류하고 전부 GREEN 뒤 **한 번만** 민다.
+// `--defer-push` = 러너가 자기 통합 게이트를 따로 돌릴 때 쓰는 명시 스위치(엔진 e2e 가 없어도 보류).
+const deferPushFlag = flag("defer-push");
+const deferPush = doPush && (Boolean(e2eCmd) || deferPushFlag);
+let pendingPush = false; // 보류 중인 커밋이 하나라도 있는가(배치 e2e GREEN 뒤 1회 push 의 조건)
 const stageTimeoutMs = Number(opt("stage-timeout-min", "120")) * 60 * 1000;
 const waitAuthMin = Number(opt("wait-auth-min", "0")); // 0 = 인증(exit 3)·한도(exit 5) 오류 시 즉시 중단. 인증·한도 대기 공용.
 const authPollSec = Number(process.env.AUTH_POLL_SEC || "300"); // 대기 모드 폴링 간격
+
+// v3 — 품질 루프·프로바이더 옵션(전부 미지정 = 종전 동작)
+const autoRepair = Math.max(0, Number(opt("auto-repair", "0")) || 0); // 총 수리 시도 상한. 0 = 종전(qa RED 즉시 STOP)
+const repairSameCause = Math.max(1, Number(opt("repair-same-cause", "3")) || 3);
+// (F8/정책 10 · 2026-09-02 2차 리뷰) 기본값을 **on** 으로 올린다 — 종전 기본 `auto` 는 `--auto-repair 0`
+// (=기본 직접 실행)에서 검사를 통째로 껐고, 그 경로에서 워커가 새로 만든 `.only`·skip·ts-ignore 가
+// 아무 검사도 받지 않았다. `--integrity off` 는 남긴다(명시 옵트아웃) · `auto` = 종전 조건부 동작.
+const integrityMode = opt("integrity", "on"); // on(기본) · auto(autoRepair>0 일 때만) · off
+const integrityEnabled = integrityMode === "on" || (integrityMode === "auto" && autoRepair > 0);
+const writeManifest = !flag("no-manifest");
+const noCodex = flag("no-codex");
+const providersOpt = (opt("providers", "") || "").split(",").map((s) => s.trim()).filter(Boolean);
+const codexRoles = (opt("codex-roles", "review") || "").split(",").map((s) => s.trim()).filter(Boolean);
+const codexNetwork = opt("codex-network", "off") === "on"; // 기본 닫힘 — 열면 workspace-write 세션이 push·외부 전송을 할 수 있다(옵트인)
+const codexMax = Math.max(1, Number(opt("codex-max", "1")) || 1); // 머신 전역 codex 동시 실행 상한(같은 auth.json 동시 사용 금지 — 기본 1)
+const codexCwdMarker = opt("codex-cwd-marker", "");
+const codexBin = process.env.CODEX_BIN || "codex";
 
 if (stories.length === 0) {
   console.error('✖ --stories 가 비어 있음. 예: --stories "11-1,11-2,11-3"');
@@ -124,34 +190,45 @@ const claudeBin = process.env.CLAUDE_BIN || "claude"; // 테스트 스텁 오버
 
 // pipeline-settings(nested 인스턴스 commit/push deny) 해석 — 전역 설치 대응:
 // 프로젝트(.claude) 우선 → 전역(~/.claude) 폴백 → 둘 다 없으면 생략(경고, GUARD 프롬프트만으로 방어)
-const settingsPath =
-  [resolve(".claude/pipeline-settings.json"), join(homedir(), ".claude", "pipeline-settings.json")]
-    .find((p) => existsSync(p)) || null;
+// (N2 2026-09-02) 해석 순서를 **명시 지정 → 프로젝트 → 전역** 으로 고정한다. 러너·워크트리 배선용으로
+// `--pipeline-settings <경로>` 와 `PIPELINE_SETTINGS_PATH` 를 최우선에 둔다(둘 다 없으면 종전 2단 폴백 그대로).
+// 명시 지정했는데 그 파일이 없으면 조용히 폴백하지 않는다 — 아래 fail-closed 검사가 그대로 STOP 시킨다.
+const settingsOverride = opt("pipeline-settings", process.env.PIPELINE_SETTINGS_PATH || "");
+const settingsPath = settingsOverride
+  ? (existsSync(resolve(settingsOverride)) ? resolve(settingsOverride) : null)
+  : ([resolve(".claude/pipeline-settings.json"), join(homedir(), ".claude", "pipeline-settings.json")]
+      .find((p) => existsSync(p)) || null);
 
 const artDir = resolve("_bmad-output/implementation-artifacts");
 const logDir = resolve(artDir, "auto-pipeline-logs");
 mkdirSync(logDir, { recursive: true });
 const runLog = resolve(logDir, "run-summary.log");
 const stateFile = resolve(logDir, "state.json");
+const sprintStatusFile = resolve(artDir, "sprint-status.yaml");
+const deferredWorkFile = resolve(artDir, "deferred-work.md");
+const decisionsInboxFile = resolve(artDir, "DECISIONS-INBOX.md");
+const exitInfoFile = resolve(logDir, "exit-info.json"); // 러너가 읽는 마지막 STOP 사유(프로바이더·종류) — 성공 종료 시 없음
 const stamp = () => new Date().toISOString();
+const today = () => stamp().slice(0, 10);
 const note = (msg) => {
   console.log(msg);
   appendFileSync(runLog, `[${stamp()}] ${msg}\n`);
 };
 // 푸시 알림(화이트리스트 이벤트 전용: WAIT 진입·각종 STOP·qa RED·E2E RED·배치 완주).
-// 본문은 UTF-8 파일 경유(-d @file)로 전송해 cmd.exe 코드페이지 mojibake 회피. 실패=배치 무영향.
+// (M5 · 2026-09-02 3차 리뷰) 종전에는 `curl … https://ntfy.sh/${ntfyTopic}` **셸 문자열**이었다 —
+// 토픽 값 한 줄이 명령 사슬이 될 수 있었고 curl 이 없는 머신에서는 알림이 조용히 증발했다.
+// 이제 러너와 같은 `fetch` 경로를 쓴다(전송은 notify-push.mjs 자식 프로세스 · argv 분리 · 셸 없음).
+// 제목은 헤더가 아니라 본문 첫 줄로 보낸다 — HTTP 헤더는 한글을 그대로 싣지 못한다(러너와 동일).
+const NOTIFY_BIN = join(SKILL_DIR, "notify-push.mjs");
 function push(title, body) {
   if (!ntfyTopic) return;
   try {
     const bodyFile = resolve(logDir, "ntfy-body.txt");
-    writeFileSync(bodyFile, body);
-    spawnSync(`curl -s -m 10 -H "Title: [auto-batch] ${title}" -d @"${bodyFile}" https://ntfy.sh/${ntfyTopic}`, {
-      shell: true,
-      timeout: 15000,
-    });
+    writeFileSync(bodyFile, redactSecrets(`[auto-batch] ${title}\n${String(body ?? "")}`)); // 밖으로 나가는 본문은 마스킹(정책 2)
+    spawnSafe(process.execPath, [NOTIFY_BIN, `https://ntfy.sh/${ntfyTopic}`, bodyFile], { timeout: 15000, encoding: "utf8" });
     note(`   🔔 push: ${title}`);
   } catch {
-    /* 알림 실패는 무시 — fire-and-forget */
+    /* 알림 실패·형식 거부는 무시 — fire-and-forget(배치에 영향 없음) */
   }
 }
 
@@ -194,7 +271,7 @@ function findStoryFile(story) {
 // 2026-08-30 실사고(👤 승인 (a)): 11-3·4-1 이 08-28 저녁 **5분 만에** create·dev·qa·review 를
 //   전부 「완료」로 기록했는데 스토리에는 완료 Task 0 · 미완 7/33 이었다(개발 0줄). 그 뒤 모든
 //   라운드가 3단계를 전부 skip 하고 로그 1개만 커밋한 뒤 **「완주」로 보고**했다 — 하루 상한 한
-//   칸을 먹고, 스토리 md 를 안 만져 진전 기록이 없어 규칙 9 스트릭까지 쌓았다. 두 스토리가
+//   칸을 먹고, 스토리 md 를 안 만져 진전 기록이 없어 규칙 9 스트릭까지 쌓였다. 두 스토리가
 //   며칠간 무진전이던 실제 원인이 에픽 순서 규칙이 아니라 이 거짓 기록이었다.
 // 판정: 완료 체크박스 0 **이면서** 미완 1+ 면 「개발이 하나도 안 됐다」로 본다.
 //   · 둘 다 0(체크박스를 안 쓰는 스토리)은 대상이 아니다 — 오탐을 만들지 않는다
@@ -273,6 +350,54 @@ function classifyFailure(out) {
   return "other";
 }
 
+// ---- (P1) 프로바이더 능력 감지 — 게으르게, 요청됐을 때만 ----
+const anyCodexSpec = () => Object.values(models).some((m) => parseModelSpec(m).provider === "codex");
+const wantProviders = () => {
+  const set = new Set(["claude"]);
+  for (const p of providersOpt) set.add(p);
+  if (anyCodexSpec()) set.add("codex");
+  if (noCodex) set.delete("codex");
+  return [...set];
+};
+let availabilityCache = null;
+function providerAvailability() {
+  if (availabilityCache) return availabilityCache;
+  const want = wantProviders();
+  availabilityCache = detectProviders({ want, env: process.env });
+  if (noCodex) availabilityCache.codex = { wanted: true, available: false, version: "", reason: "--no-codex 지정(Claude 전용 강제)" };
+  if (want.includes("codex") || noCodex) note(providersLine(availabilityCache));
+  return availabilityCache;
+}
+let codexCwdCache = null;
+function codexCwdInfo() {
+  if (!codexCwdCache) codexCwdCache = inspectCwdForCodex(process.cwd(), { env: process.env, extraMarker: codexCwdMarker });
+  return codexCwdCache;
+}
+/** 이 단계에서 한도 전환이 허용되는 프로바이더 목록 — codex 는 --codex-roles 의 역할일 때만 */
+function allowedProvidersFor(stage) {
+  const out = ["claude"];
+  if (!noCodex && wantProviders().includes("codex") && codexRoles.includes(stage)) out.push("codex");
+  return out;
+}
+const switchesUsed = {}; // story → 프로바이더 전환 횟수(**스토리당** 상한 1 — 두 벤더 왕복 금지 · 👤 2026-08-29 §5-3)
+/** 프로바이더가 실제로 바뀐 전환만 센다 — 한도 사다리 · 가용성 폴백 · 빈 diff 전환 셋 다 같은 장부에 든다.
+ *  dev 단계였다면 이어받기 금지(부분 산출물 폐기)까지 여기서 한다(👤 2026-08-29 §5-3). */
+function countProviderSwitch(story, stage, nextSpec, why) {
+  const from = parseModelSpec(models[stage]).provider;
+  const to = (typeof nextSpec === "string" ? parseModelSpec(nextSpec) : nextSpec).provider;
+  if (from === to) return false;
+  switchesUsed[story] = (switchesUsed[story] ?? 0) + 1;
+  note(`   (프로바이더 전환 ${switchesUsed[story]}회째 — ${from}→${to} · ${why} · 스토리당 상한 1)`);
+  discardPartialWork(stage, story);
+  return true;
+}
+const hash8 = (s) => createHash("sha1").update(String(s)).digest("hex").slice(0, 8);
+const rel = (p) => p.replace(/\\/g, "/").replace(process.cwd().replace(/\\/g, "/") + "/", "");
+/** 러너 소비용 STOP 부기 — 어느 프로바이더가 어떤 사유로 멈췄는지(F36: exit 5 만으로는 레인을 모른다) */
+function writeExitInfo(info) {
+  try { writeFileSync(exitInfoFile, JSON.stringify({ ...info, at: stamp() }, null, 2)); } catch { /* 부기 실패는 배치에 영향 없음 */ }
+}
+
 // ---- (U6/U7) 인증 프로브 + 재로그인 대기 ----
 const sleepSync = (ms) =>
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(1, ms));
@@ -283,14 +408,22 @@ function authProbe() {
   // 프로브 모델 = 명시값 > dev 모델 > CLI 기본. CLI 기본으로만 찌르면 "기본 모델만 한도이고
   // 배치 모델은 멀쩡한" 상황에서 영원히 미복구로 읽는다(2026-08-28 실사고: fable 만 월 한도,
   // dev=opus 는 정상인데 probe=limit 무한 대기).
-  const effectiveProbeModel = probeModel || models.dev || "";
-  const res = spawnSync(`${claudeBin} -p${effectiveProbeModel ? ` --model ${effectiveProbeModel}` : ""}`, {
-    shell: true,
-    input: "ok",
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-    timeout: 120000,
-  });
+  // v3: 프로브는 **claude 전용**이다 — dev 가 codex 스펙이면 claude 스펙을 가진 첫 단계 모델(없으면 CLI 기본)로
+  //     찌른다("codex" 문자열이 `claude --model` 로 새면 안 된다). codex 인증은 능력 감지(login status)가 본다.
+  const claudeModelOf = (m) => { const p = parseModelSpec(m); return p.provider === "claude" ? p.model : null; };
+  const effectiveProbeModel = probeModel || claudeModelOf(models.dev) || claudeModelOf(models.review) || claudeModelOf(models.create) || "";
+  // (F6/정책 8 · 2026-09-02 2차 리뷰) 종전에는 여기만 `${claudeBin} …` 문자열 + shell:true 였다 —
+  // 공백이 든 `C:\Program Files\…\claude.cmd` 는 프로브가 아예 실행되지 않았고, CLAUDE_BIN 주입 경로도 남았다.
+  // 실행파일과 argv 를 분리한다(.cmd 심은 spawn-safe 의 전용 cmd.exe 경로 · 메타문자는 실행 전에 거부).
+  let res;
+  try {
+    const file = assertSafePath(claudeBin, "CLAUDE_BIN");
+    const argvProbe = ["-p", ...(effectiveProbeModel ? ["--model", assertSafeModel(effectiveProbeModel, "probe 모델")] : [])];
+    res = spawnSafe(file, argvProbe, { input: "ok", encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 120000 });
+  } catch (e) {
+    note(`⚠ 인증 프로브를 실행하지 못했다(${e?.code ?? e?.message}) — 배치는 계속 진행(실패 시 단계에서 판정).`);
+    return "other";
+  }
   if (res.status === 0) return "ok";
   const out = `${res.stdout || ""}\n${res.stderr || ""}`;
   return classifyFailure(out); // (U8/U8-b) auth | spend | limit | other
@@ -317,11 +450,14 @@ function waitForRecovery(kind, context) {
 }
 
 /** 인증·한도 실패 공통 처리: 대기 모드면 복구 시 true(재시도), 아니면 안내 후 exit(3|5). */
-function handleFailure(kind, context, logFile) {
+function handleFailure(kind, context, logFile, pollable = true) {
   // (U8-b) 지출 한도는 **기다리지 않는다** — 사람이 설정을 바꿔야 풀리므로 폴링은 순수 낭비다.
   // 2026-08-30 실사고: 슬롯마다 30분씩 헛기다리고 STOP 하기를 반복했다.
-  if (kind !== "spend" && waitForRecovery(kind, context)) return true;
+  // v3(F3): 복구 프로브는 claude 전용이다 — codex 실패를 claude 프로브로 「복구됨」이라 오판하면 5회 헛돈다.
+  //   codex 실패는 pollable=false 로 들어와 대기 없이 STOP 한다(러너가 다음 슬롯에 재시도 · 한도 = 레인 전환 신호).
+  if (pollable && kind !== "spend" && waitForRecovery(kind, context)) return true;
   const k = KIND[kind];
+  if (!pollable) note(`   (codex 는 프로브 대기 없이 STOP — Claude 프로브로 codex 복구를 판정할 수 없다 · 러너가 다음 슬롯에 재시도)`);
   note(`✖ ${k.tag} STOP — ${context}: ${k.what}로 배치를 중단합니다.`);
   note(`   조치: ① ${k.fix} → ② 같은 명령을 그대로 재실행하면 완료 단계는 자동 skip(이어하기).${logFile ? ` log=${logFile}` : ""}`);
   note(`   (다음부터 밤샘 무인 배치는 --wait-auth-min 480 처럼 대기 모드를 켜면 복구만으로 자동 재개됩니다.)`);
@@ -333,6 +469,68 @@ function handleFailure(kind, context, logFile) {
 function git(args, opts = {}) {
   const res = spawnSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, ...opts });
   return { code: res.status ?? 1, out: `${res.stdout || ""}`, err: `${res.stderr || ""}` };
+}
+const headSha = () => { const r = git(["rev-parse", "HEAD"]); return r.code === 0 ? r.out.trim() : ""; };
+const currentBranch = () => git(["rev-parse", "--abbrev-ref", "HEAD"]).out.trim();
+const stashCount = () => git(["stash", "list"]).out.split("\n").filter((l) => l.trim()).length;
+/** 워킹트리 지문 — 수리 워커의 사후조건(코드만 고쳐도 「일했다」 · F31) */
+const treeFingerprint = () => createHash("sha1").update(git(["diff", "HEAD", "--"]).out + "\n" + git(["ls-files", "--others", "--exclude-standard"]).out).digest("hex");
+/** (정책 2) 로그·프롬프트에 실리는 모든 명령 출력의 자격증명 **값**을 가린다 — QA·Claude·Codex·repair 공용.
+ *  이름(키)은 남긴다(무엇이 새려 했는지는 사람이 알아야 한다). 종전엔 codex 로그에만 걸려 있었다. */
+const scrubLog = (t) => redactSecrets(t);
+/** (#3 2차 방어 · N2 강화) 원격 ref 스냅샷 — **모든 remote** 의 heads 를 본다.
+ *  origin 만 보면 워커가 `git remote add sneak … && git push sneak` 로 빠져나간다. 원격이 없으면 빈 문자열
+ *  (비교는 항상 같음 = skip). 조회 실패도 비교 대상 아님(네트워크 없는 밤도 있다) — 다만 실패/성공이
+ *  전후로 뒤바뀌면 그 자체가 변화로 잡히지 않게 실패는 그 remote 를 건너뛴다. */
+function remoteHeads() {
+  const names = git(["remote"]).out.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!names.length) return "";
+  const parts = [];
+  for (const n of names) {
+    const r = git(["ls-remote", "--heads", n], { timeout: 20000 });
+    if (r.code === 0) parts.push(`${n}\n${r.out.trim()}`);
+  }
+  return parts.join("\n");
+}
+/** (N2) 로컬 git 이동의 흔적 — HEAD reflog 엔트리 수 + 모든 로컬 ref.
+ *  절대경로 git 우회로 `commit → reset` 을 해도 **reflog 는 자란다**(HEAD 값은 원상복구돼도 기록은 남는다).
+ *  shim 을 지나친 조작을 사후에 반드시 알아채기 위한 두 번째 눈이다. 저장소가 아니면 빈 문자열. */
+function localGitFingerprint() {
+  const reflog = git(["reflog", "show", "--format=%H", "HEAD"]);
+  const refs = git(["show-ref"]);
+  const n = reflog.code === 0 ? reflog.out.split("\n").filter((l) => l.trim()).length : -1;
+  return `reflog=${n}\n${refs.code === 0 ? refs.out.trim() : ""}`;
+}
+/** git-guard 의 shim PATH 에 Windows 셸 고정을 더한 워커 env.
+ *  Git for Windows 의 `Git\bin\bash.exe` 래퍼는 시작할 때 `/mingw64/bin:/usr/bin` 을 PATH 앞에 끼워 넣어 shim 을
+ *  지나친다(2026-09-02 실측). PATH 순서를 지키는 `Git\usr\bin\bash.exe` 로 워커 셸을 못 박는다. */
+function workerEnvWithGuard(guard) {
+  // (H3 · 2026-09-02 3차 리뷰) 절대경로 git 은 shim 을 지나친다 — 그래서 **원격에 인증할 수단 자체**를 없앤다.
+  //   GIT_CONFIG_* 로 credential.helper/core.askpass/http.proxy 무효화 · GIT_ASKPASS·SSH_AUTH_SOCK·
+  //   GIT_SSH_COMMAND·GH_TOKEN·`*_TOKEN`/`*_SECRET`·프록시 제거 · SSH 는 BatchMode+IdentitiesOnly+없는 키.
+  //   GIT_ALLOW_PROTOCOL=none · GIT_TERMINAL_PROMPT=0 은 그대로 유지된다(stripRemoteCredentials 가 다시 심는다).
+  const stripped = stripRemoteCredentials(guard.env);
+  const env = { ...stripped.env };
+  if (stripped.removed.length) note(`   🔒 워커 env 에서 원격 인증 수단 ${stripped.removed.length}건 제거(${stripped.removed.slice(0, 6).join(", ")}${stripped.removed.length > 6 ? " …" : ""})`);
+  if (process.platform === "win32" && guard.realGit) {
+    let d = dirname(guard.realGit);
+    for (let i = 0; i < 3 && d && d !== dirname(d); i++) {
+      const bash = join(d, "usr", "bin", "bash.exe");
+      if (existsSync(bash)) { env.SHELL = bash; env.CLAUDE_CODE_GIT_BASH_PATH = bash; break; }
+      d = dirname(d);
+    }
+  }
+  return env;
+}
+let treeWasClean = false; // ensureBranch 의 dirty 검사를 통과했을 때만 true — 벤더 전환 시 부분 산출물 폐기의 전제
+/** 벤더 전환 시 부분 산출물 폐기(👤 2026-08-29 §5-3 「이어받기 금지」) — 시작 트리가 clean 이었을 때만 되돌린다.
+ *  수동 실행(커밋 없음)은 사람의 변경이 섞여 있을 수 있어 건드리지 않는다(사유를 남긴다). */
+function discardPartialWork(stage, story) {
+  if (stage !== "dev") return;
+  if (!treeWasClean) { note(`   (부분 산출물 폐기 생략 — 시작 트리 clean 검증 없음(수동 실행) · 다음 워커가 현재 트리 위에서 시작)`); return; }
+  git(["checkout", "--", "."]);
+  git(["clean", "-fdq", "-e", "_bmad-output/implementation-artifacts/auto-pipeline-logs"]);
+  note(`   ↺ [${story}] 벤더 전환 — 이전 워커의 부분 산출물 폐기(HEAD 로 되돌림 · 이어받기 금지)`);
 }
 // 커밋 금지 경로(스테이징 후 검출 → 전체 unstage + STOP). auto-pipeline-logs/ 의 .log 는 정식 산출물이라 허용.
 const DENY_PATH_RE = /(^|\/)(\.env(\..*)?$|.*\.local\.[^/]+$|scratch-[^/]*$|.*\.(pem|key|p12|pfx)$|.*secrets?\.(json|ya?ml)$)/i;
@@ -347,18 +545,43 @@ const SECRET_RES = [
   /AKIA[0-9A-Z]{16}/,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
 ];
-function ensureBranch() {
-  if (!doCommit || dryRun) return;
-  // 엔진 자신의 로그(auto-pipeline-logs/)는 이전 배치의 마지막 줄이 미커밋으로 남는 것이 정상 — dirty 판정에서 제외
-  const dirty = git(["status", "--porcelain", "--untracked-files=no"]).out
+// 엔진 자신의 로그(auto-pipeline-logs/)는 이전 배치의 마지막 줄이 미커밋으로 남는 것이 정상 — dirty 판정에서 제외
+function trackedDirty() {
+  return git(["status", "--porcelain", "--untracked-files=no"]).out
     .split("\n").filter((l) => l.trim() && !l.includes("auto-pipeline-logs/")).join("\n").trim();
+}
+/** (#4) 무인 커밋이 허용되는 자리인가 — detached HEAD(러너 워크트리 landing) 또는 `auto/*` 브랜치.
+ *  main·일반 브랜치에 무인 배치가 직접 커밋하는 경로는 없다(정본은 사람 머지). */
+const COMMIT_PLACE_MSG = "무인 커밋은 auto/* 또는 detached worktree 에서만";
+function commitPlaceOk(cur) {
+  return cur === "HEAD" || /^auto\//.test(cur) || (branchName && cur === branchName);
+}
+function ensureBranch() {
+  if (dryRun) return;
+  const dirty = trackedDirty();
+  if (!doCommit) {
+    // 수동(커밋 없음) 실행도 시작 트리가 clean 이면 벤더 전환 시 부분 산출물을 폐기한다(검증표 #2 보완).
+    // 사람의 미커밋 변경이 섞여 있으면 종전대로 건드리지 않는다.
+    treeWasClean = !dirty;
+    return;
+  }
   if (dirty) {
     note("✖ COMMIT GUARD STOP — --commit 은 시작 시점 작업 트리가 clean 이어야 한다(추적 파일 변경 존재 → 이전 작업이 스토리 커밋에 섞인다). 먼저 사람이 커밋/정리.");
     push("COMMIT GUARD STOP", "시작 시 작업 트리 dirty — 사람 정리 후 재실행");
     process.exit(6);
   }
+  treeWasClean = true;
   const cur = git(["rev-parse", "--abbrev-ref", "HEAD"]).out.trim();
-  if (!branchName) { note(`ℹ --commit: 현재 브랜치(${cur})에 스토리 단위 커밋(푸시 없음).`); return; }
+  if (!branchName) {
+    // `--commit` 만 주면 종전에는 **현재 브랜치**(main 포함)에 그대로 커밋했다(codex-review-r1 #4).
+    if (!commitPlaceOk(cur)) {
+      note(`✖ COMMIT GUARD STOP — ${COMMIT_PLACE_MSG}. 현재 위치=${cur} · --branch auto/<이름> 을 주거나 러너의 detached 워크트리에서 실행하세요.`);
+      push("COMMIT GUARD STOP", `${COMMIT_PLACE_MSG} — 현재 ${cur}`);
+      process.exit(6);
+    }
+    note(`ℹ --commit: ${cur === "HEAD" ? "detached HEAD(워크트리 landing 모드)" : `현재 브랜치(${cur})`}에 스토리 단위 커밋(푸시 없음).`);
+    return;
+  }
   if (cur === branchName) { note(`ℹ 브랜치 ${branchName} (현재)`); return; }
   // 엔진 자기 로그(auto-pipeline-logs/) 의 미커밋 churn 이 브랜치 이동(switch/-C)을 통째로 막는다 —
   // 실사고: 이 실패로 워크트리가 낡은 커밋에 갇혀 옛 코드로 편성이 돌았다. 로그는 버려도 되는 churn.
@@ -373,16 +596,23 @@ function ensureBranch() {
   note(`ℹ 브랜치 ${exists ? (mergedIn ? "재기점(HEAD)" : "전환") : "생성"}: ${branchName} (base=${cur})`);
 }
 function commitStory(story, stagesDone) {
-  if (!doCommit) return;
-  if (dryRun) { note(`   (dry-run) commit [${story}] paths=${commitPaths.length} push=${doPush}`); return; }
+  if (!doCommit) return null;
+  if (dryRun) { note(`   (dry-run) commit [${story}] paths=${commitPaths.length} push=${doPush}`); return null; }
+  // (#4) 커밋 시점에도 자리를 다시 본다 — 시작 후 위치가 바뀌었으면(워커 조작·외부 개입) 커밋하지 않는다.
+  const place = git(["rev-parse", "--abbrev-ref", "HEAD"]).out.trim();
+  if (!commitPlaceOk(place)) {
+    note(`✖ COMMIT GUARD STOP — [${story}] ${COMMIT_PLACE_MSG}. 커밋 시점 위치=${place} — 커밋·푸시 취소.`);
+    push("COMMIT GUARD STOP", `[${story}] ${COMMIT_PLACE_MSG} — 현재 ${place}`);
+    process.exit(6);
+  }
   git(["reset", "-q"]);
   // 존재하지 않는 pathspec 이 하나라도 있으면 git add 전체가 중단되므로 실존 경로만 넘긴다
   const paths = commitPaths.filter((p) => existsSync(p));
-  if (paths.length === 0) { note(`ℹ [${story}] 커밋 화이트리스트 경로가 하나도 없음 — 커밋 생략.`); return; }
+  if (paths.length === 0) { note(`ℹ [${story}] 커밋 화이트리스트 경로가 하나도 없음 — 커밋 생략.`); return null; }
   const add = git(["add", "-A", "--", ...paths]);
   if (add.code !== 0) note(`⚠ [${story}] git add 경고: ${add.err.trim().split("\n")[0]}`);
   const staged = git(["diff", "--cached", "--name-only"]).out.split("\n").map((l) => l.trim()).filter(Boolean);
-  if (staged.length === 0) { note(`ℹ [${story}] 커밋할 변경 없음(스테이징 0).`); return; }
+  if (staged.length === 0) { note(`ℹ [${story}] 커밋할 변경 없음(스테이징 0).`); return null; }
   const denied = staged.filter((f) => DENY_PATH_RE.test(f) || (DENY_LOG_RE.test(f) && !f.includes("auto-pipeline-logs/")));
   if (denied.length) {
     git(["reset", "-q"]);
@@ -402,14 +632,27 @@ function commitStory(story, stagesDone) {
   }
   const msg = `auto(${story}): ${stagesDone.join("+")} 완료 — qa GREEN · 리뷰 findings 는 스토리 파일 참조\n\n[auto-story-pipeline] 무인 배치 커밋(스토리 단위). 정본 반영은 사람 머지.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>`;
   const c = git(["commit", "-q", "-m", msg]);
-  if (c.code !== 0) { note(`⚠ [${story}] git commit 실패: ${c.err.trim().split("\n")[0]} — 계속 진행(사람 확인)`); return; }
+  if (c.code !== 0) { note(`⚠ [${story}] git commit 실패: ${c.err.trim().split("\n")[0]} — 계속 진행(사람 확인)`); return null; }
   const sha = git(["rev-parse", "--short", "HEAD"]).out.trim();
   note(`   ✔ commit ${sha} (${staged.length} files)`);
-  if (doPush) {
+  if (doPush && deferPush) {
+    // (N1) 통합 게이트가 남아 있다 — 지금 밀면 RED 조합이 원격에 남는다. 커밋은 로컬 auto/* 에만 둔다.
+    pendingPush = true;
+    note(`   ⏸ push 보류 — 배치 ${e2eCmd ? "e2e" : "통합 게이트"} 통과 후 1회만 민다(로컬 ${branchName} 에는 커밋됨).`);
+  } else if (doPush) {
     const p = git(["push", "-u", "origin", branchName]);
     if (p.code !== 0) { note(`⚠ [${story}] git push 실패(계속): ${(p.err || p.out).trim().split("\n").slice(-1)[0]}`); push("PUSH FAILED", `[${story}] push 실패 — 아침에 사람 재시도`); }
     else note(`   ✔ push origin/${branchName}`);
   }
+  return sha;
+}
+/** (N1) 배치 통합 게이트 GREEN 뒤의 **단 한 번**의 push. RED 면 절대 불리지 않는다(호출부가 그 전에 exit 1). */
+function pushDeferred() {
+  if (!deferPush || !pendingPush || dryRun) return;
+  const p = git(["push", "-u", "origin", branchName]);
+  if (p.code !== 0) { note(`⚠ 보류했던 push 실패(계속): ${(p.err || p.out).trim().split("\n").slice(-1)[0]}`); push("PUSH FAILED", `보류 push 실패 — 아침에 사람 재시도`); }
+  else note(`   ✔ push origin/${branchName} (배치 게이트 GREEN 뒤 1회 · 스토리별 push 없음)`);
+  pendingPush = false;
 }
 
 // ---- 단계별 프롬프트 (비대화형 + 가드레일 명시) ----
@@ -422,33 +665,362 @@ const prompts = {
   review: (s) => `/bmad-code-review ${s}\n\n${GUARD} 다른 LLM 관점에서 적대적으로. findings 리포트만 작성(코드 자동수정·commit 금지). ⚠️ 판정은 발견 0건·재오픈 불요 결론이어도 **반드시 스토리 파일의 Review Findings 절에 라운드 기록으로 기재**하라 — stdout 채팅 보고만 하고 파일을 안 쓰면 엔진이 산출물 부재(NO-OP exit 4)로 실패 처리한다(실사고 3회).`,
 };
 
-// 반환: "ok" | "stop" (사유는 내부에서 note + exit)
-function runClaude(stage, story) {
-  const model = models[stage];
-  const prompt = prompts[stage](story);
+// ---- (P2) Codex 리뷰 재료 — 이번 라운드 diff 를 파일로 만든다(대상: 워킹트리 vs HEAD · 비면 baseline..HEAD) ----
+// 미추적 파일을 unified diff 로 만든다(텍스트만 · 1MB 상한 · 바이너리 제외 · Windows `NUL` 함정 없음).
+// 리뷰 diff 와 무결성 diff(#8) 가 같은 재료를 쓴다 — 새로 만든 테스트 파일의 `.only` 를 둘 다 본다.
+const UNTRACKED_MAX_BYTES = 1024 * 1024;
+function untrackedUnifiedDiff(p) {
+  let buf;
+  try {
+    const st = statSync(p);
+    if (!st.isFile() || st.size > UNTRACKED_MAX_BYTES) return "";
+    buf = readFileSync(p);
+  } catch { return ""; }
+  if (buf.includes(0)) return ""; // 바이너리
+  const lines = buf.toString("utf8").split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
+  if (lines.length === 0) return "";
+  return [
+    `diff --git a/${p} b/${p}`, "new file mode 100644", "--- /dev/null", `+++ b/${p}`,
+    `@@ -0,0 +1,${lines.length} @@`, ...lines.map((l) => `+${l}`), "",
+  ].join("\n");
+}
+const splitLines = (s) => String(s).split("\n").map((l) => l.trim()).filter(Boolean);
+/** 민감 경로를 **pathspec 단계에서** 제외한 tracked diff — 이름 목록은 호출부가 준다(#1). */
+function trackedDiffExcludingSensitive(names, ref) {
+  const excl = names.filter(isSensitivePath).map((f) => `:(exclude,top)${f}`);
+  const base = ref ? [ref] : ["HEAD"];
+  return excl.length
+    ? git(["diff", ...base, "--", ":(top)", ...excl]).out
+    : git(["diff", ...base, "--"]).out;
+}
+
+function prepareReviewDiff(story) {
+  const storyFile = findStoryFile(story);
+  const diffFile = resolve(logDir, `codex-${hash8(story)}-review-diff.txt`);
+  // 리뷰 diff 에 자격증명이 실리면 그대로 외부 벤더로 나간다 — gitignore·추적 여부와 무관하게 env·키·시크릿
+  // 파일은 ① pathspec 제외 ② unified diff 에서 파일 섹션째 제거 ③ 최종 확정 후 값 마스킹, 셋을 모두 건다
+  // (2026-09-02 codex-review-r1 #1: 종전에는 `git diff HEAD` 본문에 추적된 `.env.production` 이 그대로 실렸다).
+  let names = splitLines(git(["diff", "--name-only", "HEAD", "--"]).out);
+  let diff = trackedDiffExcludingSensitive(names);
+  let files = names.filter((f) => !isSensitivePath(f));
+  const untracked = splitLines(git(["ls-files", "--others", "--exclude-standard"]).out)
+    .filter((f) => !f.includes("auto-pipeline-logs/") && !isSensitivePath(f));
+  for (const f of untracked) {
+    const d = untrackedUnifiedDiff(f);
+    if (d) { diff += `\n${d}`; files.push(f); }
+  }
+  let targetRef = `워킹트리 vs HEAD(${headSha().slice(0, 7)})`;
+  if (!diff.trim() && storyFile) {
+    // 이미 커밋된 라운드(재검수 등) — 스토리 frontmatter 의 baseline_commit 부터 HEAD 까지. 폴백 경로도 같은 규율이다
+    // (종전에는 여기서 마스킹 **이후**에 원문 diff 로 덮어써 `sk-…`·URL 자격증명이 그대로 나갔다).
+    const base = /^baseline_commit:\s*([0-9a-f]{7,40})/m.exec(readFileSync(storyFile, "utf8"))?.[1];
+    if (base && git(["cat-file", "-e", `${base}^{commit}`]).code === 0) {
+      names = splitLines(git(["diff", "--name-only", `${base}..HEAD`, "--"]).out);
+      diff = trackedDiffExcludingSensitive(names, `${base}..HEAD`);
+      files = names.filter((f) => !isSensitivePath(f));
+      targetRef = `${base.slice(0, 7)}..HEAD`;
+    }
+  }
+  files = files.filter((f) => !f.includes("auto-pipeline-logs/"));
+  diff = redactSecrets(stripSensitiveFileSections(diff));
+  const MAX = 400_000;
+  if (diff.length > MAX) diff = diff.slice(0, MAX) + `\n\n[… diff ${diff.length} bytes 중 ${MAX} 까지만 실음 — 나머지 파일은 직접 열어 확인하라: ${files.join(", ")}]\n`;
+  diff = redactSecrets(diff); // 최종 확정본에 한 번 더(자름·표식 삽입 뒤 남은 값 0 을 보장)
+  const empty = !diff.trim();
+  writeFileSync(diffFile, diff || "(변경 없음)\n");
+  return { diffFile, files, targetRef, empty };
+}
+const reviewRoundOf = (md) => (String(md).match(/^### Review Findings/gm) || []).length;
+
+/** (#13) 인박스가 없을 때 만드는 안전한 기본 형식 — 사람이 읽는 단일 창구의 최소 골격.
+ *  절 제목은 현행 관례(「결정 대기」·「사후 확인」)를 따른다 — 편성기·브리핑이 이 문자열을 본다. */
+const INBOX_TEMPLATE = () => [
+  "# 결정 인박스 (DECISIONS-INBOX)",
+  "",
+  `> 무인 배치가 ${today()} 에 자동 생성했다(파일이 없었다). 결정 대기의 **단일 창구**다 — 스토리 파일 안에만 있는 결정은 며칠씩 정체한다.`,
+  "",
+  "## 🟠 결정 대기",
+  "",
+  "(아래에 배치가 등재한다)",
+  "",
+  "## 🔵 사후 확인 (무인 기본값으로 진행함)",
+  "",
+  "",
+].join("\n");
+
+/** Codex 리뷰 JSON → 스토리 파일·sprint-status·deferred-work 기재(bmad-code-review step-04 와 같은 자리·전이). */
+const reviewResults = {}; // story → 매니페스트용 요약
+function applyCodexReview(story, res, w) {
+  const json = parseReviewJson(res.lastMessage) ?? parseReviewJson(res.events?.lastMessage ?? "");
+  // (#12) 「파일을 하나도 안 읽고 clean」을 가려내려면 열람 증거 재료를 반드시 넘겨야 한다 — 안 넘기면
+  // validateReviewRun 이 명령 개수만으로 통과시키고 경고만 남긴다(호출부 배선 누락).
+  const ri = w.reviewInputs ?? {};
+  const v = validateReviewRun({ json, events: res.events, diffEmpty: false, storyFile: ri.storyFile ?? "", diffFile: ri.diffFile ?? "", changedFiles: ri.changedFiles ?? [] });
+  if (!v.ok) return { ok: false, why: v.why };
+  for (const msg of v.warnings) note(`⚠ [${story}] Codex 리뷰: ${msg}`);
+  const storyFile = findStoryFile(story);
+  if (!storyFile) return { ok: false, why: "스토리 파일 없음" };
+  const storyKey = basename(storyFile, ".md");
+  const md = readFileSync(storyFile, "utf8");
+  const r = renderReviewFindings({ story: storyKey, model: w.spec.model, date: today(), targetRef: w.targetRef, round: reviewRoundOf(md) + 1, result: json });
+  let next = insertReviewFindings(md, r.block);
+  // (F30) 이번 라운드 0건이어도 **이전 라운드의 열린 Patch/Decision** 이 남아 있으면 done 이 아니다
+  let newStatus = r.newStatus;
+  const openLeft = countOpenFindings(next, "Patch") + countOpenFindings(next, "Decision");
+  if (newStatus === "done" && openLeft > 0) {
+    newStatus = "in-progress";
+    note(`[${story}][CODEX][REVIEW] 이번 라운드 0건 — 그러나 이전 라운드 열린 findings ${openLeft}건 잔존 ⇒ in-progress 유지(done 아님)`);
+  }
+  const st = setStoryStatus(next, newStatus);
+  next = st.text;
+
+  // ── (N8 · 2026-09-02 2차 리뷰) 트랜잭션형 적용 ────────────────────────────────────────
+  // 종전에는 스토리·sprint 를 **먼저 쓰고** 인박스를 나중에 썼다. 인박스가 디렉터리이거나 쓰기 불가면
+  // exit 4 로 멈추는데 스토리에는 이미 열린 Decision 과 바뀐 Status 가 남는다(부분 적용). 이제
+  // ① 모든 결과 문자열을 메모리에서 만들고 ② `.tmp` 에 기록한 뒤 ③ **인박스를 먼저 확정**하고
+  // ④ 나머지를 rename 한다. 어느 단계든 실패하면 **어떤 파일도 바뀌지 않는다**.
+  const writes = []; // { path, text, label }  — 확정 순서(인박스 먼저)
+  let sprintNote = "sprint-status 없음";
+  let inboxCreated = false;
+  if (r.decisions.length) {
+    let base = INBOX_TEMPLATE();
+    if (existsSync(decisionsInboxFile)) {
+      try { base = readFileSync(decisionsInboxFile, "utf8"); } catch (e) {
+        return { ok: false, why: `Decision ${r.decisions.length}건을 인박스(${rel(decisionsInboxFile)})에 등재하지 못했다: 기존 내용을 읽을 수 없다(${e?.code ?? e?.message}) — 단일 창구가 비면 사람이 결정을 못 본다(스토리·sprint 는 원상 유지)` };
+      }
+    } else inboxCreated = true;
+    writes.push({ path: decisionsInboxFile, text: appendDecisionsInbox(base, { storyKey, date: today(), decisions: r.decisions }), label: "인박스" });
+  }
+  writes.push({ path: storyFile, text: next, label: "스토리" });
+  if (existsSync(sprintStatusFile)) {
+    const s = setSprintStatus(readFileSync(sprintStatusFile, "utf8"), storyKey, newStatus, today());
+    if (s.changed) { writes.push({ path: sprintStatusFile, text: s.text, label: "sprint-status" }); sprintNote = `sprint-status ${storyKey}=${newStatus}`; }
+    else sprintNote = `⚠ sprint-status 에 키 ${storyKey} 없음 — 스토리 파일만 갱신`;
+  }
+  if (r.deferred.length && existsSync(deferredWorkFile)) {
+    writes.push({ path: deferredWorkFile, text: appendDeferredWork(readFileSync(deferredWorkFile, "utf8"), `Deferred from: Codex code review of ${storyKey} (${today()} · codex exec)`, r.deferred), label: "deferred-work" });
+  }
+  const tmps = [];
+  const cleanupTmps = () => { for (const t of tmps) { try { unlinkSync(t); } catch { /* 이미 없음 */ } } };
+  try {
+    for (const w2 of writes) {
+      const tmp = `${w2.path}.auto-tmp-${process.pid}`;
+      mkdirSync(dirname(w2.path), { recursive: true });
+      writeFileSync(tmp, w2.text);
+      tmps.push(tmp);
+      w2.tmp = tmp;
+    }
+  } catch (e) {
+    cleanupTmps();
+    return { ok: false, why: `리뷰 결과를 임시 파일에 쓰지 못했다(${e?.code ?? e?.message}) — 원본 파일은 하나도 바뀌지 않았다` };
+  }
+  for (const w2 of writes) {
+    try { renameSync(w2.tmp, w2.path); } catch (e) {
+      cleanupTmps();
+      // 인박스가 첫 확정 대상이라, 여기서 실패하면 스토리·sprint 는 **아직 원본 그대로**다.
+      if (w2.label === "인박스") {
+        return { ok: false, why: `Decision ${r.decisions.length}건을 인박스(${rel(w2.path)})에 등재하지 못했다: 확정(rename) 실패 ${e?.code ?? e?.message} — 단일 창구가 비면 사람이 결정을 못 본다(스토리·sprint 는 원상 유지)` };
+      }
+      return { ok: false, why: `${w2.label}(${rel(w2.path)}) 확정 실패: ${e?.code ?? e?.message}` };
+    }
+  }
+  if (inboxCreated) note(`[${story}][CODEX][REVIEW] DECISIONS-INBOX.md 가 없어 기본 형식으로 생성했다: ${rel(decisionsInboxFile)}`);
+  if (r.decisions.length) note(`[${story}][CODEX][REVIEW] 결정 대기 ${r.decisions.length}건 인박스 등재(단일 창구)`);
+  reviewResults[story] = { provider: "codex", model: w.spec.model || "default", result: newStatus === "done" ? "clean" : "findings", counts: r.counts, status: newStatus, warnings: v.warnings };
+  note(`[${story}][CODEX][REVIEW] 기재 완료 — decision ${r.counts.decision} · patch ${r.counts.patch}(high ${r.counts.high}${r.counts.promoted ? ` · 5범주 승격 ${r.counts.promoted}` : ""}) · defer ${r.counts.defer} · optional ${r.counts.optional} → status=${newStatus} · ${sprintNote}${st.changed ? "" : " · ⚠ 스토리 Status 줄 없음"}`);
+  return { ok: true };
+}
+
+// ---- (P1) 워커 준비 — 프로바이더 분기는 여기서만 ----
+function prepareWorker(stage, story, variant) {
+  const role = variant?.role ?? stage; // dev | review | create | repair
+  const avoid = stage === "review" && stages.includes("dev") ? models.dev : null;
+  const wantsCodex = parseModelSpec(models[stage]).provider === "codex";
+  const resolved = resolveWorkerSpec({ spec: models[stage], availability: wantsCodex ? providerAvailability() : {}, avoid, codexCwd: wantsCodex ? codexCwdInfo() : { ok: true } });
+  if (resolved.fallback) {
+    note(`⇄ [${story}] ${stage}: ${resolved.why}`);
+    // (검증표 #2) 가용성 폴백도 **프로바이더 전환**이다 — 스토리당 1회 상한에 함께 센다(종전엔 한도 사다리만 셌다).
+    countProviderSwitch(story, stage, resolved.spec, "가용성 폴백");
+    models[stage] = formatModelSpec(resolved.spec);
+  }
+  const spec = resolved.spec;
+  const storyFile = findStoryFile(story);
+  const storyRel = storyFile ? rel(storyFile) : `_bmad-output/implementation-artifacts/${story}.md`;
+  const guardCommit = role === "dev" || role === "repair"; // 워커가 HEAD 를 움직이면 안 된다
+  if (spec.provider === "codex") {
+    const outFile = resolve(logDir, `codex-${hash8(story)}-${role}.last.txt`);
+    let prompt, targetRef = "", schemaPath = null, reviewInputs = null;
+    const transient = [outFile];
+    if (role === "review") {
+      const d = prepareReviewDiff(story);
+      if (d.empty) {
+        // (F10/F18) 볼 diff 가 없는 Codex 리뷰는 「0건 → done」 거짓 완료를 만든다 — claude 리뷰(bmad-code-review 가 대상을 스스로 정한다)로 넘긴다
+        try { unlinkSync(d.diffFile); } catch { /* 없음 */ }
+        const alt = MODEL_LADDER.find((m) => m !== parseModelSpec(models.dev).model) ?? "";
+        note(`⇄ [${story}] review: 리뷰 대상 diff 가 비어 Codex 리뷰 무의미 → claude/${alt || "cli-default"} 로 전환`);
+        countProviderSwitch(story, "review", alt, "빈 diff"); // (검증표 #2) 이 전환도 스토리당 상한에 든다
+        models.review = alt;
+        return prepareWorker(stage, story, variant);
+      }
+      targetRef = d.targetRef;
+      schemaPath = CODEX_REVIEW_SCHEMA;
+      transient.push(d.diffFile);
+      reviewInputs = { storyFile: storyRel, diffFile: rel(d.diffFile), changedFiles: d.files };
+      prompt = codexReviewPrompt({ story, storyFile: storyRel, diffFile: rel(d.diffFile), changedFiles: d.files, targetRef });
+    } else if (role === "repair") {
+      prompt = codexRepairPrompt({ story, storyFile: storyRel, qaCmd, attempt: variant.attempt, maxAttempts: variant.maxAttempts, failure: variant.failure, integrity: variant.integrity ?? [], guard: GUARD });
+    } else {
+      prompt = codexDevPrompt({ story, storyFile: storyRel, sprintStatusFile: rel(sprintStatusFile), qaCmd, guard: GUARD });
+    }
+    // build*Command 는 **문자열이 아니라** `{ file, argv, display, sandbox }` 를 돌려준다(셸 결합 제거 · #6).
+    // 실행에는 객체를 통째로 넘기고 로그에는 display 만 쓴다.
+    const built = buildCodexCommand({ bin: codexBin, role, cwd: process.cwd(), model: spec.model, schemaPath, outFile, networkAccess: codexNetwork });
+    return {
+      provider: "codex", spec, role, prompt, cmd: built, display: built.display, targetRef, guardCommit, transient, reviewInputs,
+      perm: `sandbox:${built.sandbox}`, stageLabel: role === "repair" ? "dev-repair" : stage,
+      // (F17/F28) 머신 전역 슬롯 — 같은 auth.json 을 쓰는 codex 워커는 동시에 codexMax 개까지(기본 1)
+      run: (env) => withCodexSlot({ max: codexMax, waitMs: stageTimeoutMs, staleMs: slotStaleMsFor(stageTimeoutMs), note: (m) => note(`[${story}]${m}`) }, () => runCodexWorker({ cmd: built, prompt, timeoutMs: stageTimeoutMs, outFile, env })),
+      // (F21) 도구 출력 속 401/429 오판 방지 — 오류 이벤트 + stderr 우선
+      classify: (_text, res) => classifyCodexFailure(codexFailureText(res)),
+    };
+  }
+  const prompt = role === "repair"
+    ? codexRepairPrompt({ story, storyFile: storyRel, qaCmd, attempt: variant.attempt, maxAttempts: variant.maxAttempts, failure: variant.failure, integrity: variant.integrity ?? [], guard: GUARD })
+    : prompts[stage](story);
   // --settings pipeline-settings.json = nested 인스턴스에만 commit/push/파괴 deny 적용
   // (사람의 settings.json은 deny-free → 대화형 커밋 자유). 엔진 no-commit 가드레일 이중 방어.
-  const cmd = `${claudeBin} -p${model ? ` --model ${model}` : ""} --permission-mode ${permMode}${settingsPath ? ` --settings "${settingsPath}"` : ""}`;
-  note(`→ [${story}] ${stage} (model=${shownModel(model)}, perm=${permMode})`);
+  const built = buildClaudeCommand({ bin: claudeBin, model: spec.model, permMode, settingsPath });
+  return {
+    provider: "claude", spec, role, prompt, cmd: built, display: built.display, targetRef: "", guardCommit, transient: [], reviewInputs: null,
+    perm: permMode, stageLabel: role === "repair" ? "dev-repair" : stage,
+    run: (env) => runClaudeWorker({ cmd: built, prompt, timeoutMs: stageTimeoutMs, env }),
+    classify: (text) => classifyFailure(text),
+  };
+}
+
+// 반환: "ok" | "stop" (사유는 내부에서 note + exit) | "auth"|"limit"|"spend"(호출부 runStage 가 대기·사다리 판단)
+function runClaude(stage, story, variant = null) {
+  const w = prepareWorker(stage, story, variant);
+  const model = w.spec.provider === "codex" ? formatModelSpec(w.spec) : w.spec.model;
+  // ⚠️ 아래 두 줄(`→ [story] stage (…)` · `exit=`)은 현황판(dev-status)이 읽는 형식 — 바꾸지 않는다.
+  note(`→ [${story}] ${w.stageLabel} (model=${shownModel(model)}, perm=${w.perm})`);
+  note(`[${story}][${w.provider.toUpperCase()}][${w.role.toUpperCase()}] start model=${shownModel(model)} cwd=${process.cwd()}${w.targetRef ? ` target=${w.targetRef}` : ""}`);
   if (dryRun) {
-    note(`   (dry-run) ${cmd}  <<< ${prompt.split("\n")[0]}`);
+    note(`   (dry-run) ${w.display}  <<< ${w.prompt.split("\n")[0]}`);
+    for (const f of w.transient) { try { unlinkSync(f); } catch { /* 없음 */ } }
     return "ok";
   }
   const beforeMaxMtime = storyArtifactsMaxMtime(story); // 사후조건용 전-스냅샷
-  const res = spawnSync(cmd, {
-    shell: true,
-    input: prompt,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    timeout: stageTimeoutMs, // (U5) 행 방지
-  });
-  const logFile = resolve(logDir, `${story}-${stage}.log`);
-  writeFileSync(logFile, `# ${cmd}\n# prompt:\n${prompt}\n\n## stdout\n${res.stdout || ""}\n\n## stderr\n${res.stderr || ""}\n`);
-  const code = res.status ?? 1;
-  const timedOut = res.error && res.error.code === "ETIMEDOUT";
-  note(`   exit=${res.status}${timedOut ? " (TIMEOUT)" : ""} log=${logFile}`);
+  const headBefore = w.guardCommit ? headSha() : "";
+  const branchBefore = w.guardCommit ? currentBranch() : "";
+  const stashBefore = w.guardCommit ? stashCount() : 0;
+  const fpBefore = w.role === "repair" ? treeFingerprint() : "";
+  const remoteBefore = remoteHeads(); // (#3 2차 방어) 사후 비교로 push 를 되돌릴 수는 없지만, 일어난 사실은 반드시 안다
+  const localBefore = localGitFingerprint(); // (N2) 절대경로 git 우회의 흔적 — reflog 는 원상복구돼도 자란다
+  // (#3) 워커 프로세스의 git 을 **실행 단계에서** 막는다 — PATH shim(읽기 전용 허용 목록) + GIT_ALLOW_PROTOCOL=none.
+  //      사후 HEAD/브랜치/stash 비교는 아래에 2차 방어로 남는다(push·commit→reset 은 사후 비교로 안 잡힌다).
+  // (N2 · 2026-09-02 2차 리뷰) 종전에는 shim 생성 실패를 **경고 후 계속**으로 넘겼다 — 차단이 필요한 바로
+  // 그 순간에 차단이 없는 채로 워커가 돈다(fail-open). 이제 만들지 못하면 워커를 아예 띄우지 않는다.
+  let guard = null;
+  try { guard = createGitGuard({ baseEnv: process.env }); } catch (e) {
+    note(`✖ COMMIT GUARD STOP — [${story}] ${w.stageLabel}: git 차단 shim 을 만들지 못했다(${e?.code ?? e?.message}). 차단 없이 워커를 실행하지 않는다(fail-closed) — git 설치·PATH·임시 폴더 권한을 확인하세요.`);
+    push("GIT GUARD STOP", `[${story}] git 차단 shim 생성 실패 — 워커 미실행(사람 확인 필요)`);
+    writeExitInfo({ code: 6, kind: "git-guard-init", provider: w.provider, story, stage, why: String(e?.code ?? e?.message ?? "GIT_GUARD_INIT_FAILED") });
+    process.exit(6);
+  }
+  const workerEnv = guard ? workerEnvWithGuard(guard) : undefined;
+  // (F19/필수 결정 3) codex 실행 동안 `.env*` 를 작업 루트 밖으로 — 배치 워크트리에도 실자격증명 사본이 있다.
+  // 하나라도 못 옮기면 **실행하지 않는다**(fail-closed · exit 6). 복원 실패도 exit 6.
+  // (N4/N5) 대상은 `.env*` 만이 아니라 **isSensitivePath 전부**(pem·auth.json·service-account*.json·*secret*…) —
+  // diff 에서 뺀 파일을 Codex 가 작업 디렉터리에서 그냥 `cat` 하면 제외가 무의미하다. 탐색 실패도 fail-closed.
+  let hold = { moved: [], holdDir: null };
+  if (w.provider === "codex") {
+    try { hold = hideSensitiveFiles(process.cwd()); } catch (e) {
+      guard?.cleanup();
+      note(`✖ COMMIT GUARD STOP — [${story}] ${w.stageLabel}: ${e?.message ?? e}`);
+      push("ENV ISOLATION STOP", `[${story}] 민감 파일 격리 실패 — Codex 실행 중단(사람 확인 필요)`);
+      writeExitInfo({ code: 6, kind: "env-isolation", provider: "codex", story, stage, why: String(e?.code ?? "ENV_ISOLATION_FAILED") });
+      process.exit(6);
+    }
+  }
+  if (hold.moved.length) note(`[${story}][CODEX][${w.role.toUpperCase()}] 민감 파일 격리 ${hold.moved.length}건(실행 동안만 · 종료 후 복원)`);
+  let res, restoreFailure = null;
+  try {
+    res = w.run(workerEnv);
+  } finally {
+    if (hold.moved.length) {
+      // finally 안에서 던지면 원 오류(워커 실패)를 가린다 — 사유만 담아 두고 아래에서 판정한다.
+      try { restoreEnvFiles(process.cwd(), hold); } catch (e) { restoreFailure = e; }
+    }
+    guard?.cleanup();
+  }
+  if (restoreFailure) {
+    note(`✖ COMMIT GUARD STOP — [${story}] ${w.stageLabel}: ${restoreFailure?.message ?? restoreFailure}`);
+    push("ENV RESTORE STOP", `[${story}] .env 복원 실패 — 보관 폴더에서 사람이 되돌려야 한다`);
+    writeExitInfo({ code: 6, kind: "env-restore", provider: w.provider, story, stage, why: String(restoreFailure?.code ?? "ENV_RESTORE_FAILED") });
+    process.exit(6);
+  }
+  const logFile = resolve(logDir, `${story}-${w.stageLabel}${variant?.attempt ? `-${variant.attempt}` : ""}.log`);
+  // (정책 2) 워커 출력에는 QA 로그·파일 내용이 섞여 들어온다 — 프로바이더를 가리지 않고 값 마스킹한다.
+  // ⚠️ 로그 기록 실패가 **가드 검사를 건너뛰게 하면 안 된다**(2026-09-02 실측: 워커가 `git add -A` 로 엔진 로그를
+  //   커밋에 쓸어 담고 `reset --hard` 하면 로그 폴더가 통째로 사라진다 → 종전 코드는 여기서 던져 exit 1 로 죽었고
+  //   아래 git 가드는 아예 돌지 않았다 = 우회 성립). 폴더를 다시 만들고, 그래도 못 쓰면 경고만 남기고 계속한다.
+  try {
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(logFile, `# ${w.display}\n# provider=${w.provider} role=${w.role}\n# prompt:\n${scrubLog(w.prompt)}\n\n## stdout\n${scrubLog(res.stdout || "")}\n\n## stderr\n${scrubLog(res.stderr || "")}\n${res.lastMessage ? `\n## last message\n${scrubLog(res.lastMessage)}\n` : ""}`);
+  } catch (e) {
+    note(`⚠ [${story}] 워커 로그를 쓰지 못했다(${e?.code ?? e?.message}) — 가드 검사는 그대로 진행한다.`);
+  }
+  for (const f of w.transient) { try { unlinkSync(f); } catch { /* 없음 */ } }
+  const code = res.code;
+  const timedOut = res.timedOut;
+  note(`   exit=${code}${timedOut ? " (TIMEOUT)" : ""} log=${logFile}`);
+  if (res.events?.usage) note(`[${story}][CODEX][${w.role.toUpperCase()}] usage in=${res.events.usage.input_tokens ?? "?"} out=${res.events.usage.output_tokens ?? "?"} cmds=${res.events.commands} files=${res.events.fileChanges}`);
 
-  const postOk = postconditionOk(stage, story, beforeMaxMtime);
+  // (#3) ① 실행 단계 차단이 걸렸는가(shim 이 exit 86 + `[GIT-GUARD] blocked:` 를 남긴다) ② 원격 ref 가 움직였는가.
+  //      둘 중 하나라도면 워커가 git 상태를 바꾸려 했다는 뜻이다 — 사람 게이트.
+  //      ③ (N2) 로컬 reflog·ref 지문이 달라졌는가 — 절대경로 git 으로 `commit → reset` 을 해도 reflog 는 자란다.
+  const guardBlocked = Boolean(guard) && (code === guard.exitCode || `${res.stderr || ""}\n${res.stdout || ""}`.includes(guard.blockedPrefix));
+  const remoteAfter = remoteHeads();
+  const localAfter = localGitFingerprint();
+  if (guardBlocked || remoteBefore !== remoteAfter || localBefore !== localAfter) {
+    const why = [
+      guardBlocked ? `워커가 금지된 git 명령을 실행하려다 차단됨(${guard.blockedPrefix} · exit ${guard.exitCode})` : "",
+      remoteBefore !== remoteAfter ? "원격 ref 가 실행 전후로 달라졌다(push 의심 — 절대경로 git 우회)" : "",
+      localBefore !== localAfter ? "로컬 reflog/ref 지문이 달라졌다(commit·reset·branch 우회 의심 — HEAD 가 원상복구돼도 reflog 는 남는다)" : "",
+    ].filter(Boolean).join(" · ");
+    note(`✖ COMMIT GUARD STOP — [${story}] ${w.stageLabel}: ${why}. 워커의 commit/push/stash/reset 은 금지다(엔진만 커밋한다) — **사람 확인 후 재개**. log=${logFile}`);
+    push("COMMIT GUARD STOP", `[${story}] 워커 git 조작 차단 — 사람 확인 필요`);
+    writeExitInfo({ code: 6, kind: "git-guard", provider: w.provider, story, stage, why });
+    process.exit(6);
+  }
+
+  // (P6/F4) 워커 커밋 가드(2차 방어) — dev/repair 워커가 HEAD·브랜치·stash 를 움직였으면 즉시 STOP
+  if (w.guardCommit && headBefore) {
+    const moved = [];
+    if (headSha() !== headBefore) moved.push(`HEAD ${headBefore.slice(0, 7)} → ${headSha().slice(0, 7)}`);
+    if (currentBranch() !== branchBefore) moved.push(`브랜치 ${branchBefore} → ${currentBranch()}`);
+    if (stashCount() !== stashBefore) moved.push(`stash ${stashBefore} → ${stashCount()}`);
+    if (moved.length) {
+      note(`✖ COMMIT GUARD STOP — [${story}] ${w.stageLabel}: 워커(${w.provider})가 git 상태를 움직였다(${moved.join(" · ")}). 워커의 직접 commit/branch/stash 는 금지 — 사람 확인 필요. log=${logFile}`);
+      push("COMMIT GUARD STOP", `[${story}] 워커 git 상태 변경 감지(${moved.join(" · ")}) — 사람 확인 필요`);
+      process.exit(6);
+    }
+  }
+
+  // (F31) 수리 워커는 코드만 고쳐도 일한 것이다 — 스토리 md mtime 또는 워킹트리 지문 변화 중 하나면 사후조건 충족
+  let postOk = postconditionOk(stage, story, beforeMaxMtime) || (w.role === "repair" && treeFingerprint() !== fpBefore);
+  // (P2) Codex 리뷰는 read-only 라 파일을 못 쓴다 — JSON 을 엔진이 기재한 것이 사후조건이다
+  if (w.provider === "codex" && w.role === "review" && code === 0 && !timedOut) {
+    const applied = applyCodexReview(story, res, w);
+    if (!applied.ok) {
+      note(`✖ NO-OP STOP — [${story}] ${stage}: Codex 리뷰 exit=0 이지만 ${applied.why}. 로그를 확인하세요: ${logFile}`);
+      push("NO-OP STOP", `[${story}] ${stage} — Codex 리뷰 결과를 기재하지 못함. 로그 확인 필요.`);
+      process.exit(4);
+    }
+    postOk = true;
+  }
 
   if (code === 0 && postOk) return "ok";
   if (code === 0 && !postOk) {
@@ -465,7 +1037,7 @@ function runClaude(stage, story) {
   // code !== 0 && !postOk
   const combined = `${res.stdout || ""}\n${res.stderr || ""}`;
   {
-    const kind = classifyFailure(combined);
+    const kind = w.classify(combined, res);
     // (U3/U7/U8/U8-b) 인증·지출 한도·사용량 한도 — 호출부(runStage)가 대기/중단 판단
     if (kind !== "other") return kind;
   }
@@ -480,6 +1052,13 @@ function runClaude(stage, story) {
   if (/완료|완주/.test((res.stdout || "").slice(-3000))) {
     note(`   ⚠ 보고·실물 불일치 — 세션 stdout 은 완료를 보고하나 스토리 산출물(md) mtime 미전진. 세션 보고를 신뢰하지 말고 파일 실물로 판단할 것.`);
   }
+  note(escalationReport({
+    story, stage, situation: `${w.provider} 워커가 ${timedOut ? "타임아웃" : `exit=${code}`}로 끝났고 스토리 산출물이 갱신되지 않았다`,
+    cause: `분류 other(인증·한도 아님) — 로그 확인: ${logFile}`,
+    tried: [`${w.provider} 워커 1회(모델 ${shownModel(model)})`],
+    options: ["로그의 마지막 오류를 보고 같은 명령 재실행(완료 단계 자동 skip)", "스토리 스펙·환경(권한 allow 규칙·의존성)을 고친 뒤 재실행", `해당 단계 모델/프로바이더를 바꿔 재실행(--${stage}-model)`],
+    recommendation: "로그 확인 후 같은 명령 재실행", risk: "낮음(산출물 무변경 · 커밋 0)",
+  }));
   push("BATCH STOP", `[${story}] ${stage} ${timedOut ? "타임아웃" : `실패(exit=${code})`} — 로그 확인 필요.`);
   process.exit(1);
 }
@@ -492,16 +1071,23 @@ const MAX_AUTH_RETRY_PER_STAGE = 5; // 프로브만 통과하고 단계는 계�
 // fable 만 차단·opus 정상인데 배치 전체가 한도 대기로 공전). 전환은 그 단계·그 배치에 한정된다.
 // 👤 2026-08-29 개정: AUTO_MODEL_LADDER 환경변수로 사다리를 좁힐 수 있다(예: "fable" 단일 =
 // 타 모델 자동 강등 금지 — 정보 오류 사유. 한도 시 전환 대신 waitAuthMin 리셋 대기로 떨어진다).
+// v3: 사다리 끝에서 **다른 프로바이더**로 넘어갈 수 있다(--codex-roles 의 역할 · 가용 · 전환 1회 상한).
 const MODEL_LADDER = (process.env.AUTO_MODEL_LADDER || "fable,opus,sonnet")
   .split(",").map((s) => s.trim()).filter(Boolean);
 // avoid = 교차검증 회피 대상(리뷰가 dev 와 같은 모델로 떨어지지 않게 건너뛴다 — 👤 2026-08-28:
 // 같은 모델의 자기 검증은 같은 맹점을 공유한다).
 function nextModelDown(model, avoid) {
-  const i = MODEL_LADDER.indexOf(model);
-  for (let j = i + 1; j < MODEL_LADDER.length; j++) {
-    if (MODEL_LADDER[j] !== avoid) return MODEL_LADDER[j];
-  }
-  return null;
+  const r = nextWorkerDown({ current: model, avoid, ladder: MODEL_LADDER, availability: {}, allowedProviders: ["claude"] });
+  return r ? formatModelSpec(r.next) : null;
+}
+/** v3 — 프로바이더까지 포함한 사다리. 반환 { spec, switched } 또는 null. 전환 횟수는 **스토리당** 1회(F33). */
+function nextWorkerSpec(stage, story, avoid) {
+  const allowed = allowedProvidersFor(stage);
+  const availability = allowed.includes("codex") ? providerAvailability() : {};
+  const r = nextWorkerDown({ current: models[stage], avoid, ladder: MODEL_LADDER, availability, allowedProviders: allowed, switchesUsed: switchesUsed[story] ?? 0, maxSwitches: 1 });
+  if (!r) return null;
+  if (r.switched) switchesUsed[story] = (switchesUsed[story] ?? 0) + 1;
+  return { spec: formatModelSpec(r.next), switched: r.switched };
 }
 
 // 교차검증 강제(👤 2026-08-28) — 같은 배치에서 dev 가 실제로 쓴 모델과 review 모델이 같아지면
@@ -509,40 +1095,73 @@ function nextModelDown(model, avoid) {
 // 최상위」로 바꾼다: dev=opus → review=fable(상위 교차 우선), fable 한도면 사다리가 sonnet(하위
 // 교차)으로. sonnet 리뷰는 범위 고정 회수 diff 에는 충분하고, 신규 구현 리뷰가 sonnet 까지
 // 떨어지는 조합은 이 순서상 발생하지 않는다(신규 dev=fable → review 는 opus 부터).
+// v3: 프로바이더 차원까지 본다(codex↔codex 면 claude 최상위) — 자동으로 codex 로 옮기지는 않는다(비용은 편성기 몫).
 function enforceCrossModel(stage) {
   if (stage !== "review" || !stages.includes("dev")) return;
-  if (!models.dev || !models.review || models.review !== models.dev) return;
-  const alt = MODEL_LADDER.find((m) => m !== models.dev);
-  if (alt) {
-    note(`⇄ review 모델 교차검증 조정: dev 와 동일(${models.dev}) → ${alt} (같은 모델 자기 검증 방지)`);
+  const r = enforceCrossSpec({ dev: models.dev, review: models.review, ladder: MODEL_LADDER });
+  if (r.changed) {
+    const alt = formatModelSpec(r.review);
+    note(`⇄ review 모델 교차검증 조정: dev 와 동일(${shownModel(models.dev)}) → ${shownModel(alt)} (같은 모델 자기 검증 방지)`);
     models.review = alt;
   }
 }
 
-function runStage(stage, story) {
+function runStage(stage, story, variant = null) {
   enforceCrossModel(stage);
   for (let authRetry = 0; ; authRetry++) {
-    const r = runClaude(stage, story); // "ok" | "auth" | "limit"
+    const r = runClaude(stage, story, variant); // "ok" | "auth" | "limit" | "spend"
     if (r === "ok") return;
+    const avoid = stage === "review" && stages.includes("dev") ? models.dev : null;
     // (U8-b) spend 는 사다리를 타지 않는다 — 계정 전체 지갑이라 어떤 모델로 바꿔도 같다.
     if (r === "limit") {
-      const avoid = stage === "review" && stages.includes("dev") ? models.dev : null;
-      const down = nextModelDown(models[stage], avoid);
+      const down = nextWorkerSpec(stage, story, avoid);
       if (down) {
-        note(`↘ [${story}] ${stage}: ${models[stage]} 한도 — ${down} 로 자동 전환(품질 사다리 차순위 · 대기 없음)`);
-        push("MODEL FALLBACK", `[${story}] ${stage} — ${models[stage]} 한도로 ${down} 전환(자동)`);
-        models[stage] = down;
-        continue; // 전환 즉시 재시도(사다리는 최대 2단 — 재시도 상한 5 안에서 충분)
+        note(`↘ [${story}] ${stage}: ${shownModel(models[stage])} 한도 — ${shownModel(down.spec)} 로 자동 전환(${down.switched ? "프로바이더 전환 · 스토리당 1회" : "품질 사다리 차순위"} · 대기 없음)`);
+        push("MODEL FALLBACK", `[${story}] ${stage} — ${shownModel(models[stage])} 한도로 ${shownModel(down.spec)} 전환(자동)`);
+        if (down.switched) discardPartialWork(stage, story); // 이어받기 금지 — 다른 벤더는 처음부터
+        models[stage] = down.spec;
+        continue; // 전환 즉시 재시도(사다리는 최대 2단 + 프로바이더 전환 1회 — 재시도 상한 5 안에서 충분)
       }
     }
+    // v3: codex 인증 오류는 밤에 사람이 풀 수 없다 — 다른 프로바이더가 있으면 그쪽으로(전환 1회 상한)
+    if (r === "auth" && parseModelSpec(models[stage]).provider === "codex") {
+      const down = nextWorkerSpec(stage, story, avoid);
+      if (down) {
+        note(`↘ [${story}] ${stage}: codex 인증 불가 — ${shownModel(down.spec)} 로 전환(대기 없음)`);
+        if (down.switched) discardPartialWork(stage, story);
+        models[stage] = down.spec;
+        continue;
+      }
+    }
+    const failedProvider = parseModelSpec(models[stage]).provider;
     // 대기 모드면 복구 후 같은 단계 재실행, 아니면 handleFailure가 exit(3|5)
     if (authRetry >= MAX_AUTH_RETRY_PER_STAGE) {
       note(`✖ ${KIND[r].tag} STOP — [${story}] ${stage}: 복구 후에도 ${MAX_AUTH_RETRY_PER_STAGE}회 연속 ${KIND[r].what}. 환경 점검 필요(재로그인 계정·CLAUDE_BIN·네트워크·한도). 배치 중단.`);
       push(`${KIND[r].tag} STOP`, `[${story}] ${stage} — ${MAX_AUTH_RETRY_PER_STAGE}회 연속 ${KIND[r].what}. 환경 점검 필요.`);
+      writeExitInfo({ code: KIND[r].exit, kind: r, provider: failedProvider, story, stage, why: `${MAX_AUTH_RETRY_PER_STAGE}회 연속` });
       process.exit(KIND[r].exit);
     }
-    handleFailure(r, `[${story}] ${stage}`, resolve(logDir, `${story}-${stage}.log`));
+    writeExitInfo({ code: KIND[r].exit, kind: r, provider: failedProvider, story, stage, why: KIND[r].what });
+    // (F3) codex 실패는 claude 프로브로 복구를 판정할 수 없다 — 대기 없이 STOP(pollable=false)
+    handleFailure(r, `[${story}] ${stage}`, resolve(logDir, `${story}-${stage}.log`), failedProvider !== "codex");
     note(`↻ [${story}] ${stage} 재시도 (복구 후, ${authRetry + 1}/${MAX_AUTH_RETRY_PER_STAGE})`);
+  }
+}
+
+/** (M5 · 2026-09-02 3차 리뷰) 설정에 적힌 자유형 명령 한 줄 → 실행파일 + argv.
+ *  종전에는 qa·조건부 게이트·배치 e2e 가 전부 `spawnSync(cmd, { shell:true })` 였다 — 저장소 안 설정
+ *  한 줄이 `npm run qa & git push …` 이면 두 번째 명령이 그대로 돌았다. 이제 셸을 거치지 않는다.
+ *  형식이 규율을 벗어나면(셸 연산자·따옴표 불균형) **실행 전에** 멈춘다 — 없는 검사를 통과로 세지 않기 위해
+ *  RED 가 아니라 fail-closed STOP(exit 6)이다(설정 오류를 코드 결함으로 오진하지 않는다). */
+function planCommand(label, cmd) {
+  try {
+    return normalizeCommand(cmd);
+  } catch (e) {
+    note(`✖ COMMAND FORMAT STOP — ${label}: ${e?.message ?? e}`);
+    note(`   형식: \`<실행파일> <인자>…\`(공백 구분 · 따옴표 허용). \`&&\`·\`|\`·\`;\`·리디렉션 같은 셸 연산자는 쓸 수 없다 — 사슬은 npm script 안에 두세요.`);
+    push("COMMAND FORMAT STOP", `${label} 명령 형식 거부 — 셸 연산자·메타문자는 실행하지 않는다`);
+    writeExitInfo({ code: 6, kind: "command-format", provider: "n/a", story: "", stage: label, why: String(e?.code ?? e?.message ?? "UNSAFE_COMMAND") });
+    process.exit(6);
   }
 }
 
@@ -550,18 +1169,200 @@ function runQaGate(story) {
   note(`→ [${story}] qa-gate: ${qaCmd}`);
   if (dryRun) {
     note(`   (dry-run) skip qa`);
-    return 0;
+    return { code: 0, out: "" };
   }
-  const res = spawnSync(qaCmd, {
-    shell: true,
+  const plan = planCommand("qa 게이트(--qa)", qaCmd);
+  const res = spawnSafe(plan.file, plan.argv, {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     timeout: stageTimeoutMs,
   });
   const logFile = resolve(logDir, `${story}-qa.log`);
-  writeFileSync(logFile, `# ${qaCmd}\n\n## stdout\n${res.stdout || ""}\n\n## stderr\n${res.stderr || ""}\n`);
+  // (정책 2) qa 로그는 stdout/stderr 를 그대로 적었다 — 토큰·URL 자격증명이 출력되면 로그와 repair 프롬프트에 남는다.
+  const out = scrubLog(`${res.stdout || ""}\n${res.stderr || ""}`);
+  writeFileSync(logFile, `# ${qaCmd}\n\n## stdout\n${scrubLog(res.stdout || "")}\n\n## stderr\n${scrubLog(res.stderr || "")}\n`);
   note(`   qa exit=${res.status} log=${logFile}`);
-  return res.status ?? 1;
+  return { code: res.status ?? 1, out };
+}
+
+/** (#10) 조건부 게이트 실제 실행 — 트리거가 켜지고 package.json 에 대응 스크립트가 있으면 **돌린다**.
+ *  종전에는 「있으면 사람 확인」 로그만 남기고 매니페스트에 not-run 을 적었다(탐지만 하고 실행 안 함).
+ *  반환 { script, cmd, exit, result } · 실패는 품질 루프의 RED 로 전파된다(수리 루프 대상). */
+function runConditionalGate(story, name, gate) {
+  note(`→ [${story}] ${name}-gate: ${gate.cmd}`);
+  if (dryRun) { note(`   (dry-run) skip ${name}`); return { script: gate.script, cmd: gate.cmd, exit: 0, result: "skipped(dry-run)" }; }
+  const plan = planCommand(`${name} 게이트(package.json scripts.${gate.script})`, gate.cmd);
+  const res = spawnSafe(plan.file, plan.argv, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: stageTimeoutMs });
+  const logFile = resolve(logDir, `${story}-${name}.log`);
+  const out = scrubLog(`${res.stdout || ""}\n${res.stderr || ""}`);
+  writeFileSync(logFile, `# ${gate.cmd}\n\n## stdout\n${scrubLog(res.stdout || "")}\n\n## stderr\n${scrubLog(res.stderr || "")}\n`);
+  const exit = res.status ?? 1;
+  note(`   ${name} exit=${exit} log=${logFile}`);
+  return { script: gate.script, cmd: gate.cmd, exit, result: exit === 0 ? "pass" : "fail", out, logFile };
+}
+
+// ---- (P4) 품질 루프 — 무결성 검사 → qa 게이트 → (RED 면 예산 안에서 수리 → 재검증) ----
+const pkgScripts = (() => { try { return JSON.parse(readFileSync(resolve("package.json"), "utf8")).scripts ?? {}; } catch { return {}; } })();
+const gates = detectGates(pkgScripts);
+const qaChain = parseQaChain(pkgScripts.qa ?? "");
+const qualityLog = {}; // story → { attempts, signatures, integrity, qaExit, failureKind, escalation }
+function workingTreeChanges() {
+  const changes = git(["diff", "--name-status", "HEAD", "--"]).out.split("\n").map((l) => l.trim()).filter(Boolean)
+    .map((l) => { const [status, ...rest] = l.split(/\t/); return { status, path: rest[rest.length - 1] }; });
+  let diff = git(["diff", "HEAD", "--"]).out;
+  // (#8) 미추적 **신규** 파일은 종전에 이름만 changes 에 들어가고 내용은 어떤 검사도 받지 않았다 —
+  // 수리 워커가 `tests/new.test.ts` 를 새로 만들며 `describe.only` 를 넣으면 qa 는 일부만 돌고 무결성도 통과했다.
+  // 이제 미추적 파일 본문을 무결성 diff 에 넣는다(텍스트 · 1MB 상한 · 바이너리 제외 · 민감 경로 제외).
+  for (const f of splitLines(git(["ls-files", "--others", "--exclude-standard"]).out)) {
+    changes.push({ status: "A", path: f });
+    if (f.includes("auto-pipeline-logs/") || isSensitivePath(f)) continue;
+    const d = untrackedUnifiedDiff(f);
+    if (d) diff += `\n${d}`;
+  }
+  return { changes, diff, files: changes.map((c) => c.path) };
+}
+/** (#10) 트리거된 조건부 게이트를 실제로 실행한다. 실패면 품질 루프가 쓰는 failure 객체를 돌려준다(= RED).
+ *  스크립트가 없으면 종전대로 정직하게 기록만 한다(매니페스트 required-missing) — 없는 검사를 통과로 세지 않는다. */
+function runTriggeredGates(story, q) {
+  for (const name of ["security", "performance"]) {
+    const trig = q[name];
+    const gate = gates[name];
+    if (!trig?.required) continue;
+    if (!gate?.available) {
+      note(`[${story}][QUALITY] ${name === "security" ? "보안" : "성능"} 트리거 ${trig.reasons.length}건 — 프로젝트에 대응 스크립트 없음(매니페스트 required-missing · 사람 확인)`);
+      continue;
+    }
+    note(`[${story}][QUALITY] ${name === "security" ? "보안" : "성능"} 트리거 ${trig.reasons.length}건 — 게이트 ${gate.cmd} 실행`);
+    const r = runConditionalGate(story, name, gate);
+    q[name] = { ...trig, script: r.script, exit: r.exit, result: r.result };
+    if (r.exit !== 0) {
+      const c = classifyQaFailure(r.out ?? "");
+      note(`[${story}][QUALITY][FAIL] ${name} 게이트 RED(exit ${r.exit}) — ${gate.cmd}`);
+      return { kind: name, signature: `${name}:${r.script}:${c.signature}`, excerpt: c.excerpt || String(r.out ?? "").slice(-4000) };
+    }
+  }
+  return null;
+}
+
+function runQualityLoop(story) {
+  const q = (qualityLog[story] ??= { attempts: 0, signatures: [], integrity: [], qaExit: null, failureKind: "unknown", escalation: null, security: { required: false, reasons: [] }, performance: { required: false, reasons: [] } });
+  for (;;) {
+    let integ = [];
+    if (!dryRun) {
+      const wt = workingTreeChanges();
+      q.diff = wt.diff; // 완료 판정기(T2 새 테스트 계수)가 이번 변경분을 본다
+      // 조건부 게이트 트리거는 무결성 검사와 무관하게 본다 — 트리거가 켜지고 스크립트가 있으면 실제로 돌린다(#10).
+      q.security = securityTriggers({ files: wt.files, diff: wt.diff });
+      q.performance = performanceTriggers({ files: wt.files, diff: wt.diff });
+      if (integrityEnabled) {
+        const storyFile = findStoryFile(story);
+        integ = testIntegrityFindings({ changes: wt.changes, diff: wt.diff, storyText: storyFile ? readFileSync(storyFile, "utf8") : "" });
+        // (F5/F32) 수리 라운드가 새로 만든 skip/ts-ignore/eslint-disable/게이트 설정 변경은 경고가 아니라 차단
+        if (q.baselineIntegrity == null) q.baselineIntegrity = integ;
+        else integ = escalateRepairIntroduced(q.baselineIntegrity, integ);
+        q.integrity = integ;
+        for (const f of integ) note(`[${story}][INTEGRITY][${f.level.toUpperCase()}] ${f.rule} ${f.file}${f.line ? ":" + f.line : ""} — ${f.detail}`);
+      }
+    }
+    const blocks = integ.filter((f) => f.level === "block");
+    let failure = null;
+    if (blocks.length === 0) {
+      const qa = runQaGate(story);
+      q.qaExit = qa.code;
+      if (qa.code === 0) {
+        // qa GREEN 이어도 트리거된 조건부 게이트가 남아 있다 — 실행하고, 실패면 품질 루프 RED 다.
+        const cg = runTriggeredGates(story, q);
+        if (!cg) {
+          note(`[${story}][QUALITY][PASS] qa GREEN${q.attempts ? ` (수리 ${q.attempts}회 후)` : ""}${integ.length ? ` · 무결성 경고 ${integ.length}건` : ""}`);
+          return;
+        }
+        failure = cg;
+        q.failureKind = failure.kind;
+      } else {
+        failure = classifyQaFailure(qa.out);
+        q.failureKind = failure.kind;
+      }
+    } else {
+      failure = { kind: "integrity", signature: "integrity:" + blocks.map((b) => `${b.rule}:${b.file}`).sort().join("|"), excerpt: blocks.map((b) => `${b.rule} ${b.file}${b.line ? ":" + b.line : ""} — ${b.detail}`).join("\n") };
+      q.failureKind = "integrity";
+    }
+    q.signatures.push(failure.signature);
+    note(`[${story}][QUALITY][FAIL] kind=${failure.kind} sig=${failure.signature}`);
+    const d = repairDecision({ attempts: q.attempts, signatures: q.signatures, cfg: { totalRepairAttempts: autoRepair, sameRootCauseMaxRetries: repairSameCause } });
+    if (!d.repair) {
+      // 종전 STOP 문구 그대로(현황판·브리핑이 읽는다) + 에스컬레이션 6절
+      const gateFail = failure.kind === "security" || failure.kind === "performance";
+      const exitCode = gateFail ? (q[failure.kind]?.exit ?? 1) : (q.qaExit ?? 1);
+      if (gateFail) note(`✖ STOP — [${story}] ${failure.kind} 게이트 RED(exit=${exitCode}). 거짓 PASS 차단 → 배치 중단. (사람 개입 필요)`);
+      else if (blocks.length === 0) note(`✖ STOP — [${story}] qa RED(exit=${exitCode}). 거짓 PASS 차단 → 배치 중단. (사람 개입 필요)`);
+      else note(`✖ STOP — [${story}] 테스트 무결성 차단 ${blocks.length}건(${blocks.map((b) => b.rule).join(", ")}). 거짓 PASS 차단 → 배치 중단. (사람 개입 필요)`);
+      q.escalation = escalationReport({
+        story, stage: gateFail ? failure.kind : blocks.length ? "integrity" : "qa",
+        situation: gateFail ? `${failure.kind} 게이트 RED(exit ${exitCode}) — qa 는 GREEN 이지만 트리거된 조건부 게이트가 실패했다`
+          : blocks.length ? `테스트 무결성 차단 ${blocks.length}건` : `qa 게이트 RED(exit ${exitCode}) · 분류 ${failure.kind}`,
+        cause: failure.signature,
+        tried: q.attempts ? q.signatures.slice(0, -1).map((s, i) => `자동 수리 ${i + 1}차 후 실패: ${s}`) : [autoRepair > 0 ? "자동 수리 예산 판정: " + d.why : "자동 수리 꺼짐(--auto-repair 0)"],
+        options: ["로그의 첫 오류를 사람이 고친 뒤 같은 명령 재실행(dev 완료 기록은 유지 · qa 부터 재개)", "스토리 스펙이 틀렸다면 스토리 파일을 고치고 --force 로 dev 재실행", "테스트 자체가 틀렸다면 사유를 스토리 Dev Agent Record 에 적고 테스트 수정"],
+        recommendation: d.why, risk: "중간(산출물은 워킹트리에 남음 · 커밋 0)",
+      });
+      note(q.escalation);
+      push("QA RED", `[${story}] qa 게이트 RED — 사람 개입 필요.`);
+      finalizeManifest(story, null);
+      writeExitInfo({ code: 1, kind: "qa", provider: parseModelSpec(models.dev).provider, story, stage: blocks.length ? "integrity" : "qa", why: failure.signature });
+      process.exit(1);
+    }
+    q.attempts++;
+    note(`[${story}][REPAIR] ${d.why} — kind=${failure.kind}`);
+    runStage("dev", story, { role: "repair", attempt: q.attempts, maxAttempts: autoRepair, failure, integrity: integ });
+  }
+}
+
+// ---- (P5) 검증 매니페스트 ----
+function finalizeManifest(story, commitSha) {
+  if (!writeManifest || dryRun) return;
+  try {
+    const q = qualityLog[story] ?? {};
+    const workers = {};
+    for (const st of stages) {
+      const p = parseModelSpec(models[st]);
+      workers[st] = { provider: p.provider, model: p.model || (p.provider === "codex" ? "default" : "cli-default") };
+    }
+    const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]).out.trim();
+    const m = buildVerificationManifest({
+      story, generatedAt: stamp(), branch, commit: commitSha ?? headSha().slice(0, 12),
+      workers, gates, qa: { chain: qaChain, exit: q.qaExit ?? (isDone(story, "qa") ? 0 : null), failureKind: q.failureKind ?? "unknown" },
+      integrity: q.integrity ?? [], repair: { attempts: q.attempts ?? 0, signatures: q.signatures ?? [], exhausted: Boolean(q.escalation) },
+      review: reviewResults[story] ?? (stages.includes("review") ? { provider: workers.review?.provider ?? "claude", model: workers.review?.model ?? "", result: isDone(story, "review") ? "written-by-worker(스토리 파일 참조)" : "not-run" } : null),
+      security: q.security ?? { required: false, reasons: [] }, performance: q.performance ?? { required: false, reasons: [] },
+      escalation: q.escalation ?? null, notes: [`stages=${stages.join(",")}`, `autoRepair=${autoRepair}`, `integrity=${integrityEnabled ? "on" : "off"}`],
+    });
+    // (완료 판정 강화) 매니페스트 **형태는 그대로 두고** `completion` 필드만 더한다 — 「없는 검사」를 통과로
+    // 세지 않고 not-verified 로 남기는 판정기(completion-rules.mjs)를 여기 한 곳에서만 부른다.
+    const sf = findStoryFile(story);
+    m.completion = strengthenCompletion({ manifest: m, storyText: sf ? readFileSync(sf, "utf8") : "", diff: q.diff ?? "" });
+    // (M2 · 3차 리뷰) T2 의 「정상·실패·경계」 판정 근거를 매니페스트에 **구조화**해 남긴다 — 판정 문장만
+    // 남기면 다음 라운드가 근거를 다시 못 센다. `checks.unit` 은 pass/fail 문자열 계약이라 형을 바꾸지 않고
+    // 옆에 `checks.unitKinds` 로 붙인다(readiness·현황판이 `String(checks.unit)` 으로 읽는다).
+    m.checks.unitKinds = m.completion.evidence?.newTests?.kinds ?? null;
+    writeFileSync(resolve(logDir, `${story}-verification.json`), JSON.stringify(m, null, 2) + "\n");
+  } catch (e) {
+    note(`⚠ [${story}] 매니페스트 기록 실패(계속): ${e?.message ?? e}`);
+  }
+}
+
+// ---- (#7) 이 스토리에서 **Claude 로 resolve 되는 단계**가 하나라도 있는지 ----
+// 종전에는 실행할 단계가 있으면 무조건 `claude -p` 프로브를 먼저 찔렀다. dev·review 가 전부 codex 면
+// Claude 로그인이 만료됐다는 이유만으로 배치가 exit 3(또는 한도 대기)로 서 버린다(codex-review-r1 #7).
+// codex 스펙이라도 **불가해서 claude 로 폴백될 단계**는 claude 가 필요하다 — 그때는 종전대로 프로브한다.
+function storyNeedsClaude(story) {
+  for (const stage of stages) {
+    const willRun = stage === "create" ? !findStoryFile(story) : (!isDone(story, stage) || force);
+    if (!willRun) continue;
+    if (parseModelSpec(models[stage]).provider !== "codex") return true;
+    const r = resolveWorkerSpec({ spec: models[stage], availability: providerAvailability(), avoid: null, codexCwd: codexCwdInfo() });
+    if (r.spec.provider === "claude") return true;
+  }
+  return false;
 }
 
 // ---- (U6) 이 스토리에서 실제 실행될 단계가 있는지 (전량 skip이면 프로브 생략) ----
@@ -580,11 +1381,32 @@ function storyNeedsWork(story) {
 // ---- 메인 루프 (순차 = 의존성 순서) ----
 // (U4) append — 이전 배치 기록 보존. 배치 경계는 구분선으로.
 const modelsShown = Object.fromEntries(Object.entries(models).map(([k, v]) => [k, shownModel(v)]));
-appendFileSync(runLog, `\n${"=".repeat(70)}\n[${stamp()}] BATCH START stories=[${stories.join(", ")}] stages=[${stages.join(", ")}] models=${JSON.stringify(modelsShown)} perm=${permMode} dryRun=${dryRun} force=${force} waitAuthMin=${waitAuthMin} e2e=${e2eCmd || "-"} ntfy=${ntfyTopic ? "on" : "off"} commit=${doCommit} branch=${branchName || "-"} push=${doPush}\n`);
+appendFileSync(runLog, `\n${"=".repeat(70)}\n[${stamp()}] BATCH START stories=[${stories.join(", ")}] stages=[${stages.join(", ")}] models=${JSON.stringify(modelsShown)} perm=${permMode} dryRun=${dryRun} force=${force} waitAuthMin=${waitAuthMin} e2e=${e2eCmd || "-"} ntfy=${ntfyTopic ? "on" : "off"} commit=${doCommit} branch=${branchName || "-"} push=${doPush} autoRepair=${autoRepair} integrity=${integrityEnabled ? "on" : "off"} codexRoles=${codexRoles.join(",") || "-"}\n`);
 note(`=== auto-story-pipeline v2: ${stories.length} 스토리 × [${stages.join(", ")}] ===`);
+// (N2 · 2026-09-02 2차 리뷰) 종전에는 경고만 남기고 계속했다 — nested 인스턴스의 commit/push deny 가
+// 통째로 빠진 채 무인 배치가 돌았다는 뜻이다(fail-open). 이제 없으면 시작하지 않는다.
 if (!settingsPath) {
-  note(`⚠ pipeline-settings.json 미발견(프로젝트 .claude/·전역 ~/.claude/ 모두) — nested 인스턴스 commit/push deny 없이 진행(GUARD 프롬프트 금지 지시만 적용).`);
+  note(`✖ SETTINGS STOP — pipeline-settings.json 미발견(${settingsOverride ? `명시 지정 ${settingsOverride}` : "프로젝트 .claude/·전역 ~/.claude/ 모두"}). nested 워커의 commit/push deny 설정 없이는 배치를 시작하지 않는다(fail-closed).`);
+  note(`   조치: ① 프로젝트 \`.claude/pipeline-settings.json\`(워크트리에서 돌리려면 **커밋돼 있어야 한다**) ② 전역 \`~/.claude/pipeline-settings.json\` ③ \`--pipeline-settings <경로>\` 또는 \`PIPELINE_SETTINGS_PATH\` — 셋 중 하나에 deny 규칙(Bash(git commit…)·Bash(git push…) 등)을 두고 다시 실행하세요.`);
+  push("SETTINGS STOP", "pipeline-settings.json 미발견 — nested deny 없이 배치를 시작하지 않는다");
+  writeExitInfo({ code: 6, kind: "settings-missing", provider: "n/a", story: stories[0] ?? "", stage: "startup", why: "pipeline-settings.json not found" });
+  process.exit(6);
 }
+// (H3 · 3차 리뷰) 워커 env 에서 자격증명을 지워도 **원격 URL 에 토큰이 박혀 있으면** 무의미하다
+// (`https://x:ghp_…@github.com/…` 는 env 없이도 push 가 된다). 워커를 띄우기 **전에** 잡고 멈춘다.
+// URL 값은 로그에 남기지 않는다(원격 이름만) — 로그가 토큰의 새 유출 경로가 되면 안 된다.
+{
+  const credRemotes = findCredentialRemotes(git(["remote", "-v"]).out);
+  if (credRemotes.length) {
+    note(`✖ REMOTE CREDENTIAL STOP — 원격 URL 에 자격증명이 박혀 있다(${credRemotes.join(", ")}). 워커 env 에서 인증 수단을 지워도 이 URL 하나로 push 가 되므로 배치를 시작하지 않는다(fail-closed).`);
+    note(`   조치: \`git remote set-url ${credRemotes[0]} https://호스트/소유자/저장소.git\` 로 토큰을 빼고, 자격증명은 credential helper 에 두세요.`);
+    push("REMOTE CREDENTIAL STOP", `원격 URL 에 자격증명(${credRemotes.join(", ")}) — 배치 미시작`);
+    writeExitInfo({ code: 6, kind: "remote-credential", provider: "n/a", story: stories[0] ?? "", stage: "startup", why: `remote url embeds credentials: ${credRemotes.join(",")}` });
+    process.exit(6);
+  }
+}
+if (wantProviders().includes("codex") || noCodex) providerAvailability(); // (P1) 요청됐을 때만 감지 · 한 줄 기록
+try { unlinkSync(exitInfoFile); } catch { /* 이전 배치 부기 없음 */ } // 러너가 낡은 STOP 사유를 읽지 않게
 
 ensureBranch();
 
@@ -592,7 +1414,9 @@ for (const story of stories) {
   note(`──────── STORY ${story} ────────`);
 
   // ---- (U6) 스토리 경계 인증·한도 프로브 — 만료를 스토리 중간이 아닌 경계에서 감지 ----
-  if (!dryRun && storyNeedsWork(story)) {
+  if (!dryRun && storyNeedsWork(story) && !storyNeedsClaude(story)) {
+    note(`↷ [${story}] Claude 인증 프로브 생략 — 이 스토리의 남은 단계가 전부 codex 다(실제 실행할 프로바이더만 검사).`);
+  } else if (!dryRun && storyNeedsWork(story)) {
     for (;;) {
       const p = authProbe(); // "ok" | "auth" | "limit" | "other"
       if (p === "ok") break;
@@ -605,14 +1429,16 @@ for (const story of stories) {
       // 찌르므로(effectiveProbeModel) dev 를 강등하면 다음 프로브가 그 모델로 재판정한다.
       // (U8-b) spend 는 여기서도 사다리를 안 탄다 — 아래 handleFailure 가 즉시 안내하고 멈춘다.
       if (p === "limit") {
-        const down = nextModelDown(models.dev, null);
+        // v3: dev 가 codex 스펙이면 프로브는 다른 claude 단계 모델을 찔렀다 — 그 경우 강등 대상은 dev 가 아니다(그대로 대기 경로).
+        const down = parseModelSpec(models.dev).provider === "claude" ? nextModelDown(models.dev, null) : null;
         if (down) {
-          note(`↘ [${story}] 경계 프로브 한도 — dev 모델 사다리 강등 ${models.dev} → ${down} (대기 없음)`);
-          push("MODEL FALLBACK", `[${story}] 경계 프로브 — dev ${models.dev} 한도로 ${down} 전환(자동)`);
+          note(`↘ [${story}] 경계 프로브 한도 — dev 모델 사다리 강등 ${shownModel(models.dev)} → ${shownModel(down)} (대기 없음)`);
+          push("MODEL FALLBACK", `[${story}] 경계 프로브 — dev ${shownModel(models.dev)} 한도로 ${shownModel(down)} 전환(자동)`);
           models.dev = down;
           continue;
         }
       }
+      writeExitInfo({ code: KIND[p].exit, kind: p, provider: "claude", story, stage: "probe", why: KIND[p].what });
       handleFailure(p, `[${story}] 시작 전 프로브`, null); // 대기 모드면 복구 후 재프로브
     }
   }
@@ -635,12 +1461,7 @@ for (const story of stories) {
       note(`↷ [${story}] ${stage} skip — state.json 완료 기록 (재실행=--force).`);
       // dev가 skip이면 qa도 이미 통과한 기록이 있을 때만 skip (아래 qa 블록에서 판정)
       if (stage === "dev" && !isDone(story, "qa")) {
-        const qa = runQaGate(story);
-        if (qa !== 0) {
-          note(`✖ STOP — [${story}] qa RED(exit=${qa}). 거짓 PASS 차단 → 배치 중단. (사람 개입 필요)`);
-          push("QA RED", `[${story}] qa 게이트 RED — 사람 개입 필요.`);
-          process.exit(1);
-        }
+        runQualityLoop(story); // RED 면 내부에서 STOP(exit 1) — 수리 예산이 있으면 그 안에서만 재시도
         markDone(story, "qa");
       }
       continue;
@@ -655,16 +1476,13 @@ for (const story of stories) {
 
     // dev 직후 qa 게이트 (stages에 dev가 있을 때만)
     if (stage === "dev") {
-      const qa = runQaGate(story);
-      if (qa !== 0) {
-        note(`✖ STOP — [${story}] qa RED(exit=${qa}). 거짓 PASS 차단 → 배치 중단. (사람 개입 필요)`);
-        push("QA RED", `[${story}] qa 게이트 RED — 사람 개입 필요.`);
-        process.exit(1);
-      }
+      runQualityLoop(story); // qa RED → (예산 안 수리) → 그래도 RED 면 STOP(exit 1)
       markDone(story, "qa");
     }
   }
-  commitStory(story, stages);
+  finalizeManifest(story, null);
+  const sha = commitStory(story, stages);
+  if (sha) finalizeManifest(story, sha);
   note(`✔ [${story}] 완료 (review 상태까지).${doCommit ? ` 스토리 커밋${doPush ? "+푸시(" + branchName + ")" : ""} 수행 — 정본 main 반영은 사람 머지.` : " 커밋/푸시는 사람 게이트 — 미실행."}`);
 }
 
@@ -674,22 +1492,31 @@ if (e2eCmd) {
   if (dryRun) {
     note(`   (dry-run) skip e2e`);
   } else {
-    const res = spawnSync(e2eCmd, {
-      shell: true,
+    const e2ePlan = planCommand("배치 e2e(--e2e)", e2eCmd);
+    const res = spawnSafe(e2ePlan.file, e2ePlan.argv, {
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
       timeout: stageTimeoutMs,
     });
     const e2eLog = resolve(logDir, "batch-e2e.log");
-    writeFileSync(e2eLog, `# ${e2eCmd}\n\n## stdout\n${res.stdout || ""}\n\n## stderr\n${res.stderr || ""}\n`);
+    // (정책 2/N3) 종전에 이 로그만 stdout/stderr 를 **원문** 기록했다 — e2e 가 토큰·DB URL 을 찍으면 그대로 남는다.
+    writeFileSync(e2eLog, `# ${e2eCmd}\n\n## stdout\n${scrubLog(res.stdout || "")}\n\n## stderr\n${scrubLog(res.stderr || "")}\n`);
     note(`   e2e exit=${res.status} log=${e2eLog}`);
     if ((res.status ?? 1) !== 0) {
       note(`✖ E2E RED — 스토리 산출물은 완료됐지만 배치 종료 e2e 스모크가 실패. 커밋 전 원인 확인 필요. log=${e2eLog}`);
-      push("E2E RED", `스토리 ${stories.length}건 산출물은 완료 — 단 e2e 스모크 RED. 커밋 전 확인 필요.`);
+      // (N1) 보류했던 push 는 **하지 않는다** — 로컬 auto/* 에만 커밋이 남고 원격은 불변이다.
+      if (pendingPush) note(`   ⛔ 보류했던 push 를 취소한다(원격 불변 · 로컬 ${branchName} 의 커밋은 사람이 확인 후 처리).`);
+      push("E2E RED", `스토리 ${stories.length}건 산출물은 완료 — 단 e2e 스모크 RED. push 0건(원격 불변).`);
       process.exit(1);
     }
     note(`   ✅ e2e 스모크 통과`);
+    pushDeferred(); // (N1) 전 스토리 + 배치 e2e 가 GREEN 인 지금, 한 번만 민다
   }
+}
+// `--defer-push` 만 켜고 `--e2e` 가 없으면(러너가 자기 통합 게이트를 돌리는 편성) 여기서 밀지 않는다 —
+// 러너가 게이트 GREEN 뒤에 직접 push 한다. 그 사실을 로그에 남겨 「push 가 왜 없나」를 아침에 헤매지 않게 한다.
+if (deferPush && pendingPush && !e2eCmd) {
+  note(`ℹ --defer-push: 스토리 커밋은 로컬 ${branchName} 에만 있다 — 통합 게이트 GREEN 뒤 러너가 push 한다(엔진 push 0건).`);
 }
 
 note(`=== 배치 완료: ${stories.length} 스토리. ${doCommit ? `스토리 단위 커밋${doPush ? "+푸시(" + branchName + ")" : ""} 수행 — main 머지는 사람 승인.` : "커밋/푸시 안 함 — diff·리뷰 리포트 검토 후 수동 진행하세요."} ===`);

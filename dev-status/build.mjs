@@ -3,8 +3,10 @@ import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { scan, OUT_DIR } from './scan.mjs'
-
-const OUT_FILE = join(OUT_DIR, 'index.html')
+import {
+  BATCH_CSS, renderDiagnosis, renderHero, renderInbox, renderMetrics,
+  renderNight, renderQueue, renderVerdictTick, storyExtras,
+} from './render-batch.mjs'
 
 const CSS = `
 *{margin:0;padding:0;box-sizing:border-box}
@@ -192,6 +194,10 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .pipe{display:flex;gap:5px}
 .pipe i{width:14px;height:14px;border-radius:4px;border:1px solid var(--line);display:block}
 .pipe i.on{background:var(--green);border-color:var(--green)}
+/* ⑧ 추가 3열 — 워커 · 라운드 · 마지막 리뷰어(값이 하나라도 있을 때만 그린다) */
+.row.rowx{grid-template-columns:52px 1fr 170px 128px 110px}
+@media (max-width:980px){.row.rowx{grid-template-columns:52px 1fr}.row.rowx .rx{grid-column:2}}
+.rx{font-size:12px;color:var(--t2);display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0}
 
 .empty{font-size:12px;color:var(--t3);padding:24px 0}
 .foot{margin-top:32px;font-size:12px;color:var(--t3);line-height:1.8}
@@ -210,6 +216,9 @@ const STATUS = {
 }
 const ORDER = ['done','review','in-progress','ready-for-dev','backlog','unregistered']
 const STAGES = [['create','기획서 작성'],['dev','개발'],['qa','검사(qa)'],['review','적대 리뷰']]
+// ⑧ 스토리 표의 추가 3열(워커 · 라운드 · 마지막 리뷰어). 값이 하나도 없으면 X.on=false 라
+// 열 자체를 그리지 않는다 — 빈 칸 3개는 화면만 좁힌다.
+const X = (D.batch && D.batch.storyExtras) || {on:false, map:{}}
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
 const allStories = D.epics.flatMap((e) => e.stories)
 
@@ -243,12 +252,20 @@ function storyHTML(s){
   const meta = []
   if (s.acCount) meta.push('수용기준 '+s.acCount+'묶음')
   if (s.storyFile) meta.push('<a href="'+esc(s.storyFile)+'" target="_blank" rel="noopener">스토리 문서</a>')
-  return '<div class="row">'
+  const x = (X.on && X.map[s.slug]) || null
+  const extra = X.on
+    ? '<span class="rx" title="워커 · 라운드 · 마지막 리뷰어">'
+      + (x && x.worker ? esc(x.worker) : '—') + '<span class="dot"></span>'
+      + (x && x.rounds ? esc(x.rounds) : '—') + '<span class="dot"></span>'
+      + (x && x.reviewer ? esc(x.reviewer) : '—') + '</span>'
+    : ''
+  return '<div class="row'+(X.on?' rowx':'')+'">'
     + '<span class="rid">'+esc(s.id)+'</span>'
     + '<span class="rtitle"><b>'+esc(s.title)+'</b>'
       + (s.goal ? '<span class="rgoal">'+esc(s.goal)+'</span>' : '')
       + (meta.length ? '<span class="rmeta">'+meta.join('<span class="dot"></span>')+'</span>' : '')
     + '</span>'
+    + extra
     + pipeHTML(s)
     + '<span class="st"><em style="background:'+st.color+'"></em>'+st.label+'</span>'
     + '</div>'
@@ -321,8 +338,60 @@ const fmt = (iso) => {
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes())
 }
 
-export function build() {
+const escHtml = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/**
+ * 원천을 못 읽었을 때의 화면 한 장(M4). 여기서는 **어떤 파일이 왜 안 읽혔는지**만 적는다 —
+ * 진척·판정을 추측해 그리지 않는다(확인 못 한 것을 통과로 적지 않는다).
+ */
+function writeErrorPage(outDir, data) {
+  const e = data.error || {}
+  const rows = (list, empty) => (list && list.length
+    ? '<ul>' + list.map((x) => '<li class="mono">' + escHtml(x) + '</li>').join('') + '</ul>'
+    : '<p class="dim">' + empty + '</p>')
+  const readList = (e.readErrors || []).map((r) => r.file + '   ' + r.code + ': ' + r.message)
+  const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>개발 현황판 — 원천을 읽지 못했습니다</title><style>' + CSS
+    + '\n.errbox{border:1px solid var(--orange);border-radius:12px;padding:20px 24px;background:var(--card);max-width:960px}'
+    + '\n.errbox h1{font-size:20px;margin-bottom:8px}.errbox h2{font-size:14px;margin:18px 0 6px;color:var(--t2)}'
+    + '\n.errbox li{margin:2px 0 2px 18px;word-break:break-all;font-size:12px}.dim{color:var(--t3);font-size:12px}'
+    + '</style></head><body><div class="wrap"><div class="errbox">'
+    + '<h1>원천을 읽지 못했습니다</h1>'
+    + '<p>' + escHtml(e.message || '알 수 없는 오류') + '</p>'
+    + '<p class="dim">사유 코드 <code class="mono">' + escHtml(e.code || 'unknown') + '</code> · 루트 <code class="mono">'
+    + escHtml(data.root || '') + '</code> · ' + escHtml(fmt(data.generatedAt)) + '</p>'
+    + '<h2>확인한 경로</h2>' + rows(e.checked, '기록 없음')
+    + '<h2>읽다가 실패한 파일</h2>' + rows(readList, '없음')
+    + '<p class="dim">이 화면은 진척·배포 판정을 그리지 않습니다 — <b>확인 못 한 것을 통과로 적지 않습니다.</b> '
+    + '위 경로를 고친 뒤 다시 생성하세요.</p>'
+    + '</div></div></body></html>\n'
+  const outFile = join(outDir, 'index.html')
+  mkdirSync(outDir, { recursive: true })
+  writeFileSync(outFile, html, 'utf8')
+  return {
+    file: outFile, version: data.generatedAt, stories: 0, epics: 0, drift: 0,
+    verdict: 'unknown', error: e.code || 'scan-failed',
+  }
+}
+
+/**
+ * 현황판 1장을 만든다.
+ *
+ * @param {object} [opts]
+ *   outDir   출력 폴더(기본 = `_bmad-output/dev-status`). `--out` 은 스모크·미리보기용이며
+ *            스토리 문서 상대 링크는 **정본 출력 폴더 기준**이라 다른 폴더에 쓰면 링크가 어긋난다.
+ *   plugins  프로젝트 고유 블록. 계약 = `{ name, sections(data) => string[] }` 하나뿐이고
+ *            반환한 HTML 을 스토리 표 **아래·footer 위**에 순서대로 끼운다.
+ *            (jng-os 의 목업 갤러리·앱 미리보기·파일럿 게이트·deferred RC1 이 이 자리에 온다.)
+ *            플러그인이 던지면 그 플러그인만 경고 박스로 바뀌고 나머지 화면은 그대로다.
+ */
+export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
   const data = scan()
+  // scan() 은 던지지 않고 구조화 오류를 돌려준다(2026-09-02 교차리뷰 M4). 원천을 못 읽었으면
+  // **예외 없이** 「원천을 읽지 못했습니다」 화면 한 장을 만든다 — 빈 화면도, 스택트레이스도 아니다.
+  if (data.error) return writeErrorPage(outDir, data)
   for (const e of data.epics) for (const s of e.stories) delete s.body // 본문 전문은 화면에서 쓰지 않음
 
   const stories = data.epics.flatMap((e) => e.stories)
@@ -349,6 +418,8 @@ export function build() {
 
   // 상대 링크 실존 확인 — 링크 대상이 없으면 stderr 경고 1줄(경로 조립은 scan.mjs 의 relFromOut 하나로 통일)
   for (const s of stories) {
+    // 기준은 늘 정본 OUT_DIR 이다 — 상대 링크를 그 폴더 기준으로 만들었기 때문에(scan.relFromOut)
+    // `--out` 으로 다른 폴더에 써도 이 검사의 잣대는 바뀌지 않는다.
     if (s.storyFile && !existsSync(resolve(OUT_DIR, s.storyFile))) {
       console.error('[dev-status] 경고: 링크 대상 없음 — ' + s.storyFile)
     }
@@ -480,11 +551,47 @@ export function build() {
     (data.engineMismatch ? '<div class="warnbar">무인 배치 엔진과 산출물 경로가 다릅니다 — 단계 배지와 배치 중 쓰기 차단이 동작하지 않습니다.</div>' : '') +
     (data.warnings.length ? '<div class="warnbar">' + data.warnings.map(esc2).join('<br>') + '</div>' : '')
 
+  // ── 새 하네스 블록 ①②④⑤⑥⑦ ────────────────────────────────────────────
+  // 하나가 던져도 화면 전체가 죽지 않게 블록마다 감싼다(원천이 손상돼도 나머지는 보여야 한다).
+  const BA = data.batch
+  const safe = (label, fn) => {
+    try { return fn() } catch (e) {
+      return '<div class="warnbar">' + esc2(label) + ' 블록을 그리지 못했습니다 — ' + esc2(e?.message ?? e) + '</div>'
+    }
+  }
+  const blockers = (BA.readiness.value?.blockers ?? []).length
+  const heroHTML = safe('배포 판정', () => renderHero({
+    verdict: BA.verdict, heartbeat: BA.heartbeat, lastNight: BA.lastNight,
+    inbox: BA.inbox.value, queue: BA.queue.value, blockers,
+  }))
+  const inboxHTML = safe('결정 인박스', () => renderInbox(BA.inbox))
+  const nightHTML = safe('지난밤 배치', () => renderNight({
+    manifests: BA.lastNight.length ? BA.lastNight : BA.manifests.slice(0, 3),
+    verifications: BA.verifications, metrics: BA.metrics, evidence: BA.evidence,
+  }))
+  const queueHTML = safe('오늘 예정 큐', () => renderQueue(BA.queue, { assign: new Map(BA.assignByStory) }))
+  const metricsHTML = safe('계측', () => renderMetrics(BA.metricsTable, {
+    historyMissing: BA.history.missing, badLines: BA.history.bad,
+  }))
+  const diagHTML = safe('자율 마무리 진단', () => renderDiagnosis({
+    diagnosis: BA.diagnosis, backlog: BA.backlog, readiness: BA.readiness, report: BA.report,
+  }))
+  // ⑧ 3열 재료 — JS 쪽에서 쓰도록 data 에 얹는다(값이 하나도 없으면 on=false → 열 없음)
+  const ex = storyExtras({ verifications: BA.verifications, assignByStory: new Map(BA.assignByStory) })
+  BA.storyExtras = { on: ex.hasAny, map: ex.map }
+
+  // 플러그인 — 계약은 `{ name, sections(data) => string[] }` 하나다.
+  const pluginHTML = (plugins || []).map((p) => {
+    try { return (p.sections(data) || []).join('') } catch (e) {
+      return '<div class="warnbar">플러그인 「' + esc2(p?.name ?? '이름 없음') + '」이 던졌습니다 — ' + esc2(e?.message ?? e) + '</div>'
+    }
+  }).join('')
+
   const json = JSON.stringify(data).replace(/</g, '\\u003c')
 
   const html = '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-    '<title>개발 현황판</title><style>' + CSS + '</style></head><body><div class="wrap">' +
+    '<title>개발 현황판</title><style>' + CSS + BATCH_CSS + '</style></head><body><div class="wrap">' +
     '<header class="head"><div class="brand"><b>개발 현황판</b>' +
     '<span class="mono">' + esc2(data.root) + '</span></div>' +
     '<div class="stamp"><div id="live" class="live off"><i></i><span> 확인 중</span></div>' +
@@ -496,8 +603,12 @@ export function build() {
     '<span class="tk">에픽 <b class="mono">' + data.epics.length + '</b>개</span><span class="dot"></span>' +
     '<span class="tk">스토리 <b class="mono">' + stories.length + '</b></span><span class="dot"></span>' +
     '<span class="tk' + (high ? ' warn' : '') + '">불일치 <b class="mono">' + data.drift.length + '</b></span><span class="dot"></span>' +
-    '<span class="tk">다음 작업 <b class="mono">' + B.next.length + '</b>건</span>' +
+    '<span class="tk">다음 작업 <b class="mono">' + B.next.length + '</b>건</span><span class="dot"></span>' +
+    renderVerdictTick(BA.verdict) +
     '</div>' +
+
+    heroHTML +
+    inboxHTML +
 
     dqHTML +
 
@@ -505,24 +616,51 @@ export function build() {
     '<div class="pct-label">전체 진행률 · 완료 ' + done + ' / ' + stories.length + '건</div></div>' +
     '<div><div class="bar">' + bar + '</div><div class="legend">' + legend + '</div></div></section>' +
 
+    nightHTML +
+    queueHTML +
+    metricsHTML +
+    diagHTML +
+
     '<div class="filters"><div id="chips" style="display:flex;gap:8px;flex-wrap:wrap"></div>' +
     '<input id="q" class="search" type="search" placeholder="스토리 제목·번호·목표로 검색" aria-label="스토리 검색"></div>' +
     '<p class="hint">단계 배지 <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:var(--green);vertical-align:-2px"></span> = 통과 · 왼쪽부터 기획서 작성 → 개발 → 검사(qa) → 적대 리뷰 &nbsp;·&nbsp; <span id="shown"></span></p>' +
     '<div id="epics"></div>' +
 
+    pluginHTML +
+
     '<footer class="foot">원천 — <code>' + esc2(data.sources.epics) + '</code>(스토리 목록) · ' +
     '<code>' + esc2(data.sources.sprint) + '</code>(상태) · ' +
-    '<code>' + esc2(data.sources.state) + '</code>(단계)<br>' +
-    '이 화면은 열거나 새로고침(F5)할 때 위 파일에서 다시 만들어집니다. 직접 고치지 마세요 — 다음 갱신 때 덮어써집니다.</footer>' +
+    '<code>' + esc2(data.sources.state) + '</code>(단계) · ' +
+    '<code>auto-pipeline-logs/batch-&lt;id&gt;-manifest.json</code>(지난밤 배치) · ' +
+    '<code>auto-pipeline-logs/&lt;story&gt;-verification.json</code>(워커·게이트) · ' +
+    '<code>auto-pipeline-logs/metrics-&lt;id&gt;.json</code> · ' +
+    '<code>' + esc2(BA.stateDir) + '</code>(상태 폴더 — ' + esc2(BA.stateDirWhy) + ': metrics-history.jsonl · assign-history.json · auto-queue-*.json · archive/*-evidence/ · slots.log) · ' +
+    '<code>' + esc2(data.batch.inboxPath) + '</code>(결정)<br>' +
+    '이 화면은 열거나 새로고침(F5)할 때 위 파일에서 다시 만들어집니다. 직접 고치지 마세요 — 다음 갱신 때 덮어써집니다. ' +
+    '판정 재료가 없는 항목은 「없음 / 판정 불가」로 적습니다 — <b>확인 못 한 것을 통과로 적지 않습니다.</b></footer>' +
 
     '</div><script>window.__DATA__=' + json + '</script><script>' + JS + '</script></body></html>\n'
 
-  mkdirSync(OUT_DIR, { recursive: true })
-  writeFileSync(OUT_FILE, html, 'utf8')
-  return { file: OUT_FILE, version: data.generatedAt, stories: stories.length, epics: data.epics.length, drift: data.drift.length }
+  const outFile = join(outDir, 'index.html')
+  mkdirSync(outDir, { recursive: true })
+  writeFileSync(outFile, html, 'utf8')
+  return {
+    file: outFile, version: data.generatedAt, stories: stories.length,
+    epics: data.epics.length, drift: data.drift.length, verdict: BA.verdict.level,
+  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const r = build()
-  console.log('생성 완료 — 에픽 ' + r.epics + ' · 스토리 ' + r.stories + ' · 불일치 ' + r.drift + '\n' + r.file)
+  // `--out <폴더>` = 스모크·미리보기용 출력 위치(정본 폴더를 건드리지 않고 한 장 만들 때).
+  const argv = process.argv.slice(2)
+  const i = argv.findIndex((a) => a === '--out' || a.startsWith('--out='))
+  const outArg = i < 0 ? null : (argv[i].startsWith('--out=') ? argv[i].slice('--out='.length) : argv[i + 1])
+  const r = build(outArg ? { outDir: resolve(outArg) } : {})
+  if (r.error) {
+    // 화면 한 장은 이미 만들었다 — CLI 는 실패를 exit 2 로 알린다(라이브러리 경로는 그대로 진행).
+    console.error('원천을 읽지 못했습니다(' + r.error + ') — 사유를 적은 화면을 만들었습니다\n' + r.file)
+    process.exit(2)
+  }
+  console.log('생성 완료 — 에픽 ' + r.epics + ' · 스토리 ' + r.stories + ' · 불일치 ' + r.drift +
+    ' · 배포 판정 ' + r.verdict + '\n' + r.file)
 }

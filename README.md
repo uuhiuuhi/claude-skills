@@ -4,7 +4,7 @@ Claude Code 스킬 백업. 네 개가 들어 있다.
 
 | 스킬 | 하는 일 |
 |---|---|
-| [`auto-story-finish`](auto-story-finish/) | BMad 스토리 배치를 create → dev → review 순으로 무인 완료한다(헤드리스 `claude -p` 엔진). 단계별 모델 자동 선택, 인증 만료·사용량 한도 감지와 복구 대기, qa RED 시 중단, 옵트인 커밋·푸시(가드 하에). |
+| [`auto-story-finish`](auto-story-finish/) | BMad 스토리 배치를 create → dev → review 순으로 무인 완료한다(헤드리스 엔진). 단계별 모델 자동 선택, 인증 만료·사용량 한도 감지와 복구 대기, qa RED 시 중단, 옵트인 커밋·푸시(가드 하에). **v3(2026-09-02)**: 워커 프로바이더 계층 — `claude -p` 와 **`codex exec`** 를 모델 스펙(`"opus"` / `"codex"` / `"codex:<model>"`)으로 고른다 · Codex 리뷰는 read-only + 구조화 JSON → 엔진이 원장 기재 · 한도 시 프로바이더 전환(스토리당 1회) · 자동 수리 루프(`--auto-repair`) · 테스트 무결성 검사 · 검증 매니페스트. 플래그 없으면 종전 동작. |
 | [`dev-status`](dev-status/) | BMad v6 프로젝트의 **읽기 전용** 개발 현황판. `epics.md`·`sprint-status.yaml`·스토리 md·배치 로그를 규칙만으로 판정해 진행률·단계 배지·파일 겹침·불일치·다음 할 일을 로컬 HTML 한 장으로 낸다. 외부 의존성 0, LLM 호출 0. |
 | [`night-batch-ops`](night-batch-ops/) | **프로젝트 설치형** 24시간 **무정지** 무인 배치 체계 — 30분 반복 예약 **1개**(무기한 · 창 구분 없음) · 심박 lock(죽은 프로세스는 자동 탈취, 판정 불능은 6시간 심박으로 가름) · **선형 승계**(미머지 `auto/*` 가 있으면 쉬지 않고 그 브랜치를 이어 쌓는다 — 「미머지면 휴면」 폐지) · **공회전 가드**(엔진 로그 말고 바뀐 게 없는 라운드면 연속 루프를 끝내고 다음 정시 실행에 넘긴다) · 라운드마다 **하향 동기**(`origin/main` 병합 · 충돌은 해소/보류/중단 3처분) · 큐 자동 편성(규칙 10종, LLM 0)에 **무진전 연속 상한**(같은 스토리가 진전 없이 반복될 때만 제외) · **한도 대기(exit 5) 원장 환불** · 병렬 실행(File List 서로소 2폭, 워크트리 분리 + cherry-pick landing) · 중요도별 모델 배정 · 텔레그램 원격 명령(`/status` `/merge` `/resume` `/extend N` — 코드 되묻기) · 알림. `auto-story-finish` 를 엔진으로 쓴다. **원장 해석 단일 소스**(`story-ledger.mjs` — 굵게·인용·부정문 표기 흔들림 흡수) · **지출 한도 차단 알림**(원인을 이름으로 · 반복 억제) · **소진 모델 짝 단위 회피**. 프로젝트 고유값은 설치되는 `auto.config.json` 이 소유. |
 
@@ -90,3 +90,25 @@ node auto-story-finish/failure-classify.test.mjs
 교훈은 하나다 — **규정이 주석에만 있으면 반복된다.** 그래서 이 테스트가 규율을 집행한다:
 spend 는 limit 과 다른 갈래 · spend 안내에 「기다리」 금지 · spend 는 대기·사다리를 타지
 않음 · 패턴 재오염 금지. 엔진을 고칠 때 이 테스트를 먼저 돌린다.
+
+## 테스트 전체 (2026-09-02 · `node --test`)
+
+```bash
+node --test --test-concurrency=2 $(git ls-files -co --exclude-standard | grep '\.test\.mjs$')
+# 저장소 루트 — 의존성 0 · LLM 호출 0 · 실 알림 0 · 실제 git·실제 프로세스 사용(종단 3종: engine-e2e · e2e-parallel · autofinish-e2e)
+# ⚠ 2026-09-03: Windows 에서 기본 동시성(CPU 수)으로 돌리면 종단 3종이 서로 프로세스를 뺏어 0xC0000142(STATUS_DLL_INIT_FAILED)로
+#   간헐 실패한다(같은 커밋에서 48건→76건으로 실행마다 달랐다). 로직 결함이 아니므로 동시성 2 로 고정한다. 2026-09-03 실측: 702/702 GREEN.
+```
+
+| 묶음 | 내용 |
+|---|---|
+| `night-batch-ops/engine/{runner-rules,plan-queue,telegram-rules}.test.mjs` | 원 프로젝트의 vitest 79종을 이식한 **기준선**(엔진 변경 전에 GREEN 확인 후 확장) |
+| `night-batch-ops/engine/worker-pool.test.mjs` | 다중 프로바이더 설정 정규화 · 병렬 폭/위험 · 배정 · 풀 스케줄 · 통합 게이트 판정 · 편성기 Codex 리뷰 배정 · 러너 배선 앵커 |
+| `night-batch-ops/engine/e2e-parallel.test.mjs` | **종단 6 시나리오** — 스텁 claude/codex(.cmd · `CLAUDE_BIN`/`CODEX_BIN`) + 실제 git: 병렬 풀 → 엔진 → landing → 통합 게이트 PASS / RED 되돌림 / Codex 한도 폴백 / 워커 실패 격리 / dry-run 무실행 / Claude 전용 하위 호환 |
+| `auto-story-finish/{providers,quality-rules,story-writes,engine-guards}.test.mjs` | 프로바이더 계층 · 품질 규칙 · 원장 쓰기 · 엔진 소스 앵커(현황판 로그 줄 형식·가드 보존) |
+
+## Codex 워커 (2026-09-02)
+
+`night-batch-ops` 는 이제 **Claude + Codex 를 독립 워커**로 쓸 수 있다(설정 `providers.codex.enabled`). 없으면 Claude 전용으로
+그대로 돈다. 계약·안전선·로그·한계는 `night-batch-ops/SKILL.md` 의 「다중 프로바이더 하네스」 절과
+`night-batch-ops/references/multi-provider-design.md`(설계 · 적대 검토 40건 · 실측)에 있다.

@@ -356,3 +356,241 @@ export function spendBlockNotice({ streak, firstIso, nowIso }) {
       '하루 상한 원장은 환불되므로 손해는 없다.',
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 다중 프로바이더 워커 풀 (2026-09-02 · 설계 references/multi-provider-design.md · 적대 검토 40건 반영)
+// 원칙: 설정이 없으면 종전 동작(Claude 전용 · 2폭 · 하드캡 3). 새 판정은 전부 순수 함수 — 테스트가 문다.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 총 워커 절대 상한 — `workers.max` 를 설정으로 올려도 이 위로는 못 간다(같은 머신 qa 자원 경합 · 한도 배수 소모). */
+export const WORKERS_ABS_MAX = 6
+/** 프로바이더 기본값 — codex 는 **꺼짐**이 기본이고, 켜도 동시 1(같은 auth.json 동시 사용 금지 · OpenAI 문서) */
+export const PROVIDER_DEFAULTS = Object.freeze({
+  claude: Object.freeze({ enabled: true, max: PARALLEL_MAX }),
+  codex: Object.freeze({ enabled: false, max: 1, roles: Object.freeze(['review']), reviewKinds: Object.freeze(['new', 'closeout']), split: false, network: false, fallback: true }),
+})
+export const QUALITY_DEFAULTS = Object.freeze({ autoRepair: 0, sameRootCauseMaxRetries: 3, totalRepairAttempts: 5, integrity: 'auto' })
+
+/** auto.config.json → 정규화된 프로바이더·워커·품질·통합 게이트 설정(전부 선택 · 없으면 종전 동작 = configured:false). */
+export function providerConfig(cfg = {}) {
+  const c = cfg ?? {}
+  const p = c.providers ?? {}
+  const codex = { ...PROVIDER_DEFAULTS.codex, ...(p.codex ?? {}) }
+  const claude = { ...PROVIDER_DEFAULTS.claude, ...(p.claude ?? {}) }
+  const warnings = []
+  codex.max = Math.max(1, Number(codex.max) || 1)
+  if (codex.max > 1) warnings.push(`providers.codex.max=${codex.max} — 같은 auth.json 동시 사용은 OpenAI 가 지원하지 않는다(갱신 경합). 실측 없이 올리지 말 것`)
+  codex.roles = Array.isArray(codex.roles) ? codex.roles.filter((r) => ['review', 'dev'].includes(r)) : ['review']
+  codex.reviewKinds = Array.isArray(codex.reviewKinds) ? codex.reviewKinds : ['new', 'closeout']
+  claude.max = Math.max(1, Math.min(WORKERS_ABS_MAX, Number(claude.max) || PARALLEL_MAX))
+  const w = c.workers ?? {}
+  const workers = {
+    max: Math.max(1, Math.min(WORKERS_ABS_MAX, Number(w.max) || PARALLEL_MAX)),
+    batchSize: Math.max(1, Math.min(WORKERS_ABS_MAX, Number(w.batchSize) || 2)),
+  }
+  const q = c.quality ?? {}
+  // autoRepair: true → 기본 총 5회 · 숫자 → 그 횟수 · false/미지정 → 0(종전: qa RED 즉시 STOP)
+  const autoRepair = q.autoRepair === true ? QUALITY_DEFAULTS.totalRepairAttempts
+    : q.autoRepair === false || q.autoRepair === undefined ? Math.max(0, Number(q.totalRepairAttempts) || 0)
+      : Math.max(0, Number(q.autoRepair) || 0)
+  const quality = {
+    autoRepair: q.totalRepairAttempts !== undefined && q.autoRepair === true ? Math.max(0, Number(q.totalRepairAttempts) || 0) : autoRepair,
+    sameRootCauseMaxRetries: Math.max(1, Number(q.sameRootCauseMaxRetries) || QUALITY_DEFAULTS.sameRootCauseMaxRetries),
+    integrity: ['auto', 'on', 'off'].includes(q.integrity) ? q.integrity : 'auto',
+  }
+  const g = c.integrationGate ?? {}
+  // pushOnFail 은 폐지(2026-09-02 hardening #5) — 「RED 인데 push」 를 설정 한 줄로 되살릴 수 있으면
+  // 통합 게이트는 안전장치가 아니라 권고가 된다. 남아 있는 키는 **무시하고 경고**한다(조용히 먹지 않는다).
+  const integrationGate = { enabled: c.integrationGate !== undefined && g.enabled !== false }
+  if (g.pushOnFail !== undefined) warnings.push('[INTEGRATION] pushOnFail 은 폐지됨 — RED 는 항상 rollback')
+  const configured = c.providers !== undefined || c.workers !== undefined || c.quality !== undefined || c.integrationGate !== undefined
+  return { configured, workers, providers: { claude, codex }, quality, integrationGate, warnings }
+}
+
+/** 병렬 폭 — `maxWorkers` 는 설정이 준 총 상한(기본 = 종전 하드캡 3 → parallelPlan 과 바이트 단위로 같은 결과). 절대 상한 6. */
+export function parallelPlanWithWorkers({ storyCount, stages, parallel, maxWorkers = PARALLEL_MAX }) {
+  const base = parallelPlan({ storyCount, stages, parallel })
+  if (base <= 1) return base
+  const cap = Math.max(1, Math.min(WORKERS_ABS_MAX, Number(maxWorkers) || PARALLEL_MAX))
+  return Math.min(parallel, cap, storyCount)
+}
+
+/** 병렬 위험 — File List 겹침(fileListConflicts)에 더해, **어느 한쪽이라도** package.json/lock 을 만지면 병렬 금지:
+ *  워크트리들이 node_modules 를 junction 으로 **공유**하므로 한쪽의 의존성 변경이 다른 쪽의 qa 를 흔든다(F35). */
+export const SHARED_TOOLCHAIN_FILES = Object.freeze(['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'])
+/** @param {string[][]} lists 스토리별 File List
+ *  @param {{judges?: Array<(lists: string[][]) => ({ok: boolean, why?: string}|null|undefined)>}} [options]
+ *    judges = **외부 판정기 주입점**(migration/schema/API contract 충돌 등). 각 판정기는 `{ok:false, why}` 를
+ *    돌려주면 그 자리에서 병렬을 막고, `null`·`{ok:true}` 면 다음 판정기로 넘어간다. 던지는 판정기는
+ *    「모르는 것」으로 보고 병렬을 막는다(조용한 통과 금지). 내장 toolchain 검사가 항상 먼저 돈다. */
+export function parallelHazards(lists, { judges = [] } = {}) {
+  for (let i = 0; i < (lists ?? []).length; i++) {
+    for (const f of lists[i] ?? []) {
+      const p = String(f).trim().replace(/\\/g, '/')
+      if (SHARED_TOOLCHAIN_FILES.includes(p)) return { ok: false, why: `스토리 ${i + 1} 이 ${p} 를 만진다 — node_modules 공유(junction)라 병렬 불가` }
+    }
+  }
+  for (const judge of judges ?? []) {
+    if (typeof judge !== 'function') continue
+    let v
+    try { v = judge(lists ?? []) } catch (e) { return { ok: false, why: `외부 병렬 판정기 오류 — ${e?.message ?? e}` } }
+    if (v && v.ok === false) return { ok: false, why: String(v.why ?? '외부 병렬 판정기가 막음') }
+  }
+  return { ok: true, why: '' }
+}
+
+/** 모델 스펙의 프로바이더 — "codex" · "codex:<model>" 만 codex, 나머지(빈 값 포함)는 claude(엔진 parseModelSpec 과 같은 규칙) */
+export const specProvider = (s) => (/^codex(:|$)/i.test(String(s ?? '').trim()) ? 'codex' : 'claude')
+
+/** 스토리별 프로바이더 배정(순수) — 배치 models 를 기본으로 한다. codex 가 켜져 있고 가용하며 roles 에 dev 가 있고 split 이면
+ *  홀수 번째 스토리를 codex dev(리뷰는 claude 로 교차)로 나눈다. blocked 에 든 프로바이더는 피한다(한도·인증 레인 전환).
+ *  반환 [{ story, dev, review, devProvider }]. 설정이 없으면 입력 models 그대로 — 종전과 같은 플래그. */
+export function assignProviders({ stories = [], batchModels = {}, codex = PROVIDER_DEFAULTS.codex, codexAvailable = false, blocked = [] } = {}) {
+  const base = { dev: batchModels.dev ?? '', review: batchModels.review ?? '' }
+  const codexDevOk = Boolean(codex?.enabled) && codexAvailable && (codex.roles ?? []).includes('dev') && !blocked.includes('codex')
+  const claudeAlt = specProvider(base.dev) === 'claude' && base.dev ? base.dev : (specProvider(base.review) === 'claude' ? base.review : '')
+  return stories.map((story, i) => {
+    let dev = base.dev, review = base.review
+    if (codexDevOk && Boolean(codex.split) && i % 2 === 1) { dev = 'codex'; review = claudeAlt } // 교차: codex 가 만들면 claude 가 본다
+    if (blocked.includes('codex')) { if (specProvider(dev) === 'codex') dev = claudeAlt; if (specProvider(review) === 'codex') review = '' }
+    if (blocked.includes('claude') && codexDevOk && specProvider(dev) === 'claude') { dev = 'codex'; review = claudeAlt }
+    return { story, dev, review, devProvider: specProvider(dev) }
+  })
+}
+
+/** 워커 풀 스케줄(순수) — running 의 프로바이더별 수와 총 수를 세어 지금 시작할 수 있는 pending 을 **순서대로** 고른다.
+ *  caps = { total, claude, codex }. 같은 프로바이더 상한이 차면 그 항목은 건너뛰고 다음 후보를 본다. */
+export function pickRunnable(pending = [], running = [], caps = {}) {
+  const total = Math.max(1, Number(caps.total) || 1)
+  const per = { claude: Math.max(1, Number(caps.claude) || PARALLEL_MAX), codex: Math.max(1, Number(caps.codex) || 1) }
+  const count = { claude: 0, codex: 0 }
+  for (const r of running) count[r.devProvider === 'codex' ? 'codex' : 'claude']++
+  let slots = total - running.length
+  const out = []
+  for (const p of pending) {
+    if (slots <= 0) break
+    const k = p.devProvider === 'codex' ? 'codex' : 'claude'
+    if (count[k] >= per[k]) continue
+    count[k]++
+    slots--
+    out.push(p)
+  }
+  return out
+}
+
+/** landing 뒤 통합 게이트 판정(순수) — 병렬 landing 이 1건 이상일 때만 돈다.
+ *  **RED 는 설정으로 우회되지 않는다**(2026-09-02 hardening #5): 어떤 인자를 더 주어도 `rollback` 하나다.
+ *  옛 `pushOnFail`/`push-anyway` 는 제거됐다 — 되살리려면 사람이 별도 승인 명령으로 하는 것이지 무인 설정이 아니다. */
+export function integrationGateDecision({ enabled = false, landedCount = 0, qaExit = null } = {}) {
+  if (!enabled || landedCount <= 0) return { run: false, action: 'push', why: enabled ? '통합 게이트 대상 없음(landing 0)' : '통합 게이트 꺼짐' }
+  if (qaExit === null) return { run: true, action: 'pending', why: '통합 게이트 실행 필요' }
+  if (qaExit === 0) return { run: true, action: 'push', why: '통합 게이트 GREEN' }
+  return { run: true, action: 'rollback', why: `통합 게이트 RED(exit ${qaExit}) — landing 되돌림 · push 금지 · 산출물은 archive 태그 보존` }
+}
+
+// ── 통합 게이트 실행 계획 (BRIEF 정책 8 · codex-review-r3 M5) ────────────────
+// 종전에는 `spawnSync(QA_CMD, { shell: true })` 였다. `QA_CMD` 는 **저장소 안** `auto.config.json` 의
+// `qa` 값이라, `npm run qa && git push …` 같은 문자열이 그대로 cmd.exe 에 넘어갔다.
+// 이제 자유 형식 명령을 **허용 실행파일 + argv** 로 정규화하고, 그 틀을 벗어나면 실행 전에 거부한다.
+//
+// 왜 `providers/spawn-safe.mjs` 를 import 하지 않나: 러너는 대상 저장소의 `tools/auto/` 로 **복사돼**
+// 돌기 때문에 `../../auto-story-finish/…` 가 그 자리에 없다(e2e 픽스처도 같은 배치다). 규칙은 같게 둔다.
+
+/** 게이트로 부를 수 있는 실행파일 — 이 목록 밖은 거부한다(임의 실행 방지). */
+export const GATE_EXECUTABLES = Object.freeze(['npm', 'pnpm', 'yarn', 'npx', 'node'])
+/** 토큰 하나의 안전 문자집합 — `spawn-safe.mjs:SAFE_ARG_RE` 와 같은 규칙(공백은 토큰 분리에 쓰므로 뺐다).
+ *  `& | ; < > ^ % $ \` " ' * ? [ ] { } #` 과 줄바꿈은 전부 여기서 걸린다. */
+export const GATE_TOKEN_RE = /^[A-Za-z0-9._:/\\()~@+=,-]+$/
+const GATE_CMD_SHIM = new Set(['npm', 'pnpm', 'yarn', 'npx'])
+
+/** cmd.exe `/s /c` 용 인용 — MS C 런타임 규칙(`spawn-safe.mjs:quoteWindowsArg` 와 동일). */
+function quoteWindowsArg(arg) {
+  const s = String(arg)
+  let out = '"'
+  let slashes = 0
+  for (const ch of s) {
+    if (ch === '\\') { slashes++; out += ch; continue }
+    if (ch === '"') { out += '\\'.repeat(slashes + 1) + '"'; slashes = 0; continue }
+    slashes = 0
+    out += ch
+  }
+  return out + '\\'.repeat(slashes) + '"'
+}
+
+/**
+ * 통합 게이트 명령 → 실행 계획. **셸 문자열 결합 없음**(`shell:false` 로만 돈다).
+ * 받는 형태: `npm run qa` · `pnpm run qa` · `node tools/qa.mjs` 처럼 「허용 실행파일 + 안전 토큰」.
+ * Windows 의 `npm` 은 `.cmd` 심이라 CreateProcess 가 직접 못 돈다 → `cmd.exe /d /s /c "…"` 전용 경로.
+ * @returns {{file:string, argv:string[], verbatim:boolean, display:string}}
+ * @throws {Error} code='UNSAFE_GATE' — 빈 값 · 셸 메타문자 · 허용 밖 실행파일
+ */
+export function integrationGateInvocation(cmd, { platform = process.platform, comspec = process.env.ComSpec || 'cmd.exe' } = {}) {
+  const raw = String(cmd ?? '').trim()
+  const bad = (why) => { throw Object.assign(new Error(`[INTEGRATION] 게이트 명령을 거부한다 — ${why}: ${JSON.stringify(raw.slice(0, 80))}`), { code: 'UNSAFE_GATE' }) }
+  if (!raw) bad('비어 있다')
+  const toks = raw.split(/ +/)
+  for (const t of toks) if (!GATE_TOKEN_RE.test(t)) bad(`셸 메타문자 또는 허용되지 않은 문자가 있다(${t})`)
+  const exe = toks[0].replace(/\.(cmd|bat|exe)$/i, '').toLowerCase()
+  if (!GATE_EXECUTABLES.includes(exe)) bad(`허용 실행파일(${GATE_EXECUTABLES.join(', ')}) 밖이다`)
+  const args = toks.slice(1)
+  const display = [exe, ...args].join(' ')
+  if (platform === 'win32' && GATE_CMD_SHIM.has(exe)) {
+    // 실행파일 토큰은 **인용하지 않는다**. `cmd /s /c ""npm.cmd" …"` 처럼 따옴표를 씌우면 npm.cmd 안의
+    // `%~dp0` 가 PATH 로 찾은 폴더가 아니라 **현재 폴더**로 잡혀 `node_modules/npm/bin/npm-prefix.js` 를
+    // 찾다 죽는다(2026-09-02 실측: 통합 게이트가 MODULE_NOT_FOUND 로 RED). 인용을 빼도 안전한 이유는
+    // 이 자리에 올 수 있는 값이 화이트리스트(`npm|pnpm|yarn|npx`)+`.cmd` 뿐이라 셸 메타문자가 없기 때문이다.
+    // 인자는 경로·괄호가 들어올 수 있으므로 종전대로 인용한다.
+    const line = `"${[`${exe}.cmd`, ...args.map(quoteWindowsArg)].join(' ')}"`
+    return { file: comspec, argv: ['/d', '/s', '/c', line], verbatim: true, display }
+  }
+  return { file: exe, argv: args, verbatim: false, display }
+}
+
+/** 통합 게이트 결과를 검증 매니페스트에 병합(순수) — 원본은 건드리지 않고 새 객체를 돌려준다.
+ *  result = { result: 'pass'|'fail'|'rollback', qaExit, landingBase, at, batchId? }
+ *    pass     = 통합 qa GREEN(그대로 push 대상)
+ *    rollback = 통합 qa RED · landing 되돌림 **확인됨**(HEAD == landingBase)
+ *    fail     = 통합 qa RED 인데 되돌림을 확인하지 못함(사람이 봐야 하는 상태)
+ *  `batchId` 는 **준 경우에만** 실린다(N6/정책 16): rollback 증거·sidecar 가 「어느 라운드의 판정인가」를
+ *  말해야 이전 라운드 기록을 덮어쓰지 않는다. 안 주면 종전 4필드 그대로다(하위 호환). */
+export const INTEGRATION_RESULTS = Object.freeze(['pass', 'fail', 'rollback'])
+export function applyIntegrationToManifest(manifestJson, result) {
+  const base = manifestJson && typeof manifestJson === 'object' && !Array.isArray(manifestJson) ? manifestJson : {}
+  const r = result && typeof result === 'object' ? result : {}
+  const qa = Number(r.qaExit)
+  const batchId = r.batchId == null || r.batchId === '' ? null : String(r.batchId)
+  return {
+    ...base,
+    integration: {
+      result: INTEGRATION_RESULTS.includes(r.result) ? r.result : 'fail',
+      qaExit: Number.isFinite(qa) ? qa : null,
+      landingBase: String(r.landingBase ?? ''),
+      at: String(r.at ?? new Date().toISOString()),
+      ...(batchId ? { batchId } : {}),
+    },
+  }
+}
+
+/** 정규화 설정 → 엔진 추가 플래그(순수). 설정이 하나도 없으면 [] — 종전 명령줄과 바이트 단위로 같다(하위 호환). */
+export function engineFlagsFromConfig(pc) {
+  if (!pc?.configured) return []
+  const a = []
+  if (pc.quality.autoRepair > 0) a.push('--auto-repair', String(pc.quality.autoRepair), '--repair-same-cause', String(pc.quality.sameRootCauseMaxRetries))
+  // (2026-09-02) `--integrity` 는 **항상 명시**한다 — 엔진 기본값이 `on` 으로 바뀌어, 생략하면 설정의
+  // `auto`(= autoRepair>0 일 때만)가 조용히 `on` 으로 승격된다. 설정이 곧 실행이어야 한다.
+  a.push('--integrity', pc.quality.integrity)
+  if (pc.providers.codex.enabled) {
+    a.push('--providers', 'claude,codex', '--codex-roles', pc.providers.codex.roles.join(',') || 'review', '--codex-max', String(pc.providers.codex.max))
+    if (pc.providers.codex.network) a.push('--codex-network', 'on')
+  } else {
+    a.push('--no-codex')
+  }
+  return a
+}
+
+/** 엔진의 exit-info.json 해석(순수) — 한도·인증·지출로 멈춘 프로바이더(F36: exit 5 만으로는 레인을 모른다). 그 외 null. */
+export function blockedProviderFromExit(info) {
+  if (!info || typeof info !== 'object') return null
+  if (!['limit', 'auth', 'spend'].includes(info.kind)) return null
+  return info.provider === 'codex' ? 'codex' : info.provider === 'claude' ? 'claude' : null
+}

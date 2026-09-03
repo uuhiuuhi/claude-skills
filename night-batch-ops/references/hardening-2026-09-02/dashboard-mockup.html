@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BARO 개발 현황판 — 재설계 목업 (2026-09-02)</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#020617;--ticker:#0A0F1E;--card:#0E1223;--elev:#1E293B;--line:#334155;--t1:#F8FAFC;--t2:#94A3B8;--t3:#64748B;--blue:#0070F3;--lblue:#7FB8FF;--orange:#E85C0D;--green:#22C55E;--mono:ui-monospace,'Cascadia Mono','D2Coding',monospace}
+body{background:var(--bg);color:var(--t1);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic","Apple SD Gothic Neo",sans-serif;font-size:14px;line-height:1.5;padding:24px 24px 64px;position:relative}
+body::before{content:"";position:absolute;top:-160px;left:50%;transform:translateX(-50%);width:920px;height:460px;pointer-events:none;background:radial-gradient(closest-side,rgba(127,184,255,.08),transparent)}
+.wrap{max-width:1240px;margin:0 auto;position:relative}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:.01em}
+a{color:var(--lblue);text-decoration:none}a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid var(--lblue);outline-offset:2px;border-radius:4px}
+h2{font-size:16px;font-weight:600}
+.mock-note{border:1px dashed var(--line);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--t3)}
+.head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px}
+.brand{display:flex;align-items:baseline;gap:12px}.brand b{font-size:22px;letter-spacing:.18em;font-weight:800}.brand span{font-size:16px;color:var(--t2)}
+.stamp{font-size:12px;color:var(--t3);text-align:right}
+.hero{background:var(--ticker);border:1px solid var(--line);border-radius:8px;padding:16px 20px;display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:center;margin-bottom:16px}
+@media(max-width:760px){.hero{grid-template-columns:1fr}}
+.verdict{display:flex;flex-direction:column;gap:6px;padding:14px 18px;border-radius:8px;min-width:210px}
+.verdict.red{background:var(--orange);color:#1A0700}.verdict.amber{border:1px solid var(--orange);color:var(--orange)}.verdict.green{border:1px solid var(--green);color:var(--green)}.verdict.unknown{border:1px solid var(--line);color:var(--t3)}
+.verdict b{font-size:22px;font-weight:800;letter-spacing:.04em}.verdict span{font-size:12px;opacity:.92}
+.heros{display:flex;gap:8px 28px;flex-wrap:wrap;align-items:center}
+.hs{display:flex;align-items:baseline;gap:8px;font-size:12px;color:var(--t2)}.hs b{font-size:18px;color:var(--t1);font-weight:600}.hs.warn b{color:var(--orange)}
+.hbeat{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--orange);border:1px solid rgba(232,92,13,.55);border-radius:999px;padding:4px 12px}
+.hbeat i{width:8px;height:8px;border-radius:50%;background:var(--orange);display:inline-block}
+.hbeat.ok{color:var(--green);border-color:rgba(34,197,94,.45)}.hbeat.ok i{background:var(--green)}
+.why{font-size:12px;color:var(--t2);margin-top:8px}
+.sec{background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:16px;overflow:hidden}
+.sh{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--line)}
+.sh .n{font-family:var(--mono);font-size:12px;border-radius:999px;padding:3px 10px;color:var(--lblue);border:1px solid rgba(127,184,255,.45)}
+.sh .n.warn{color:var(--orange);border-color:rgba(232,92,13,.55)}.sh .sub{font-size:12px;color:var(--t2);margin-left:auto}
+.body{padding:14px 16px}.none{padding:14px 16px;font-size:13px;color:var(--t3)}
+.dec{display:grid;grid-template-columns:1fr 150px;gap:14px;padding:13px 16px;border-bottom:1px solid rgba(51,65,85,.5);align-items:start}.dec:last-child{border-bottom:0}
+.dec b.t{font-size:14px;font-weight:600;display:block;margin-bottom:5px}.dec p{font-size:13px;color:var(--t2)}
+.age{font-family:var(--mono);font-size:12px;border-radius:999px;padding:2px 9px;border:1px solid var(--line);color:var(--t3)}.age.old{color:var(--orange);border-color:rgba(232,92,13,.55)}
+.opt{font-size:12px;color:var(--t3);margin-top:5px}
+.act{font-size:12px;color:var(--lblue);border:1px solid rgba(127,184,255,.45);border-radius:6px;padding:8px 10px;text-align:center}
+.board{display:grid;grid-template-columns:200px 1fr 220px;gap:28px;align-items:center;padding:20px 16px}
+@media(max-width:980px){.board{grid-template-columns:1fr}}
+.pct{font-size:52px;line-height:1;color:var(--lblue);font-weight:600}.pct small{font-size:20px;color:var(--t2);margin-left:4px}.pct-label{font-size:12px;color:var(--t2);margin-top:8px}
+.bar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--elev)}.bar i{display:block}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--t2)}.legend span{display:inline-flex;align-items:center;gap:6px}.legend em{width:10px;height:10px;border-radius:3px;font-style:normal}
+.spark-label{font-size:12px;color:var(--t2);margin-bottom:6px}
+.epicrow{display:flex;align-items:center;gap:12px;padding:9px 16px;border-top:1px solid rgba(51,65,85,.5);font-size:13px}
+.epicrow .en{font-family:var(--mono);font-size:12px;color:var(--t3);width:52px;flex:none}.epicrow .et{flex:1;color:var(--t2)}
+.epicrow .eb{width:180px;height:8px;border-radius:4px;background:var(--elev);overflow:hidden;flex:none}.epicrow .eb i{display:block;height:100%;background:var(--green)}
+.epicrow .ep{font-family:var(--mono);font-size:12px;color:var(--t1);width:44px;text-align:right;flex:none}
+.bcard{border-top:1px solid rgba(51,65,85,.5);padding:15px 16px}.bcard:first-child{border-top:0}
+.btop{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}.blabel{font-size:14px;font-weight:600}
+.chip{font-size:12px;border-radius:999px;padding:2px 9px;border:1px solid var(--line);color:var(--t2)}
+.chip.data{color:var(--lblue);border-color:rgba(127,184,255,.45)}.chip.ok{color:var(--green);border-color:rgba(34,197,94,.55)}.chip.warn{color:var(--orange);border-color:rgba(232,92,13,.55)}
+.chip.fill{background:var(--orange);color:#1A0700;border-color:var(--orange);font-weight:600}.chip.mono{font-family:var(--mono)}
+.wtab{width:100%;border-collapse:collapse;font-size:13px;margin-top:4px}
+.wtab th{text-align:left;font-size:12px;color:var(--t3);font-weight:600;padding:6px 10px 6px 0;border-bottom:1px solid rgba(51,65,85,.5)}
+.wtab td{padding:8px 10px 8px 0;border-bottom:1px solid rgba(51,65,85,.35);color:var(--t2);vertical-align:top}.wtab td b{color:var(--t1);font-weight:600}
+.bmeta{display:flex;gap:8px 22px;flex-wrap:wrap;font-size:12px;color:var(--t3);margin-top:10px}.bmeta b{color:var(--t2);font-weight:600}
+.callout{border-left:3px solid var(--orange);background:rgba(232,92,13,.08);padding:10px 14px;border-radius:0 6px 6px 0;margin-top:10px;font-size:13px;color:var(--t1)}
+.callout b{font-weight:600}.callout p{color:var(--t2);font-size:12px;margin-top:4px}
+.mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line)}
+@media(max-width:860px){.mgrid{grid-template-columns:repeat(2,1fr)}}
+.mcell{background:var(--card);padding:15px 16px}.mcell .mv{font-size:28px;color:var(--lblue);font-weight:600;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.mcell .mv.na{color:var(--t3);font-size:22px}.mcell .mk{font-size:12px;color:var(--t2);margin-top:5px}.mcell .md{font-size:12px;color:var(--t3);margin-top:3px}
+.dgrid{display:flex;gap:8px;flex-wrap:wrap;padding:14px 16px}
+.dpill{border:1px solid var(--line);border-radius:8px;padding:10px 14px;min-width:112px}.dpill b{font-size:22px;font-family:var(--mono);display:block;color:var(--t1)}.dpill span{font-size:12px;color:var(--t2)}.dpill.warn b{color:var(--orange)}
+.prio{display:flex;flex-direction:column;gap:5px;padding:0 16px 14px}
+.prow{display:flex;align-items:center;gap:10px;font-size:12px}.prow .pn{font-family:var(--mono);color:var(--t3);width:18px;flex:none}.prow .pl{color:var(--t2);width:190px;flex:none}
+.prow .pb{flex:1;height:8px;background:var(--elev);border-radius:4px;overflow:hidden}.prow .pb i{display:block;height:100%;background:var(--lblue)}.prow.hot .pb i{background:var(--orange)}
+.prow .pc{font-family:var(--mono);color:var(--t1);width:26px;text-align:right;flex:none}
+.stab{width:100%;border-collapse:collapse;font-size:13px}
+.stab th{text-align:left;font-size:12px;color:var(--t3);font-weight:600;padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+.stab td{padding:10px 12px;border-bottom:1px solid rgba(51,65,85,.35);color:var(--t2)}.stab td.k{font-family:var(--mono);color:var(--t3);white-space:nowrap}.stab td.n{color:var(--t1)}
+.badges{display:inline-flex;gap:3px}.bg{width:13px;height:13px;border-radius:3px;background:var(--elev);display:inline-block}.bg.on{background:var(--green)}.bg.half{background:rgba(34,197,94,.35)}
+.it{display:grid;grid-template-columns:1fr 200px;gap:16px;align-items:start;padding:13px 16px;border-bottom:1px solid rgba(51,65,85,.5)}.it:last-child{border-bottom:0}
+.it b.t{font-size:14px;font-weight:600;display:block;margin-bottom:4px}.it p{font-size:13px;color:var(--t2)}
+.src{font-size:12px;color:var(--t3);margin-top:5px;font-family:var(--mono)}
+.foot{font-size:12px;color:var(--t3);line-height:1.7;padding-top:16px;border-top:1px solid var(--line)}.foot code{font-family:var(--mono);color:var(--t2)}
+/* 기존 기능 보존: 탭 · 티커 · 스토리 표 링크 · 목업 갤러리 · 앱 미리보기 */
+.tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);margin-bottom:16px}
+.tab{padding:12px 16px;font-size:14px;color:var(--t2);border-bottom:2px solid transparent;margin-bottom:-1px;min-height:44px;background:none;border-top:0;border-left:0;border-right:0;cursor:pointer;font-family:inherit}
+.tab[aria-selected="true"]{color:var(--t1);border-bottom-color:var(--blue);font-weight:600}
+.ticker{display:flex;gap:14px;flex-wrap:wrap;align-items:center;background:var(--ticker);border:1px solid var(--line);border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:12px;color:var(--t2)}
+.ticker b{color:var(--t1)}.ticker .dot{width:4px;height:4px;border-radius:50%;background:var(--line)}
+.stab td.links a{margin-right:10px;font-size:12px}
+.epichead{display:flex;align-items:center;gap:10px;padding:10px 16px;background:rgba(30,41,59,.35);border-top:1px solid var(--line);font-size:13px;cursor:pointer}
+.epichead .en{font-family:var(--mono);color:var(--t3)}.epichead .et{color:var(--t1);font-weight:600;flex:1}.epichead .ep{font-family:var(--mono);color:var(--t2)}
+.mockgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;padding:12px 16px}
+.mock{display:block;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--elev);color:var(--t1)}
+.mock.dim{opacity:.55}.mock .thumb{display:block;height:120px;background:linear-gradient(160deg,#0f172a,#1e293b);position:relative}
+.mock .thumb::after{content:"썸네일(iframe)";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--t3)}
+.mock .cap{padding:8px 10px;font-size:12px}.mock .cap b{display:block;color:var(--t1);font-weight:600;margin-bottom:2px}.mock .cap span{color:var(--t3)}
+.mgroup{padding:10px 16px 0;font-size:13px;color:var(--t2)}.mgroup b{color:var(--t1)}
+.appbox{padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){.appbox{grid-template-columns:1fr}}
+.btn{display:inline-block;padding:9px 14px;border-radius:6px;border:1px solid rgba(127,184,255,.45);color:var(--lblue);font-size:13px;background:none;cursor:pointer;font-family:inherit;margin:0 8px 8px 0}
+.btn.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+.appframe{height:220px;border:1px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:12px}
+</style></head><body><div class="wrap">
+
+<p class="mock-note">정적 목업 — 가짜 데이터입니다(2026-09-03 재설계안 v2 · 목업 선행 규칙 👤 2026-08-11). 실제 화면은 매 새로고침마다 원천 파일에서 다시 만들어집니다. <b>기존 기능(탭·티커·에픽별 스토리 표의 문서/목업 링크·목업 갤러리·앱 미리보기)은 그대로 유지</b>하고 새 블록(배포 판정·지난밤 배치·오늘 예정·계측·자율 진단)을 추가한 구성입니다.</p>
+
+<header class="head">
+  <div class="brand"><b>BARO</b><span>개발 현황판</span></div>
+  <div class="stamp">2026-09-03 (목) 07:12 기준 · 상태 파일 2026-09-03 04:58<br>브랜치 <span class="mono">auto/2026-09-02</span> · 미머지 체인 1일</div>
+</header>
+
+<div class="tabs" role="tablist">
+  <button class="tab" role="tab" aria-selected="true">개발 진척</button>
+  <button class="tab" role="tab" aria-selected="false">앱 미리보기</button>
+</div>
+
+<div class="ticker">
+  <span>에픽 <b class="mono">6</b></span><span class="dot"></span>
+  <span>스토리 <b class="mono">118</b></span><span class="dot"></span>
+  <span>목업 <b class="mono">38</b> <span style="color:var(--t3)">(채택 31 · 확인 대기 4)</span></span><span class="dot"></span>
+  <span>불일치 <b class="mono" style="color:var(--orange)">2</b></span><span class="dot"></span>
+  <span>다음 작업 <b class="mono">4</b></span><span class="dot"></span>
+  <span>사람 대기 <b class="mono" style="color:var(--orange)">5</b></span><span class="dot"></span>
+  <span>미적용 마이그레이션 <b class="mono">1</b></span><span class="dot"></span>
+  <span>배포 판정 <b style="color:var(--orange)">RED</b></span>
+</div>
+
+<section class="hero">
+  <div class="verdict red"><b>배포 불가</b><span>RED — 통합 게이트 되돌림 1건</span></div>
+  <div>
+    <div class="heros">
+      <span class="hbeat ok"><i></i>슬롯 심박 정상 · 8분 전 · 지난밤 슬롯 6회</span>
+      <span class="hs">지난밤 배치 <b>2</b>건</span>
+      <span class="hs warn">결정 대기 <b>3</b>건</span>
+      <span class="hs">오늘 예정 <b>3</b>배치</span>
+      <span class="hs">병렬 <b>1</b>쌍</span>
+      <span class="hs warn">배포 차단 <b>2</b>건</span>
+    </div>
+    <p class="why">AUTO-2(4-2 · 4-3)가 합쳐진 트리에서 검사 RED — landing 2건을 되돌렸습니다. 산출물은 <span class="mono">archive/integration-fail-*</span> 태그에 남아 있고, 푸시는 막혔습니다. 되돌림 자체는 성공했습니다(사람이 브랜치를 손볼 필요는 없습니다).</p>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="sh"><h2>② 오늘 정하실 것</h2><span class="n warn">3건</span><span class="sub">사후 확인 2건은 아래 접힘 · 3일 이상 대기는 맨 위</span></div>
+  <div class="dec">
+    <div><b class="t">2.16 장비 재발 알림을 며칠 기준으로 볼까요</b>
+      <p>같은 장비가 다시 고장 났을 때 「재발」로 묶는 기간입니다. 지금은 30일로 임시 동작 중입니다.</p>
+      <p class="opt">(가) 30일 유지 · (나) 14일로 좁힘 · <b>(다) ⭐추천 — 90일</b>(파일럿 3개월과 맞춤)</p></div>
+    <div><span class="age old">5일 대기</span><div class="act" style="margin-top:8px">대화창에 「2.16 다」</div></div>
+  </div>
+  <div class="dec">
+    <div><b class="t">2.26 「이어서 쓰기」 화면 문구 5개를 이대로 쓸까요</b>
+      <p>저장 전에 화면을 벗어난 기록을 되살리는 카드입니다. 새로 생긴 문장 5개는 규칙상 1회차라도 확인 대상입니다.</p>
+      <p class="opt">문장만 말씀하시면 바꿉니다 — 고치는 비용은 각 1줄입니다.</p></div>
+    <div><span class="age">1일 대기</span><div class="act" style="margin-top:8px">대화창에 「2.26 문구 확인」</div></div>
+  </div>
+  <div class="dec">
+    <div><b class="t">4-2 조합 입력 수리를 오늘 밤에 다시 넣을까요</b>
+      <p>지난밤 통합 검사에서 되돌아온 작업입니다. 되돌린 코드는 태그에 남아 있어 다시 붙일 수 있습니다.</p>
+      <p class="opt">(가) 오늘 밤 단독 배치로 재시도 · <b>(나) ⭐추천 — 4-3 과 분리해 순차로만</b> · (다) 보류</p></div>
+    <div><span class="age">오늘 등재</span><div class="act" style="margin-top:8px">대화창에 「4-2 나」</div></div>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="sh"><h2>③ 전체 진행</h2><span class="n">스토리 118건</span><span class="sub">에픽 목록은 epics.md · 상태는 sprint-status.yaml 이 정본입니다</span></div>
+  <div class="board">
+    <div><div class="pct mono">61<small>%</small></div><div class="pct-label">완료 72 / 118건<br>어제보다 <span style="color:var(--green)">+3건</span></div></div>
+    <div>
+      <div class="bar"><i style="width:61%;background:var(--green)"></i><i style="width:9%;background:var(--lblue)"></i><i style="width:7%;background:var(--blue)"></i><i style="width:23%;background:var(--elev)"></i></div>
+      <div class="legend"><span><em style="background:var(--green)"></em>완료 72</span><span><em style="background:var(--lblue)"></em>리뷰 대기 11</span><span><em style="background:var(--blue)"></em>진행 중 8</span><span><em style="background:var(--elev)"></em>대기 27</span></div>
+      <div class="legend" style="margin-top:10px;color:var(--t3)"><span>지난밤 고유 스토리 전진 <b class="mono" style="color:var(--t1)">4</b>건</span><span>리뷰 결함 high <b class="mono" style="color:var(--orange)">2</b> · medium <b class="mono" style="color:var(--t1)">6</b></span></div>
+    </div>
+    <div>
+      <div class="spark-label">7일 완료 누계 · 62 → 72</div>
+      <svg viewBox="0 0 200 56" width="100%" height="56" role="img" aria-label="7일 완료 누계 62에서 72"><polyline fill="none" stroke="#7FB8FF" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="4,46 36,42 68,40 100,30 132,26 164,18 196,10"/><circle cx="196" cy="10" r="3.5" fill="#7FB8FF"/></svg>
+      <div class="spark-label" style="margin-top:8px;color:var(--t3)">high 결함 7일 · 5 → 2</div>
+      <svg viewBox="0 0 200 32" width="100%" height="32" role="img" aria-label="7일 high 결함 5에서 2"><polyline fill="none" stroke="#E85C0D" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="4,8 36,10 68,6 100,14 132,16 164,22 196,24"/></svg>
+    </div>
+  </div>
+  <div class="epicrow"><span class="en">Epic 2</span><span class="et">현장 처리 기록</span><span class="eb"><i style="width:78%"></i></span><span class="ep">78%</span></div>
+  <div class="epicrow"><span class="en">Epic 4</span><span class="et">조합 입력·자동 연결</span><span class="eb"><i style="width:34%"></i></span><span class="ep">34%</span></div>
+  <div class="epicrow"><span class="en">Epic 11</span><span class="et">계약·청구</span><span class="eb"><i style="width:52%"></i></span><span class="ep">52%</span></div>
+</section>
+
+<section class="sec">
+  <div class="sh"><h2>④ 지난밤 배치</h2><span class="n">2건</span><span class="sub">배치 매니페스트 · 스토리 검증 매니페스트 · 계측 파일에서 읽었습니다</span></div>
+  <div class="bcard">
+    <div class="btop"><span class="blabel">AUTO-1: 2-16 · 2-18 (회수)</span><span class="chip data">병렬 2폭 · 워크트리 분리</span><span class="chip ok">통합 게이트 통과</span><span class="chip">푸시 완료</span><span class="chip mono">01:12 → 02:48</span></div>
+    <table class="wtab"><thead><tr><th>스토리</th><th>단계</th><th>구현 (프로바이더/모델)</th><th>리뷰 (프로바이더/모델)</th><th>결과</th><th>landing</th></tr></thead>
+      <tbody>
+        <tr><td class="k">2-16</td><td><b>dev · review</b></td><td><b>Claude</b> / opus</td><td><b>Claude</b> / sonnet</td><td><span class="chip ok">qa GREEN</span></td><td class="k">1번</td></tr>
+        <tr><td class="k">2-18</td><td><b>dev · review</b></td><td><b>Claude</b> / opus</td><td><b>Codex</b> / gpt-5.6-sol</td><td><span class="chip ok">qa GREEN</span> <span class="chip warn">리뷰 high 1</span></td><td class="k">2번</td></tr>
+      </tbody></table>
+    <div class="bmeta"><span><b>재시도</b> 수리 라운드 1 · 프로바이더 전환 0</span><span><b>모델 호출</b> claude/opus×4 · claude/sonnet×1 · codex/gpt-5.6-sol×1(38,400tok)</span><span><b>벽시계</b> 96분 · p50 42분 · p95 61분</span></div>
+  </div>
+  <div class="bcard">
+    <div class="btop"><span class="blabel">AUTO-2: 4-2 · 4-3 (회수)</span><span class="chip data">병렬 2폭 · 워크트리 분리</span><span class="chip fill">통합 게이트 되돌림</span><span class="chip warn">푸시 차단</span><span class="chip mono">03:05 → 04:58</span></div>
+    <table class="wtab"><thead><tr><th>스토리</th><th>단계</th><th>구현 (프로바이더/모델)</th><th>리뷰 (프로바이더/모델)</th><th>결과</th><th>landing</th></tr></thead>
+      <tbody>
+        <tr><td class="k">4-2</td><td><b>dev · review</b></td><td><b>Claude</b> / opus</td><td><b>Claude</b> / sonnet</td><td><span class="chip ok">단독 qa GREEN</span></td><td class="k">1번 → 되돌림</td></tr>
+        <tr><td class="k">4-3</td><td><b>dev · review</b></td><td><b>Codex</b> / gpt-5.6-sol</td><td><b>Claude</b> / opus</td><td><span class="chip ok">단독 qa GREEN</span></td><td class="k">2번 → 되돌림</td></tr>
+      </tbody></table>
+    <div class="callout"><b>따로는 통과했는데 합치니 실패했습니다.</b>
+      <p>두 작업을 한 브랜치에 얹은 뒤 전체 검사가 RED(exit 1)라서, 얹은 2건을 <span class="mono">1e83363</span> 로 되돌리고 푸시를 막았습니다. <b>되돌림은 성공</b>했으므로 브랜치는 깨끗합니다 — 코드는 <span class="mono">archive/integration-fail-4-2-*</span> · <span class="mono">…-4-3-*</span> 태그에 그대로 있습니다. 오늘 밤 <b>순차로 하나씩</b> 다시 넣는 것이 추천입니다.</p></div>
+    <div class="bmeta"><span><b>재시도</b> 수리 라운드 2 · 프로바이더 전환 1(codex → claude)</span><span><b>증거</b> <span class="mono">~/.baroos-auto/archive/2026-09-02-…-evidence/4-3/</span> (code.diff · RESTORE.md · summary.json)</span><span><b>벽시계</b> 113분 · p50 51분 · p95 74분</span></div>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="sh"><h2>⑤ 오늘 밤 예정</h2><span class="n">3배치 · 5스토리</span><span class="sub">18:00 자동 편성 · 지금 바꾸시려면 「밤샘 시작」이라고 말씀하시면 됩니다</span></div>
+  <div class="body" style="padding-bottom:6px">
+    <div class="btop"><span class="chip data">편성 방식 · Fable 오케스트레이터</span><span class="chip warn">검증 경고 1건 — 1스토리 제외</span><span class="chip">하루 상한 6 · 오늘 기편성 0</span></div>
+    <p style="font-size:12px;color:var(--t2);margin-top:8px"><b>4-7</b> 은 선행 <b>4-2</b> 가 아직 완료가 아니어서 오늘 큐에서 빠졌습니다(선행 미해소). 큐 자체는 그대로 나갑니다 — 빠진 것만 다음 밤으로 밀립니다.</p>
+  </div>
+  <div class="bcard">
+    <div class="btop"><span class="blabel">1번 — AUTO-1: 4-2 (회수 · 통합 실패분 재시도)</span><span class="chip">순차 단독</span></div>
+    <table class="wtab"><thead><tr><th>스토리</th><th>단계</th><th>구현 예정</th><th>리뷰 예정</th><th>배정 이유</th></tr></thead>
+      <tbody><tr><td class="k">4-2</td><td><b>dev · review</b></td><td><b>Claude</b> / opus</td><td><b>Codex</b> / gpt-5.6-sol</td><td>회수(review) · 난이도 7 · 위험 4(공용 인터페이스) — 고위험이라 Codex 구현 배제, 교차 리뷰만 Codex</td></tr></tbody></table>
+  </div>
+  <div class="bcard">
+    <div class="btop"><span class="blabel">2번 — AUTO-2: 11-4 · 11-5 (회수)</span><span class="chip data">병렬 짝 · 파일 겹침 없음</span></div>
+    <table class="wtab"><thead><tr><th>스토리</th><th>단계</th><th>구현 예정</th><th>리뷰 예정</th><th>배정 이유</th></tr></thead>
+      <tbody>
+        <tr><td class="k">11-4</td><td><b>dev · review</b></td><td><b>Claude</b> / opus</td><td><b>Claude</b> / sonnet</td><td>회수(in-progress) · 난이도 6 · 위험 2</td></tr>
+        <tr><td class="k">11-5</td><td><b>dev · review</b></td><td><b>Codex</b> / gpt-5.6-sol</td><td><b>Claude</b> / opus</td><td>split — 난이도 3 · 위험 1 이라 빠른 쪽으로 분담(교차는 리뷰가 담당)</td></tr>
+      </tbody></table>
+  </div>
+  <div class="bcard">
+    <div class="btop"><span class="blabel">3번 — AUTO-3: 2-27 (신규)</span><span class="chip">순차 단독</span><span class="chip warn">Codex 회피 중 — 이 스토리 연속 실패 2회</span></div>
+    <table class="wtab"><thead><tr><th>스토리</th><th>단계</th><th>구현 예정</th><th>리뷰 예정</th><th>배정 이유</th></tr></thead>
+      <tbody><tr><td class="k">2-27</td><td><b>create · dev · review</b></td><td><b>Claude</b> / opus</td><td><b>Claude</b> / sonnet</td><td>신규(backlog) · 지시서부터 작성 · 배정 기록상 Codex 연속 실패 2회라 회피</td></tr></tbody></table>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="sh"><h2>⑥ 얼마나 잘 돌았나 (지난 3일 · 하루 단위)</h2><span class="n">배치 6건</span><span class="sub">하루 = 그날 밤 배치(18:00~아침) 합산 · 품질 게이트를 통과한 실행끼리만 비교 · 없는 날은 「—」</span></div>
+  <table class="wtab" style="margin:0"><thead><tr>
+    <th style="padding-left:16px;width:30%">지표</th>
+    <th>지난 1일 <span style="color:var(--t3);font-weight:400">(9/2 밤 · 배치 2)</span></th>
+    <th>지난 2일 <span style="color:var(--t3);font-weight:400">(9/1 밤 · 배치 3)</span></th>
+    <th>지난 3일 <span style="color:var(--t3);font-weight:400">(8/31 밤 · 배치 1)</span></th>
+    <th style="width:22%">추세</th></tr></thead>
+    <tbody>
+      <tr><td style="padding-left:16px"><b>순차 대비 절약 추정</b><br><span style="font-size:12px;color:var(--t3)">순서대로 했으면 더 걸렸을 시간</span></td>
+        <td><b class="mono" style="font-size:18px;color:var(--lblue)">1시간 12분</b></td><td><b class="mono" style="font-size:18px;color:var(--lblue)">1시간 48분</b></td><td><b class="mono" style="font-size:18px;color:var(--lblue)">41분</b></td><td style="color:var(--t3)">병렬 짝 수에 비례</td></tr>
+      <tr><td style="padding-left:16px"><b>병렬 효율</b><br><span style="font-size:12px;color:var(--t3)">2폭 기준</span></td>
+        <td><b class="mono" style="font-size:18px">71.4%</b></td><td><b class="mono" style="font-size:18px">74.0%</b></td><td><b class="mono" style="font-size:18px">63.2%</b></td><td style="color:var(--green)">개선 ↑</td></tr>
+      <tr><td style="padding-left:16px"><b>유휴</b><br><span style="font-size:12px;color:var(--t3)">워커가 놀고 있던 시간 비율</span></td>
+        <td><b class="mono" style="font-size:18px">18.9%</b></td><td><b class="mono" style="font-size:18px">15.2%</b></td><td><b class="mono" style="font-size:18px">27.5%</b></td><td style="color:var(--t3)">평평</td></tr>
+      <tr><td style="padding-left:16px"><b>첫 시도 통과율</b><br><span style="font-size:12px;color:var(--t3)">수리 라운드 없이 끝난 비율(근사)</span></td>
+        <td><b class="mono" style="font-size:18px">75%</b></td><td><b class="mono" style="font-size:18px">80%</b></td><td><b class="mono" style="font-size:18px">50%</b></td><td style="color:var(--green)">개선 ↑</td></tr>
+      <tr><td style="padding-left:16px"><b>리뷰 결함 high</b><br><span style="font-size:12px;color:var(--t3)">medium 은 괄호</span></td>
+        <td><b class="mono" style="font-size:18px;color:var(--orange)">2</b> <span style="color:var(--t3)">(6)</span></td><td><b class="mono" style="font-size:18px">1</b> <span style="color:var(--t3)">(4)</span></td><td><b class="mono" style="font-size:18px;color:var(--orange)">3</b> <span style="color:var(--t3)">(7)</span></td><td style="color:var(--t3)">평평</td></tr>
+      <tr><td style="padding-left:16px"><b>통합 실패율</b><br><span style="font-size:12px;color:var(--t3)">그날 배치 중 되돌림 비율</span></td>
+        <td><b class="mono" style="font-size:18px;color:var(--orange)">50%</b> <span style="color:var(--t3)">(2 중 1)</span></td><td><b class="mono" style="font-size:18px">0%</b> <span style="color:var(--t3)">(3 중 0)</span></td><td><b class="mono" style="font-size:18px">0%</b> <span style="color:var(--t3)">(1 중 0)</span></td><td style="color:var(--orange)">악화 ↓ — 어젯밤 1건</td></tr>
+      <tr><td style="padding-left:16px"><b>모델 호출량</b><br><span style="font-size:12px;color:var(--t3)">프로바이더/모델 · 토큰은 Codex 만 집계</span></td>
+        <td style="font-size:12px">opus ×6 · sonnet ×1<br>codex/gpt-5.6-sol ×2 (76,800tok)</td><td style="font-size:12px">opus ×15 · sonnet ×6<br>codex/gpt-5.6-sol ×4 (168,000tok)</td><td style="font-size:12px">opus ×4 · sonnet ×2<br>codex ×0</td><td style="color:var(--t3)">편성 fable 2 / 3 / 0</td></tr>
+    </tbody></table>
+</section>
+
+<section class="sec">
+  <div class="sh"><h2>⑦ 자율 마무리 진단</h2><span class="n warn">배포 차단 2건</span><span class="sub">문서의 완료 표시가 아니라 실제 실행 결과 → 테스트 → 코드 순으로 판정합니다</span></div>
+  <div class="dgrid">
+    <div class="dpill"><b>72</b><span>완료</span></div><div class="dpill warn"><b>9</b><span>부분 완료</span></div><div class="dpill warn"><b>5</b><span>누락</span></div><div class="dpill warn"><b>4</b><span>결함</span></div><div class="dpill"><b>11</b><span>테스트 부족</span></div>
+  </div>
+  <div class="prio">
+    <div class="prow"><span class="pn">①</span><span class="pl">비밀 노출·데이터 손실·인증</span><span class="pb"><i style="width:0%"></i></span><span class="pc">0</span></div>
+    <div class="prow"><span class="pn">②</span><span class="pl">빌드 실패·실행 불가</span><span class="pb"><i style="width:0%"></i></span><span class="pc">0</span></div>
+    <div class="prow hot"><span class="pn">③</span><span class="pl">배포 차단</span><span class="pb"><i style="width:30%"></i></span><span class="pc">2</span></div>
+    <div class="prow hot"><span class="pn">④</span><span class="pl">핵심 흐름 미완</span><span class="pb"><i style="width:45%"></i></span><span class="pc">3</span></div>
+    <div class="prow"><span class="pn">⑤</span><span class="pl">회귀·테스트 누락</span><span class="pb"><i style="width:100%"></i></span><span class="pc">11</span></div>
+    <div class="prow"><span class="pn">⑥</span><span class="pl">성능·안정성·접근성</span><span class="pb"><i style="width:36%"></i></span><span class="pc">4</span></div>
+    <div class="prow"><span class="pn">⑦</span><span class="pl">내부 구조·문서</span><span class="pb"><i style="width:64%"></i></span><span class="pc">7</span></div>
+  </div>
+  <div class="it"><div><b class="t">배포 차단 1 — 4-2 조합 입력이 합쳐진 트리에서 실패</b><p>단독으로는 통과하지만 다른 작업과 합치면 검사가 RED 입니다. 파일럿에 나가려면 반드시 풀어야 합니다.</p><div class="src">연결 스토리 4-2 · 근거 batch-AUTO-2-manifest.json (integration=rollback)</div></div><div class="act">오늘 밤 순차 재시도</div></div>
+  <div class="it"><div><b class="t">배포 차단 2 — PRD FR-15 문언이 코드와 반대</b><p>문서에는 「기기에 임시저장을 두지 않는다」가 남아 있는데 코드는 임시저장을 씁니다. 읽는 사람이 반대로 이해합니다.</p><div class="src">연결 스토리 2-26 · 근거 문서-구현 불일치 판정</div></div><div class="act">대화창에 「correct-course FR-15」</div></div>
+</section>
+
+<section class="sec">
+  <div class="sh"><h2>⑧ 에픽별 스토리 진행 (기존 유지)</h2><span class="n">118건 · 검색/필터</span><span class="sub">단계 배지 = 기획서 → 개발 → 검사 → 적대 리뷰 · 각 행에서 스토리 문서·목업 화면을 바로 엽니다 · 에픽 제목을 누르면 접힙니다</span></div>
+  <div class="epichead"><span class="en">▾ Epic 2</span><span class="et">현장 처리 기록</span><span class="ep">완료 21 / 27 · 78%</span></div>
+  <table class="stab"><thead><tr><th>번호</th><th>제목</th><th>상태</th><th>단계</th><th>문서 · 목업</th><th>워커</th><th>라운드</th><th>마지막 리뷰어</th></tr></thead>
+    <tbody>
+      <tr><td class="k">2-16</td><td class="n">장비 재발 자동 연결</td><td><span class="chip ok">완료</span></td><td><span class="badges"><i class="bg on"></i><i class="bg on"></i><i class="bg on"></i><i class="bg on"></i></span></td><td class="links"><a href="#">스토리 문서</a><a href="#">목업 보기</a></td><td>Claude / opus</td><td class="k">2.0</td><td>Claude</td></tr>
+      <tr><td class="k">2-18</td><td class="n">첨부 파일 보관</td><td><span class="chip warn">리뷰 대기</span></td><td><span class="badges"><i class="bg on"></i><i class="bg on"></i><i class="bg on"></i><i class="bg half"></i></span></td><td class="links"><a href="#">스토리 문서</a><a href="#">목업 보기</a></td><td>Claude / opus</td><td class="k">1.0</td><td>Codex</td></tr>
+      <tr><td class="k">2-27</td><td class="n">첨부 후속 정리</td><td><span class="chip">대기</span></td><td><span class="badges"><i class="bg"></i><i class="bg"></i><i class="bg"></i><i class="bg"></i></span></td><td class="links"><a href="#">스토리 문서</a><span style="color:var(--t3);font-size:12px">목업 없음</span></td><td>—</td><td class="k">—</td><td>—</td></tr>
+    </tbody></table>
+  <div class="epichead"><span class="en">▾ Epic 4</span><span class="et">조합 입력·자동 연결</span><span class="ep">완료 3 / 9 · 34%</span></div>
+  <table class="stab"><thead><tr><th>번호</th><th>제목</th><th>상태</th><th>단계</th><th>문서 · 목업</th><th>워커</th><th>라운드</th><th>마지막 리뷰어</th></tr></thead>
+    <tbody>
+      <tr><td class="k">4-1</td><td class="n">조합 코드 마스터</td><td><span class="chip ok">완료</span></td><td><span class="badges"><i class="bg on"></i><i class="bg on"></i><i class="bg on"></i><i class="bg on"></i></span></td><td class="links"><a href="#">스토리 문서</a><a href="#">목업 보기</a></td><td>Claude / opus</td><td class="k">2.0</td><td>Claude</td></tr>
+      <tr><td class="k">4-2</td><td class="n">조합 입력 화면</td><td><span class="chip warn">리뷰 대기</span></td><td><span class="badges"><i class="bg on"></i><i class="bg on"></i><i class="bg half"></i><i class="bg"></i></span></td><td class="links"><a href="#">스토리 문서</a><a href="#">목업 보기</a></td><td>Claude / opus</td><td class="k">4.5</td><td>Claude</td></tr>
+      <tr><td class="k">4-3</td><td class="n">조합 자동 연결 규칙</td><td><span class="chip warn">리뷰 대기</span></td><td><span class="badges"><i class="bg on"></i><i class="bg on"></i><i class="bg half"></i><i class="bg"></i></span></td><td class="links"><a href="#">스토리 문서</a><span style="color:var(--t3);font-size:12px">목업 없음</span></td><td>Codex / gpt-5.6-sol</td><td class="k">3.0</td><td>Claude</td></tr>
+      <tr><td class="k">4-7</td><td class="n">조합 이력 조회</td><td><span class="chip">대기</span></td><td><span class="badges"><i class="bg"></i><i class="bg"></i><i class="bg"></i><i class="bg"></i></span></td><td class="links"><a href="#">스토리 문서</a><a href="#">목업 보기</a></td><td>—</td><td class="k">—</td><td>—</td></tr>
+    </tbody></table>
+  <div class="epichead"><span class="en">▸ Epic 11</span><span class="et">계약·청구</span><span class="ep">완료 4 / 8 · 52% (접힘)</span></div>
+  <div class="epichead"><span class="en">▸ Epic 3</span><span class="et">점검·기간 보고</span><span class="ep">완료 9 / 12 · 75% (접힘)</span></div>
+</section>
+
+<section class="sec">
+  <div class="sh"><h2>목업 확인 (기존 유지)</h2><span class="n">38장</span><span class="sub">채택 31 · 확인 대기 4 · 미채택 3 — 클릭하면 원본 화면이 새 탭에서 열립니다 · 판정은 tools/dev-status/mockup-verdicts.json</span></div>
+  <div class="mgroup"><b>확인 대기 4</b> — 박사장 확인이 필요한 시안(확인 전에는 구현에 들어가지 않습니다)</div>
+  <div class="mockgrid">
+    <a class="mock" href="#"><span class="thumb"></span><span class="cap"><b>4-7 조합 이력 조회</b><span>mockups/combo-history.html · 2026-09-02</span></span></a>
+    <a class="mock" href="#"><span class="thumb"></span><span class="cap"><b>5-1 점검 일정 캘린더</b><span>mockups/inspection-calendar.html</span></span></a>
+    <a class="mock" href="#"><span class="thumb"></span><span class="cap"><b>5-2 점검 프로파일 편집</b><span>mockups/inspection-profile.html</span></span></a>
+    <a class="mock" href="#"><span class="thumb"></span><span class="cap"><b>5-3 보고서 PDF 표지</b><span>mockups/report-cover.html</span></span></a>
+  </div>
+  <div class="mgroup"><b>채택된 목업 31</b> — 이 화면대로 구현합니다 (일부만 표시)</div>
+  <div class="mockgrid">
+    <a class="mock" href="#"><span class="thumb"></span><span class="cap"><b>1.4 관제탑 대시보드 (기준 화면)</b><span>key-screens-ticket-dashboard.html · A안 v3 확정</span></span></a>
+    <a class="mock" href="#"><span class="thumb"></span><span class="cap"><b>2-16 장비 재발 연결</b><span>mockups/ticket-recurrence.html</span></span></a>
+    <a class="mock" href="#"><span class="thumb"></span><span class="cap"><b>4-2 조합 입력 화면</b><span>mockups/combo-input.html</span></span></a>
+    <a class="mock" href="#"><span class="thumb"></span><span class="cap"><b>11-3 계약 목록</b><span>mockups/contracts-list.html</span></span></a>
+  </div>
+  <div class="mgroup"><b>채택되지 않은 목업 3</b> — 검토 후 쓰지 않기로 한 시안</div>
+  <div class="mockgrid">
+    <a class="mock dim" href="#"><span class="thumb"></span><span class="cap"><b>1.4 관제탑 B안</b><span>key-screens-ticket-dashboard-b.html</span></span></a>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="sh"><h2>앱 미리보기 탭 (기존 유지 · 두 번째 탭 내용)</h2><span class="sub">지금까지 만들어진 BARO 앱을 이 PC 에서 띄워 화면 그대로 확인합니다 · 5173 고정 포트</span></div>
+  <div class="appbox">
+    <div>
+      <p style="font-size:13px;color:var(--t2);margin-bottom:10px"><b style="color:var(--t1)">앱 화면 미리보기</b><br>개발 서버(dev) 또는 배포본(빌드 후 실행)을 켜고 오른쪽에서 바로 봅니다. 두 방식은 같은 포트를 쓰므로 동시에 켤 수 없습니다.</p>
+      <button class="btn primary">개발 서버로 열기</button><button class="btn">배포본으로 열기 (빌드 후 실행)</button><br>
+      <button class="btn">정리하고 시작</button><button class="btn">끄기</button><a class="btn" href="#">새 탭에서 크게 보기</a>
+      <p style="font-size:12px;color:var(--t3);margin-top:8px">상태: 꺼짐 · 터미널에서 직접 하려면 <span class="mono">npm run dev</span> 또는 <span class="mono">npm run build → npm run preview</span></p>
+    </div>
+    <div class="appframe">앱 iframe (http://localhost:5173) — 서버를 켜면 여기에 표시</div>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="sh"><h2>⑨ 불일치·경고</h2><span class="n warn">2건</span><span class="sub">에픽 문서·상태 파일·하네스 산출물이 서로 어긋난 지점</span></div>
+  <div class="it"><div><b class="t">4-3 은 「완료」로 보이지만 통합 검사를 통과한 적이 없습니다</b><p>스토리 검증 기록의 통합 칸이 「확인 안 됨」인데 상태는 리뷰 대기로 앞서 있습니다.</p><div class="src">4-3-verification.json · checks.integration = unknown</div></div><div class="act">대화창에 「4-3 통합 확인」</div></div>
+  <div class="it"><div><b class="t">미머지 auto/2026-09-02 체인이 1일째입니다</b><p>2일이 되면 새 스토리 착수가 잠기고 회수·마감만 계속됩니다. 정본 main 이 그만큼 뒤처집니다.</p><div class="src">git status -sb · 커밋 7건</div></div><div class="act">대화창에 「머지해줘」</div></div>
+</section>
+
+<section class="sec">
+  <div class="sh"><h2>⑩ 오늘 낮에 하실 일</h2><span class="n">4건</span><span class="sub">밤에 못 하는 것만 올립니다 — 결정 · 승인 · 머지 · 사람 게이트</span></div>
+  <div class="it"><div><b class="t">1. 결정 3건 답 주시기</b><p>위 ② 그대로 — 「2.16 다 · 2.26 문구 확인 · 4-2 나」 한 줄이면 됩니다. 이게 오늘 밤 물량을 엽니다.</p></div><div class="act">대화창에 답 한 줄</div></div>
+  <div class="it"><div><b class="t">2. auto/2026-09-02 머지 승인</b><p>지난밤 커밋 7건이 아직 정본에 없습니다. 체인이 2일이 되기 전에 넘기는 것이 좋습니다.</p></div><div class="act">대화창에 「머지해줘」</div></div>
+  <div class="it"><div><b class="t">3. PRD FR-15 문언 정정 승인 (배포 차단 2)</b><p>문서가 코드와 반대로 적혀 있습니다. 문서 트랙에서 고칩니다 — 코드는 건드리지 않습니다.</p></div><div class="act">대화창에 「FR-15 고쳐줘」</div></div>
+  <div class="it"><div><b class="t">4. Epic 5 목업 3장 확인 (밤 물량 장전)</b><p>지금 확인해 두시면 4-2 가 풀리는 대로 다음 에픽이 밤에 바로 들어갑니다.</p></div><div class="act">대화창에 「Epic 5 목업」</div></div>
+</section>
+
+<footer class="foot">
+  원천 — <code>planning-artifacts/epics.md</code>(스토리 목록) · <code>implementation-artifacts/sprint-status.yaml</code>(상태) · <code>auto-pipeline-logs/state.json</code>(단계) · <code>auto-pipeline-logs/batch-&lt;id&gt;-manifest.json</code>(지난밤 배치) · <code>auto-pipeline-logs/&lt;story&gt;-verification.json</code>(워커·게이트) · <code>auto-pipeline-logs/metrics-&lt;id&gt;.json</code> · <code>&lt;상태폴더&gt;/metrics-history.jsonl</code>(계측) · <code>&lt;상태폴더&gt;/assign-history.json</code>(배정 기록) · <code>&lt;상태폴더&gt;/auto-queue-*.json</code>(오늘 예정 큐) · <code>&lt;상태폴더&gt;/archive/*-evidence/</code>(증거) · <code>implementation-artifacts/DECISIONS-INBOX.md</code>(결정) · <code>~/.baroos-auto/slots.log</code>(슬롯 심박)<br>
+  이 화면은 열거나 새로고침(F5)할 때 위 파일에서 다시 만들어집니다. 직접 고치지 마세요 — 다음 갱신 때 덮어써집니다. 판정 재료가 없는 항목은 「없음 / 판정 불가」로 적습니다 — <b>확인 못 한 것을 통과로 적지 않습니다.</b>
+</footer>
+</div></body></html>

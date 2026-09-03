@@ -17,7 +17,7 @@
 //    그래서 **작업 XML 직접 등록**을 쓰고, Repetition 에서 <Duration> 을 아예 생략한다(생략 = 무기한).
 //    XML 은 항상 파일로 남긴다 — 등록이 실패해도 사람이 같은 파일로 재현할 수 있어야 한다.
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,6 +30,39 @@ const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 && argv[
 
 const fail = (m) => { console.error(`✖ ${m}`); process.exit(2) }
 if (!existsSync(join(ROOT, 'package.json'))) fail('대상 프로젝트 루트에서 실행해야 한다(package.json 없음)')
+
+// ── 능력 감지 실행기 — **셸 문자열 결합 금지**(2026-09-02 하드닝 정책 8 · codex-review-r2) ─────────
+// 종전 `spawnSync('codex --version', { shell:true })` 는 ① `CODEX_BIN` 이 `C:\Program Files\…\codex.cmd`
+// 처럼 공백을 품으면 실행조차 못 하고 ② 그 값에 `&`·`|` 가 있으면 cmd.exe 가 두 번째 명령을 돌린다.
+// 실행파일과 argv 를 분리하고, Windows 의 `.cmd`/`.bat` 심만 cmd.exe 전용 경로로 부른다(메타문자는 거부).
+const SHELL_META_RE = /[&|<>^"`$;\r\n]/
+const PATH_SEP = process.platform === 'win32' ? ';' : ':'
+/** PATH(+Windows PATHEXT) 에서 실행파일을 직접 찾는다 — `shell:false` 는 PATH 를 풀어 주지 않는다. */
+function whichBin(name) {
+  if (name.includes('/') || name.includes('\\')) return existsSync(name) ? name : ''
+  const exts = process.platform === 'win32' ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean) : ['']
+  for (const raw of (process.env.PATH || '').split(PATH_SEP).filter(Boolean)) {
+    const dir = raw.replace(/^"|"$/g, '')
+    for (const ext of exts) {
+      const p = join(dir, name + ext)
+      if (existsSync(p)) return p
+    }
+  }
+  return ''
+}
+function safeExec(bin, args = []) {
+  const file = String(bin ?? '')
+  const list = (args ?? []).map(String)
+  if (file === '' || SHELL_META_RE.test(file) || list.some((a) => SHELL_META_RE.test(a))) {
+    return { status: 1, stdout: '', stderr: `실행 거부 — 실행파일·인자에 셸 메타문자가 있다: ${file}` }
+  }
+  const o = { encoding: 'utf8', timeout: 20_000, maxBuffer: 1024 * 1024, shell: false }
+  // `/s` 는 바깥 따옴표 한 쌍만 벗긴다 — 그래서 전체를 한 번 더 감싼다(안 감싸면 공백 경로가 깨진다).
+  const r = /\.(cmd|bat)$/i.test(file) && process.platform === 'win32'
+    ? spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${file}" ${list.map((a) => `"${a}"`).join(' ')}"`], { ...o, windowsVerbatimArguments: true })
+    : spawnSync(file, list, o)
+  return { status: r.status ?? 1, stdout: r.stdout || '', stderr: r.stderr || '' }
+}
 
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
 const notes = []
@@ -51,6 +84,22 @@ const project = String(existingCfg.project || basename(ROOT)).replace(/[^a-zA-Z0
 // ── 전제 점검(막지 않고 기록) ──────────────────────────────────────────────
 const engine = join(homedir(), '.claude', 'skills', 'auto-story-finish', 'auto-story-pipeline.mjs')
 if (!existsSync(engine)) notes.push('⚠️ auto-story-finish 전역 스킬이 없다 — 같은 저장소의 auto-story-finish/ 를 ~/.claude/skills/ 에 먼저 설치할 것')
+else if (!existsSync(join(dirname(engine), 'providers', 'index.mjs'))) notes.push('⚠️ 설치된 auto-story-finish 가 구판(providers/ 계층 없음) — Codex 워커·자동 수리를 쓰려면 같은 저장소의 최신 auto-story-finish/ 로 갱신할 것')
+// Codex 는 선택 사항 — 없어도 Claude 전용으로 그대로 돈다. 있으면 어떤 상태인지만 적어 둔다(설치 결정은 사람 몫).
+{
+  const codexBin = process.env.CODEX_BIN || whichBin('codex')
+  const v = codexBin ? safeExec(codexBin, ['--version']) : { status: 1, stdout: '', stderr: 'PATH 에 codex 없음' }
+  if ((v.status ?? 1) !== 0) notes.push('· Codex CLI 없음 — Claude 전용(providers.codex.enabled 는 false 유지). 쓰려면 `npm i -g @openai/codex` + `codex login`')
+  else {
+    const l = safeExec(codexBin, ['login', 'status'])
+    const ok = (l.status ?? 1) === 0 && /logged in/i.test(`${l.stdout}${l.stderr}`) && !/not logged in/i.test(`${l.stdout}${l.stderr}`)
+    notes.push(`· Codex CLI ${String(v.stdout).trim()} — ${ok ? '로그인됨. providers.codex.enabled 를 true 로 켜면 리뷰 교차검증에 쓴다(배치 워크트리에서만 실행)' : '미인증 — `codex login` 후 켤 것'}`)
+  }
+}
+// nested 워커의 commit/push deny 설정 — 엔진은 이게 없으면 배치를 **시작조차 하지 않는다**(fail-closed).
+if (![join(ROOT, '.claude', 'pipeline-settings.json'), join(homedir(), '.claude', 'pipeline-settings.json')].some((p) => existsSync(p)))
+  notes.push('⚠️ pipeline-settings.json 이 없다(.claude/ · ~/.claude/ 모두) — 엔진이 배치를 시작하지 않는다. ' +
+    'deny 규칙(예: {"permissions":{"deny":["Bash(git commit:*)","Bash(git push:*)","Bash(git stash:*)","Bash(git reset:*)"]}})을 담아 둘 것')
 if (!existsSync(join(ROOT, '_bmad-output', 'implementation-artifacts', 'sprint-status.yaml')))
   notes.push('⚠️ sprint-status.yaml 이 없다 — BMad 산출물이 없으면 자동 편성(--auto-plan)은 돌지 않는다(수동 큐는 가능)')
 if (!(pkg.scripts && pkg.scripts.qa)) notes.push('⚠️ `npm run qa` 스크립트가 없다 — 엔진 qa 게이트가 실패한다. typecheck+lint+test 조합으로 정의할 것')
@@ -58,7 +107,9 @@ if (!(pkg.scripts && pkg.scripts.qa)) notes.push('⚠️ `npm run qa` 스크립�
 // ── 1. 엔진 파일 설치 ────────────────────────────────────────────────────
 const dst = join(ROOT, 'tools', 'auto')
 mkdirSync(dst, { recursive: true })
-for (const f of ['run-night.mjs', 'plan-queue.mjs', 'runner-rules.mjs', 'story-ledger.mjs', 'telegram-rules.mjs', 'telegram-commands.mjs']) {
+// 목록을 고정하지 않는다 — 엔진에 새 모듈(plan-dag·conflicts…)이 생길 때마다 설치본만 구판이 되어
+// 러너가 ERR_MODULE_NOT_FOUND 로 죽는다(2026-09-02 e2e 실측). 테스트 파일은 제외한다.
+for (const f of readdirSync(join(SELF, 'engine')).filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs'))) {
   const to = join(dst, f)
   if (existsSync(to) && !has('force')) { notes.push(`· ${f} 이미 있음 — 건너뜀(덮어쓰려면 --force)`); continue }
   copyFileSync(join(SELF, 'engine', f), to)
@@ -81,6 +132,17 @@ if (!existsSync(cfgPath)) {
       'mockupGate: 새 화면 스토리의 목업 승인 게이트. marker 를 비우면 게이트 미구성으로 보고 통과시킨다.',
       '  marker = 스토리 절에서 찾을 표시 문구 · ruleId = 함께 요구할 내부 규칙 ID(없으면 null)',
       '  mockupsDir = 목업 파일 폴더 · verdictsPath = 승인 판정 JSON 경로.',
+      '── 다중 프로바이더 하네스(2026-09-02 · 전부 선택 · 키를 지우면 종전 Claude 전용 동작) ──',
+      'workers: { max: 총 동시 워커(기본 3 = 종전 하드캡 · 절대 상한 6), batchSize: 규칙 5 짝 크기(기본 2) }',
+      'providers.codex: { enabled(기본 false), max(동시 1 고정 권장 — 같은 auth.json 동시 사용 불가), roles([\"review\"] 또는 [\"review\",\"dev\"]),',
+      '  reviewKinds([\"new\",\"closeout\"] — recovery 는 review 단계가 없다), split(dev 역할일 때 병렬 짝을 Claude/Codex 로 나눔), network(기본 false — Codex dev 샌드박스 네트워크) }',
+      '  codex 는 배치 워크트리에서만 실행되며(본 트리 실데이터 반출 방지) 미설치·미인증·한도면 엔진이 claude 로 폴백한다 — 배치는 서지 않는다.',
+      'quality: { autoRepair: true|숫자(총 수리 시도 · 기본 0 = qa RED 즉시 STOP), sameRootCauseMaxRetries(기본 3), integrity: auto|on|off }',
+      'integrationGate: { enabled(병렬 landing 뒤 통합 트리에서 qa 1회) } — RED 는 **설정으로 우회 불가**: 항상 landing 되돌림 + STOP + push 금지(옛 pushOnFail 은 폐지 · 남아 있으면 무시하고 경고)',
+      'orchestrator: { enabled(기본 false = 규칙 편성 그대로), model(기본 fable), timeoutMin(기본 5) }',
+      '  켜면 --auto-plan 의 규칙 큐를 지휘 모델이 재편성한다. 후보는 규칙이 고른 스토리뿐이고(추가 불가) 검증기를 통과할 때만 채택 —',
+      '  거부·오류·타임아웃은 전부 규칙 큐 폴백이다(로그 [ORCHESTRATOR] source=…). LLM 때문에 밤이 서지 않는다.',
+      '⚠️ providers.codex.max 는 동시 상한이자 **배치당 Codex 몫**이다 — max:1 + 2폭이면 배치의 첫 스토리만 Codex 리뷰를 받는다.',
     ],
     project,
     epicOrder: [],
@@ -95,6 +157,14 @@ if (!existsSync(cfgPath)) {
       mockupsDir: 'mockups',
       verdictsPath: 'tools/dev-status/mockup-verdicts.json',
     },
+    workers: { max: 3, batchSize: 2 },
+    providers: {
+      claude: { enabled: true, max: 3 },
+      codex: { enabled: false, max: 1, roles: ['review'], reviewKinds: ['new', 'closeout'], split: false, network: false, fallback: true },
+    },
+    quality: { autoRepair: true, sameRootCauseMaxRetries: 3, totalRepairAttempts: 5, integrity: 'auto' },
+    integrationGate: { enabled: true },
+    orchestrator: { enabled: false, model: 'fable', timeoutMin: 5 },
   }, null, 2) + '\n', 'utf8')
   console.log('✔ tools/auto/auto.config.json (epicOrder 를 채워야 자동 편성이 돈다)')
 } else notes.push('· auto.config.json 이미 있음 — 유지')
@@ -137,7 +207,13 @@ const runDir = clonePath || ROOT
 // 러너는 marker 클론을 라운드마다 `git clean -fdq` + `checkout -f` 로 새로고침하므로 복사본이
 // 첫 라운드에 그대로 지워진다(= 며칠 뒤 조용히 실패). 그래서 「커밋·푸시 → 클론 pull」이
 // 유일하게 안 깨지는 경로이고, 그 전에는 **예약을 등록하지 않는다**(등록 즉시 실패 방지).
-const engineFiles = ['run-night.mjs', 'plan-queue.mjs', 'runner-rules.mjs', 'story-ledger.mjs', 'auto.config.json']
+// 목록을 손으로 적지 않는다 — engine/ 에 새 모듈(plan-dag·orchestrate·assign·conflicts·metrics·bench…)이
+// 생겼는데 여기만 구판이면 클론은 「동기 완료」로 보이고 러너는 첫 라운드에 ERR_MODULE_NOT_FOUND 로 죽는다.
+// 설치 복사와 **같은 규칙**(engine/*.mjs 에서 테스트 제외)으로 세고, 설정 파일 하나를 더한다.
+const engineFiles = [
+  ...readdirSync(join(SELF, 'engine')).filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs')).sort(),
+  'auto.config.json',
+]
 const missingInRunDir = engineFiles.filter((f) => !existsSync(join(runDir, 'tools', 'auto', f)))
 const syncSteps = [
   `cd ${ROOT} && git add tools/auto && git commit -m "chore(auto): night-batch-ops 엔진·설정" && git push`,

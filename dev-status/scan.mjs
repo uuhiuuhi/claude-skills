@@ -3,6 +3,9 @@
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs'
 import { join, resolve, dirname, relative, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { assignByStory, collectBatchSources, resolveStateDir } from './batch-sources.mjs'
+import { batchWarnings, deployVerdict } from './verdict.mjs'
+import { dailyMetrics } from './daily-metrics.mjs'
 
 // ── 원천 계약 — BMad v6 에픽·스토리 템플릿의 구조 패턴 ──────────
 // 문서 언어가 한국어여도 이 구조 키워드는 영어로 남는다. SKILL.md "원천 계약" 참조.
@@ -14,9 +17,35 @@ const PATTERNS = {
   deferred: /^## Deferred from:/,              // 이 사본에서는 미사용 — 원천 계약 문서화용
 }
 
-const read = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '')
+// ── 안전 읽기 ────────────────────────────────────────────────────────────────
+// `existsSync()` 뒤의 `readFileSync()` 는 경합에서 던진다 — 그 사이에 파일이 지워지거나(ENOENT),
+// 다른 프로세스가 잠그거나(EBUSY·EPERM), 같은 이름의 폴더로 바뀌면(EISDIR) 화면 전체가 죽었다
+// (2026-09-02 교차리뷰 M4). 이제 **모든 읽기는 `{value,error}`** 이고, 실패한 파일은 그 블록만
+// 빈 값이 되며 사유가 READ_ERRORS 에 남아 화면 하단에 공시된다.
+export const READ_ERRORS = []
 
-// ── 경로 탐지: --root 인자(없으면 cwd) → 상위 최대 6단 → BMad config. 실패는 exit 2 ──
+/**
+ * @param {string} p 파일 경로
+ * @param {{required?:boolean}} [opt] required=true 면 「없음(ENOENT)」도 오류로 기록한다.
+ * @returns {{value:string, error:null|{file:string,code:string,message:string}}}
+ */
+export function readSafe(p, { required = false } = {}) {
+  try {
+    return { value: readFileSync(p, 'utf8'), error: null }
+  } catch (err) {
+    const code = err?.code || 'EUNKNOWN'
+    const e = { file: String(p), code, message: String(err?.message || err) }
+    // 선택 원천의 단순 부재는 종전대로 조용한 빈 값이다(state.json·inbox 는 없는 것이 정상).
+    if (!required && (code === 'ENOENT' || code === 'ENOTDIR')) return { value: '', error: null }
+    READ_ERRORS.push(e)
+    return { value: '', error: e }
+  }
+}
+const read = (p, opt) => readSafe(p, opt).value
+
+// ── 경로 탐지: --root 인자(없으면 cwd) → 상위 최대 6단 → BMad config ──────────
+// 실패는 **CLI 로 실행했을 때만** exit 2 다. 라이브러리로 import 되었을 때 process.exit 하면
+// 이 모듈을 읽기만 한 상위 도구(build.mjs·테스트·아침 브리핑)가 통째로 죽는다.
 function parseArgs(argv) {
   const out = {}
   for (let i = 2; i < argv.length; i += 1) {
@@ -26,19 +55,23 @@ function parseArgs(argv) {
   return out
 }
 
-function fail(checkedLines) {
-  console.error('[dev-status] BMad 산출물을 찾지 못했습니다. 다음을 확인했습니다:')
-  for (const l of checkedLines) console.error('  ' + l)
-  console.error('→ BMad v6 프로젝트가 아니거나 산출물 경로가 다릅니다.')
-  process.exit(2)
+// 모듈 적재 단계에서 굳은 초기화 오류(원천을 못 찾음). scan() 이 구조화 오류로 돌려준다.
+const INIT_ERRORS = []
+function fail(checkedLines, code = 'bmad-sources-missing') {
+  INIT_ERRORS.push({
+    code,
+    message: 'BMad 산출물을 찾지 못했습니다 — BMad v6 프로젝트가 아니거나 산출물 경로가 다릅니다.',
+    checked: checkedLines.slice(),
+  })
 }
+
+const IS_CLI = (() => {
+  try { return !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href } catch { return false }
+})()
 
 const argRoot = parseArgs(process.argv).root
 const startDir = resolve(argRoot || process.cwd())
-if (!existsSync(startDir)) {
-  console.error('[dev-status] --root 경로가 없습니다: ' + startDir)
-  process.exit(2)
-}
+if (!existsSync(startDir)) fail(['--root 경로가 없습니다: ' + startDir], 'root-missing')
 
 // 프로젝트 루트 = _bmad/ 또는 .git/ 를 만날 때까지 상위로 최대 6단(둘 다 있으면 _bmad/ 우선).
 // 모노레포에서 cwd 가 패키지 폴더인 경우를 위한 것이다.
@@ -54,7 +87,10 @@ let rootDir = null
     dir = up
   }
 }
-if (!rootDir) fail(['(상위 탐색) ' + climbed.join(' → ') + '   _bmad/ 또는 .git/ 없음'])
+if (!rootDir) {
+  fail(['(상위 탐색) ' + climbed.join(' → ') + '   _bmad/ 또는 .git/ 없음'])
+  rootDir = startDir // 이후 경로 조립이 던지지 않게만 채운다 — 판정은 INIT_ERRORS 가 한다
+}
 
 // 산출물 경로 = _bmad/bmm/config.yaml 의 두 키(단순 `키: "값"` — YAML 파서 불필요),
 // 없으면 _bmad/config.toml [modules.bmm] 의 같은 두 키. 둘 다 실패면 exit 2 —
@@ -84,7 +120,11 @@ function artifactDirs(root) {
 }
 
 const found = artifactDirs(rootDir)
-if (!found.plan) fail(['(상위 탐색) ' + climbed.join(' → ') + '   루트: ' + rootDir].concat(found.checked))
+if (!found.plan) {
+  fail(['(상위 탐색) ' + climbed.join(' → ') + '   루트: ' + rootDir].concat(found.checked))
+  found.plan = rootDir
+  found.impl = rootDir
+}
 
 // 끝 구분자 포함 — startsWith 경로 비교가 형제 폴더(예: …-secret)로 새지 않게 한다(serve.mjs 참조)
 export const ROOT = rootDir + sep
@@ -117,15 +157,19 @@ let storiesDir = found.impl
 }
 const STORY_DIRS = [...new Set([ENGINE_IMPL, storiesDir, found.impl].map((p) => resolve(p)))].filter((p) => existsSync(p))
 
+const LOG_DIR = join(engineDir, 'auto-pipeline-logs')
 const P = {
   epics: join(found.plan, 'epics.md'),
   sprint: sprintPath,
-  state: join(engineDir, 'auto-pipeline-logs', 'state.json'),
-  runLog: join(engineDir, 'auto-pipeline-logs', 'run-summary.log'),
+  state: join(LOG_DIR, 'state.json'),
+  runLog: join(LOG_DIR, 'run-summary.log'),
+  inbox: join(found.impl, 'DECISIONS-INBOX.md'),
 }
+// 새 배치 하네스 산출물의 상태 폴더 — 러너·편성기와 같은 3단계(그 다음이 jng-os 호환 폴백).
+const STATE = resolveStateDir(rootDir)
 
-// BMad 없는 프로젝트의 저하는 2단뿐 — 두 원천이 다 있으면 정상 화면, 아니면 exit 2(진단 출력).
-// 대체 원천(git 커밋·TODO 주석)은 만들지 않는다.
+// BMad 없는 프로젝트의 저하는 2단뿐 — 두 원천이 다 있으면 정상 화면, 아니면 구조화 오류
+// (CLI 는 exit 2 · 라이브러리는 scan().error). 대체 원천(git 커밋·TODO 주석)은 만들지 않는다.
 if (!existsSync(P.epics) || !existsSync(P.sprint)) {
   fail([
     '(상위 탐색) ' + climbed.join(' → ') + '   루트: ' + rootDir,
@@ -152,7 +196,7 @@ const norm = (s) => s.replace(/[\s·\-—()[\]{}/,.:]/g, '').toLowerCase()
 
 // ── epics.md: 에픽 본문 절과 스토리 ─────────────────────────────
 function parseEpics() {
-  const lines = read(P.epics).split(/\r?\n/)
+  const lines = read(P.epics, { required: true }).split(/\r?\n/)
   const epics = []
   let epic = null
   let story = null
@@ -211,7 +255,7 @@ function parseEpics() {
 
 // ── sprint-status.yaml: development_status 블록 ─────────────────
 function parseSprint() {
-  const txt = read(P.sprint)
+  const txt = read(P.sprint, { required: true })
   const block = txt.split(/^development_status:\s*$/m)[1] || ''
   const epicStatus = {}
   const storyStatus = {}
@@ -328,7 +372,7 @@ const REVIEW_GATE_RUNS = 6
 function fileListOf(slug) {
   const p = storyPathOf(slug)
   if (!p) return null
-  const txt = readFileSync(p, 'utf8')
+  const txt = read(p) // 경합(삭제·잠금)이면 빈 문자열 — 겹침 판정만 비고 화면은 산다
   const m = /^#{2,4} +File List\s*$/m.exec(txt)
   if (!m) return null
   const rest = txt.slice(m.index + m[0].length)
@@ -473,7 +517,43 @@ function buildBoard(epics, sprint) {
 }
 
 // ── 조립 + 불일치(드리프트) 검사 ────────────────────────────────
+// 이 함수는 **던지지 않는다.** 원천이 없거나 읽다가 깨지면 `{error:{…}}` 를 돌려주고,
+// build.mjs 가 그 사유를 적은 화면 한 장을 만든다(2026-09-02 교차리뷰 M4).
 export function scan() {
+  if (INIT_ERRORS.length) {
+    // 확인한 경로는 **전부** 보여 준다 — 첫 단계에서 막혀도 사람이 어디를 고쳐야 하는지 알아야 한다.
+    const first = INIT_ERRORS[0]
+    return errorResult({
+      ...first,
+      checked: [...new Set(INIT_ERRORS.flatMap((e) => e.checked || []))],
+    })
+  }
+  try {
+    return scanInner()
+  } catch (err) {
+    return errorResult({
+      code: 'scan-failed',
+      message: '원천을 읽는 중 오류가 났습니다 — ' + String(err?.message || err),
+      checked: READ_ERRORS.map((e) => e.file + '   ' + e.code + ': ' + e.message),
+      stack: String(err?.stack || ''),
+    })
+  }
+}
+
+/** scan() 실패 시의 구조화 결과 — 화면이 이 모양을 읽고 「원천을 읽지 못했습니다」를 그린다. */
+function errorResult(error) {
+  return {
+    generatedAt: new Date().toISOString(),
+    root: rootDir,
+    error: { ...error, readErrors: READ_ERRORS.slice() },
+    sprintUpdated: '', sources: {}, engineMismatch: false,
+    warnings: [], epics: [], drift: [],
+    board: { next: [], batch: { running: false, line: '', lastAt: '' }, bulk: [], writesSprint: [] },
+    batch: null,
+  }
+}
+
+function scanInner() {
   const epics = parseEpics()
   const sprint = parseSprint()
   const pipeline = parsePipeline()
@@ -547,8 +627,29 @@ export function scan() {
   }
   for (const w of warnings) console.error('[dev-status] 경고: ' + w)
 
+  // ── 새 배치 하네스 산출물 ────────────────────────────────────────────────
+  // 읽기 전용이고, 어느 한 파일이 깨져도 그 블록만 「읽지 못했습니다」가 된다.
+  const now = new Date()
+  const B = collectBatchSources({
+    root: rootDir, logDir: LOG_DIR, stateDir: STATE.dir, inboxPath: P.inbox, now,
+  })
+  const storyRows = Object.entries(sprint.storyStatus).map(([, r]) => ({ slug: r.slug, status: r.status }))
+  const verdict = deployVerdict({
+    manifests: B.manifests, lastNight: B.lastNight, metrics: B.metrics,
+    queue: B.queue.value, verifications: B.verifications, inbox: B.inbox.value,
+    diagnosis: B.diagnosis.value, backlog: B.backlog.value, readiness: B.readiness.value,
+    chainAgeDays: B.queue.value?.plan?.chainAgeDays ?? null,
+  })
+  // ⑨ — 하네스가 만드는 경고 3종을 기존 4종 드리프트에 **더한다**(기존 렌더러가 그대로 그린다).
+  drift.push(...batchWarnings({ manifests: B.manifests, verifications: B.verifications, stories: storyRows }))
+  const metricsTable = dailyMetrics({
+    history: B.history.rows, manifests: B.manifests, verifications: B.verifications, now,
+  })
+
   return {
     generatedAt: new Date().toISOString(),
+    error: null,
+    readErrors: READ_ERRORS.slice(),
     sprintUpdated: sprint.updated,
     root: rootDir,
     sources: { epics: relFromRoot(P.epics), sprint: relFromRoot(P.sprint), state: relFromRoot(P.state) },
@@ -557,9 +658,32 @@ export function scan() {
     epics,
     drift,
     board: buildBoard(epics, sprint),
+    // 새 블록 ①②④⑤⑥⑦⑧ 의 재료 한 덩어리 — build.mjs 와 (b)갈래 이식판이 같이 쓴다.
+    batch: {
+      stateDir: STATE.dir, stateDirWhy: STATE.why, logDir: LOG_DIR,
+      inboxPath: relFromRoot(P.inbox),
+      autofinish: B.autofinish,
+      heartbeat: B.heartbeat,
+      manifests: B.manifests, lastNight: B.lastNight,
+      verifications: B.verifications, metrics: B.metrics,
+      history: { missing: B.history.missing, bad: B.history.bad, rows: B.history.rows.length, file: B.history.file },
+      assign: B.assign, queue: B.queue, evidence: B.evidence, inbox: B.inbox,
+      diagnosis: B.diagnosis, backlog: B.backlog, readiness: B.readiness, report: B.report,
+      errors: B.errors,
+      verdict,
+      metricsTable,
+      assignByStory: [...assignByStory(B.assign.value ?? { entries: {} })].map(([k, v]) => [k, v]),
+    },
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  console.log(JSON.stringify(scan(), null, 2))
+// CLI 진입일 때만 exit 한다 — import 경로에서는 scan() 이 구조화 오류를 돌려줄 뿐이다(M4).
+if (IS_CLI) {
+  const r = scan()
+  if (r.error) {
+    console.error('[dev-status] ' + r.error.message)
+    for (const l of r.error.checked || []) console.error('  ' + l)
+    process.exit(2)
+  }
+  console.log(JSON.stringify(r, null, 2))
 }

@@ -24,7 +24,9 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const src = readFileSync(join(here, 'auto-story-pipeline.mjs'), 'utf8')
+// CRLF 내성 — Windows autocrlf 체크아웃이면 LF 기준 '\n}\n' 탐색이 빗나가 classifyFailure 를 못 떼어낸다
+// (2026-09-02 기준선 실측: 이식 직후 `node --test` 가 ReferenceError 로 RED). 개행을 LF 로 정규화한 뒤 읽는다.
+const src = readFileSync(join(here, 'auto-story-pipeline.mjs'), 'utf8').replace(/\r\n/g, '\n')
 
 let fail = 0
 const check = (name, cond, why) => {

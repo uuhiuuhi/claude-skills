@@ -28,7 +28,139 @@ BMad 프로젝트에 무인 배치 체계를 설치·운영한다. `auto-story-f
 | `engine/story-ledger.mjs` | **원장(Markdown) 해석 단일 소스** — 열린 findings·미완 Task·사람 게이트·목업 게이트. 표기 흔들림(굵게·👤 인용·부정문) 흡수는 여기 한 곳만 고친다 |
 | `engine/telegram-rules.mjs` | 원격 명령 판정부(순수) — 파서·발신자 검증·확인 코드·ff 판정·`/extend` 인자 파서 |
 | `engine/telegram-commands.mjs` | 원격 명령 폴러 — `/status` `/merge` `/resume` `/extend N` (10분 예약 · 코드 되묻기) |
-| `install.mjs` | 설치기 — 파일 복사·설정 템플릿·예약(작업 XML)·클론(옵트인) |
+| `engine/plan-dag.mjs` | 계획 DAG + **계획 검증기** — 선행·사이클·중복·배치 상한·모델 스펙 형식. 규칙 계획과 LLM 계획을 **같은 잣대**로 문다 |
+| `engine/conflicts.mjs` | 확장 충돌 판정 — File List 가 겹치지 않아도 병렬이 깨지는 5범주(마이그레이션 번호 경합·생성물 스키마·API 계약·공유 설정·테스트 환경) |
+| `engine/assign.mjs` | 워커 배정 — 난이도·위험도·역할·슬롯 상한·과거 성적(`assign-history.json`). 고위험 dev 는 Codex 배제 · review 는 dev 와 다른 눈 · 연속 2회 실패 회피 |
+| `engine/orchestrate.mjs` | Fable 오케스트레이터(**선택 · 기본 꺼짐**) — 프롬프트·응답 파싱·검증·결정적 폴백. 실제 호출은 주입된 실행기가 한다 |
+| `engine/metrics.mjs` | 계측 — 엔진 로그·Codex 토큰 → 전체 시간·p50/p95·유휴·병렬 효율·재시도·모델 호출량 + **품질 게이트 판정** |
+| `engine/bench.mjs` | 하네스 벤치(스텁 실측) — 같은 스토리 세트를 기준선/새 하네스로 각각 돌려 비교표 생성 |
+| `install.mjs` | 설치기 — 파일 복사·설정 템플릿·예약(작업 XML)·클론(옵트인) · Codex CLI 유무·인증 상태 기록 |
+| `engine/*.test.mjs` | `node --test` 테스트 — 종전 vitest 79종 이식(기준선) + 워커 풀·프로바이더·통합 게이트 + **종단(e2e) 6 시나리오**(스텁 claude/codex · 실제 git) |
+
+## 다중 프로바이더 하네스 (2026-09-02 · Claude + Codex 병렬 개발 + 자율 품질 검증)
+
+> 목표: 「Claude Code 중심 무인 배치」를 **Claude·Codex 를 독립 워커로 쓰는 병렬 개발 + 자체 검증 하네스**로 확장하되,
+> 설정 키가 없으면 **종전과 바이트 단위로 같은 동작**(Claude 전용 · 2폭 · 하드캡 3 · qa RED 즉시 STOP)을 유지한다.
+> 설계·적대 검토 40건·실측은 `references/multi-provider-design.md`.
+
+```
+Orchestrator(run-night)
+  ├ plan-queue: 스토리 판정 + 모델·프로바이더 배정(providers.codex.enabled 면 review="codex")
+  ├ 병렬 가능성: File List 서로소 + parallelHazards(package.json/lock 은 한쪽만 만져도 순차)
+  ├ 워커 풀: 프로바이더별 상한(codex 기본 1 · claude 3) · 총 상한(workers.max · 절대 6) · 순서 보존
+  │    └ 스토리별 워크트리(<clone>-wtN) → 엔진 1개씩 (dev → 무결성 검사 → qa → [자동 수리] → review)
+  │         └ 엔진이 프로바이더를 고른다: 모델 스펙 "opus"=claude · "codex" · "codex:<model>"
+  ├ landing: cherry-pick 직렬(종전) → **통합 게이트**(합쳐진 트리에서 qa 1회 · RED 면 landing 되돌림 + STOP)
+  │    └ **순차 경로도 같은 규칙**(2026-09-02 N1): 통합 게이트가 켜져 있으면 엔진에 `--push --defer-push`
+  │       를 넘겨 스토리별 push 를 보류시키고, 게이트 GREEN 을 본 뒤 **러너가 1회** push 한다(RED = push 0 · 되돌림)
+  └ 사람 호출: 예산 소진·5범주·결정 필요만 — 6절 에스컬레이션(상황·원인·시도·선택지·추천·위험)
+```
+
+**프로바이더 계약**(엔진 `providers/{claude,codex}.mjs`): 프롬프트 stdin · 작업 루트 지정 · 모델 지정 · exit/stdout/stderr 수집 ·
+타임아웃 · 인증/한도/지출 분류(auth > spend > limit > other — 종전 규율) · 폴백. Codex 는 `codex exec`(비대화형)만 쓴다 —
+`codex review` 는 커스텀 프롬프트를 못 받는다(실측).
+
+**Codex 가 없을 때**: 엔진이 codex 스펙을 만나면 `codex --version` + `codex login status` 로 감지하고, 미설치·미인증·
+cwd 불허(본 트리)면 **claude 대체 모델(dev 와 다른 것)로 폴백 + 경고**한다. 러너는 `[PROVIDERS] claude=YES(…) codex=NO(사유)`
+한 줄을 남기고 계속 돈다. Codex 때문에 배치가 서는 경로는 없다.
+
+**Codex 역할**: 기본 `roles: ["review"]` — 구현(Claude) ↔ 리뷰(Codex) 교차검증. review 는 **read-only 샌드박스 + 구조화 JSON**
+(`--output-schema`)으로 받고 **엔진(node)이** 스토리 파일 `### Review Findings`(Tasks 절 안)에 원장 형식으로 기재 · 상태 전이
+(findings → in-progress · 0건 → done, 단 이전 라운드 열린 findings 잔존 시 done 금지) · sprint-status · deferred-work ·
+DECISIONS-INBOX 까지 bmad-code-review 와 같은 자리에 쓴다. `roles` 에 `dev` 를 넣고 `split: true` 면 병렬 짝의 홀수 번째를
+Codex dev(workspace-write · 네트워크 기본 닫힘)로 나눈다 — 이때 리뷰는 Claude(교차).
+
+**안전선(전부 코드가 집행)**: ① Codex 는 배치 워크트리(marker 또는 linked worktree)에서만 — 본 트리의 gitignore 실데이터 반출 금지
+② 실행 동안 `.env*` 를 작업 루트 밖으로 격리 후 복원 · 리뷰 diff 에서 env/키/시크릿 파일 제외 + 시크릿 마스킹 · 로그 마스킹
+③ dev/repair 워커가 HEAD·브랜치·stash 를 움직이면 COMMIT GUARD STOP(exit 6) — 커밋은 엔진만 한다 ④ 머신 전역 codex 슬롯 잠금
+(같은 auth.json 동시 사용 금지) ⑤ 한도 = 대기가 아니라 레인 전환(스토리당 1회 · 부분 산출물 폐기) · Codex 실패를 Claude 프로브로
+「복구됨」이라 오판하지 않는다 ⑥ 이월 금지 5범주는 리뷰어가 defer/optional 로 내도 patch 로 승격.
+
+**품질 루프**(`quality.autoRepair`): dev 뒤 **테스트 무결성 검사**(`.only`·사유 없는 테스트 삭제 = 차단 / skip·ts-ignore·eslint-disable·
+게이트 설정 변조·항상-참 단언·단언 약화 = 경고, **수리 라운드가 새로 만든 것은 차단**) → `npm run qa` → RED 면 원인 분류
+(typecheck/lint/test/build + 안정 서명) → 같은 원인 3회 · 총 5회 안에서 수리 프롬프트로 재시도 → 소진 시 종전 STOP + 6절 에스컬레이션.
+실제로 있는 스크립트만 쓴다 — coverage/e2e/보안/성능 스크립트가 없으면 매니페스트에 `n/a(사유)`·`required-missing` 으로 정직 기록.
+
+**검증 매니페스트** `auto-pipeline-logs/<story>-verification.json`: provider/model/role · commit · checks(qa·typecheck·lint·build·unit·
+integration·coverage·security·performance·e2e) · 트리거 · 무결성 · 수리 이력 · 리뷰 결과 · 에스컬레이션.
+배치(병렬·순차 모두)는 여기에 `integration: { result: pass|fail|rollback, qaExit, landingBase, at, batchId? }` 를 **병합**하고
+(매니페스트가 없으면 만들지 않고 경고), 배치 한 건을 `auto-pipeline-logs/batch-<id>-manifest.json`(`mode`=parallel|sequential ·
+스토리 목록·landing 순서·통합 결과·push 여부·실패 증거 경로)으로 남긴다.
+**RED/rollback 은 추적 매니페스트를 고치지 않는다**(되돌림이 그 파일도 되돌렸고, 손대면 다음 라운드 cherry-pick 이 거부된다) —
+대신 되돌리기 **전에** 읽어 둔 사본에 `rollback` 을 새겨 ⓐ `<상태폴더>/archive/<시각>-evidence/<story>/verification.json`
+ⓑ 미추적 sidecar `auto-pipeline-logs/<story>-verification.rollback-<batchId>.json` 두 곳에 남긴다(batchId 가 이전 라운드 파일을 덮지 않게 한다).
+
+**실패 증거** `<상태폴더>/archive/<시각>-evidence/<story>/`: 엔진 로그(**복사할 때 다시 마스킹**) + `code.diff`(추적 파일 미커밋 변경 ·
+민감 pathspec 제외 · 저장 직전 시크릿 재마스킹) + `untracked/`(미추적 산출물 · 민감 경로 제외 · 개별 5MB 상한) + `summary.json` +
+`RESTORE.md`(복구 절차). 워크트리를 지우기 **전에** 남긴다 — 실패한 dev/repair 의 「절반쯤 한 일」이 `worktree remove --force` 와 함께 사라지지 않게.
+
+**마스킹 경계**(정책 2 · 2026-09-02 N3): 러너가 **파일에 쓰거나 밖으로 내보내는 모든 텍스트** — 통합 게이트 로그 · 증거 폴더로
+복사되는 엔진 로그 · 텔레그램/ntfy 알림 본문 · `night-last-run.md` 요약 — 은 엔진 `providers/codex.mjs` 의 `redactSecrets` 하나를
+거친다(판정기 중복 금지 · 구판 엔진이면 최소 폴백).
+
+**설정 예**(`tools/auto/auto.config.json` · 전부 선택):
+```jsonc
+"workers":  { "max": 3, "batchSize": 2 },
+"providers": {
+  "claude": { "enabled": true,  "max": 3 },
+  "codex":  { "enabled": true,  "max": 1, "roles": ["review"], "reviewKinds": ["new", "closeout"],
+              "split": false, "network": false, "fallback": true }
+},
+"quality": { "autoRepair": true, "sameRootCauseMaxRetries": 3, "totalRepairAttempts": 5, "integrity": "auto" },
+"integrationGate": { "enabled": true },   // RED = 무조건 landing 되돌림·STOP·push 금지(설정 우회 없음 — pushOnFail 은 폐지)
+"exhaustedModels": ["codex"]   // 이번 주 Codex 한도가 다 찼을 때 — 편성기가 짝 단위로 claude 로 돌린다
+```
+
+**운영자가 보는 로그**(현황판이 읽는 종전 줄 `→ [story] stage (model=…)` · `exit=` 는 그대로):
+```
+[PROVIDERS] claude=YES(2.1.250) codex=YES(codex-cli 0.152.1)
+· 워커 풀 — 총 2 · claude 3 · codex 1 · 배정: 2-1=claude 2-2=claude
+[2-1-a][CLAUDE][DEV] spawn wt=…\proj-wt0 · 동시 1/2 · review=codex
+[2-1-a][CODEX][REVIEW] start model=codex:default cwd=… target=워킹트리 vs HEAD(729fb74)
+[2-1-a][CODEX][REVIEW] .env 격리 1건(실행 동안만 · 종료 후 복원)
+[2-1-a][CODEX][REVIEW] usage in=126706 out=3154 cmds=12 files=0
+[2-1-a][CODEX][REVIEW] 기재 완료 — decision 0 · patch 2(high 1) · defer 0 · optional 0 → status=in-progress · sprint-status …
+[2-1-a][QUALITY][FAIL] kind=lint sig=lint:src/x.ts:no-unused-vars   /  [2-1-a][REPAIR] 수리 1/5 · 같은 원인 1/3
+[INTEGRATION][RUN] landing 2건 뒤 통합 게이트: npm run qa   →   [INTEGRATION][PASS] | [INTEGRATION][FAIL] … landing 되돌림
+- [INTEGRATION] rollback 기재 2건 — 증거 <상태폴더>/archive/…-evidence · sidecar auto-pipeline-logs/<story>-verification.rollback-<batchId>.json
+↘ [2-1-a] review: codex:default 한도 — opus 로 자동 전환(프로바이더 전환 · 스토리당 1회 · 대기 없음)
+🆘 사람 판단 필요 — [2-1-a] qa  1) 상황 … 6) 위험도
+```
+
+**설치 요구**: Node 20+ · git · `auto-story-finish` 최신판(`providers/` 계층 포함) · **`pipeline-settings.json`** — nested 워커의
+commit/push deny 설정이 없으면 엔진이 배치를 **시작조차 하지 않는다**(fail-closed · exit 6). 러너는 시작 전에
+`PIPELINE_SETTINGS_PATH` → 프로젝트 `.claude/` → 전역 `~/.claude/` 순으로 실측하고, 없으면 exit 3 으로 멈춘다(밤새 exit 6 만 쌓이지
+않게). 찾은 경로는 **절대경로로 엔진에 `--pipeline-settings` 로 넘긴다** — 워크트리에 `.claude/` 가 없어도 모든 워커가 같은 설정을
+본다(사본을 흩뿌리지 않는다). · (선택) `npm i -g @openai/codex` + `codex login`
+(ChatGPT 구독 · API 키 없음). 실측(2026-09-02): 리뷰 1건 ≈ 100k+ 입력 토큰 — Plus 한도에서 하루 몇 건인지는 첫 주 실측 대상.
+
+### 배선 4곳 (2026-09-02 하네스 · 러너가 순수 모듈을 부르는 자리)
+
+| 무엇 | 어디 | 기본값 |
+|---|---|---|
+| **확장 충돌 판정** | `run-night.parallelHazards(lists, { judges: [conflicts.parallelHazardsCompat] })` | 항상 켬 — 걸리면 **순차 폴백** + 요약에 `[PARALLEL][HAZARD] …` |
+| **워커 배정** | `assign.assignWorkers(...)` (종전 홀짝 `assignProviders` 대체 · 하위 호환용으로 함수는 남음) | 설정 없으면 배치 `models` 그대로. 요약에 `[ASSIGN] <story> dev=… review=… — <근거>` |
+| **Fable 계획** | `orchestrate.requestPlan(...)` — `--auto-plan` 의 규칙 큐를 감싼다 | `orchestrator.enabled: false` = **종전 동작**. 켜도 검증 실패·거부·타임아웃은 전부 규칙 큐로 폴백 |
+| **계측** | `metrics.summarizeTimeline(...)` — 라운드 끝에 1회 | 항상 켬 — `auto-pipeline-logs/metrics-<batchId>.json` + 상태 폴더 `metrics-history.jsonl` + 요약 맨 뒤 `## 계측` 표 1개 |
+
+**배정 기록(`assign-history.json`)**: 상태 폴더에 있고 **러너가 유일한 작성자**다(라운드 끝 1회 · tmp→rename).
+같은 스토리·역할에서 한 프로바이더가 **연속 2회 실패**하면 다음 편성에서 그 프로바이더를 피한다(성공 1회면 풀린다).
+
+**⚠️ 종전과 달라지는 한 가지**: `providers.codex.max` 는 이제 **배치당 Codex 몫**으로도 쓰인다(assign 의 슬롯 예산).
+`max: 1` + 2폭이면 배치의 **첫 스토리만** Codex 리뷰를 받고 나머지는 Claude 교차로 간다(종전 홀짝 분할은 둘 다 Codex 였다).
+스토리마다 Codex 리뷰를 원하면 `max` 를 배치 폭만큼 올린다 — 다만 같은 `auth.json` 동시 사용은 실측 없이 올리지 말 것.
+
+**Fable 계획 켜기**: `auto.config.json` 에 `"orchestrator": { "enabled": true, "model": "fable", "timeoutMin": 5 }`.
+후보 집합은 **규칙 편성기가 고른 스토리 그대로**이고(추가 불가), 지휘는 묶고 나누는 순서만 바꾼다.
+검증(`plan-dag.validatePlan`)을 통과할 때만 채택하고, 시작 로그에 `[ORCHESTRATOR] source=fable|deterministic-fallback(사유)` 가 남는다.
+시험용 주입: `AUTO_PLAN_RUNNER_STUB=<계획을 stdout 으로 내는 .mjs>` (실제 `claude -p` 를 부르지 않는다).
+
+**벤치**: `node night-batch-ops/engine/bench.mjs --stub` → `references/hardening-2026-09-02/bench-stub.md`.
+스텁이라 **절대 시간은 의미가 없다** — 뜻이 있는 것은 재시도·모델 호출 수·병렬 효율·유휴 비율·품질 게이트 통과 여부다.
+비교는 **양쪽 다 품질 게이트(qa GREEN · 리뷰 high 0 · 통합 pass · 워커 STOP 0)를 통과한 실행끼리만** 한다.
+
+**이번 판에서 하지 않은 것**: 스토리 내부 역할 병렬(구현‖테스트 작성 — 같은 스토리 md·테스트 파일을 두 워커가 만진다) ·
+API 키/크레딧 경로 · 벤더 3사 · Codex 세션 타임아웃 시 고아 프로세스 정리(spawnSync 한계 — 스테이지 타임아웃으로만 제동).
 
 ## 2026-09-02 통합에 들어간 것 (실사고 회수분)
 
@@ -88,7 +220,8 @@ BMad 프로젝트에 무인 배치 체계를 설치·운영한다. `auto-story-f
     "ruleId": null,
     "mockupsDir": "mockups",
     "verdictsPath": "tools/dev-status/mockup-verdicts.json"
-  }
+  },
+  "orchestrator": { "enabled": false, "model": "fable", "timeoutMin": 5 }
 }
 ```
 
@@ -113,6 +246,10 @@ BMad 프로젝트에 무인 배치 체계를 설치·운영한다. `auto-story-f
   - `mockupsDir` — 목업 파일 폴더(기본 `mockups`). 스토리 키로 `story-<에픽>-<번호>-` 접두사를 찾는다.
   - `verdictsPath` — 승인 판정 JSON 경로(기본 `tools/dev-status/mockup-verdicts.json`).
     파일이 없으면 판정 0건이므로 새 화면 스토리는 「목업 부재」로 보류된다.
+- `orchestrator` = **Fable 계획(선택 · 기본 꺼짐)**. `enabled: false` 면 편성은 규칙 그대로다.
+  켜면 규칙 큐를 지휘 모델에게 재편성시키되 **후보는 규칙이 고른 스토리뿐**이고, 검증기를
+  통과할 때만 채택한다(실패·거부·타임아웃 = 규칙 큐 폴백 · 사유는 `[ORCHESTRATOR] source=…`).
+  `timeoutMin` 을 넘기면 그 라운드는 규칙 큐로 간다 — **LLM 때문에 밤이 서지 않는다**.
 - **상태 폴더는 3단계 우선순위**다 — ① 환경변수 `AUTO_BATCH_STATE_DIR` ② `auto.config.json` 의
   `stateDir` ③ 기본 `~/.claude-auto/<project>`. 러너·편성기·원격 폴러·설치기가 **같은 순서**를 쓴다
   (한 곳만 다르면 lock 과 원장이 갈라져 이중 기동이 난다). `project` 는 **`auto.config.json` 의
@@ -354,3 +491,31 @@ BMad 프로젝트에 무인 배치 체계를 설치·운영한다. `auto-story-f
 - 결정 단일 창구 `_bmad-output/implementation-artifacts/DECISIONS-INBOX.md`
 - 실행 전용 클론 + marker `.auto-batch-worktree` — 없으면 워크트리 새로고침·하향 동기를 하지 않는다
   (대화 세션의 작업 트리를 배치가 건드리지 않게 하는 안전장치)
+- (선택) Codex CLI(`@openai/codex`) + `codex login` — 없으면 Claude 전용으로 그대로 돈다. 켜는 것은 `auto.config.json`
+  `providers.codex.enabled` 이고, Codex 는 marker 클론·linked worktree 에서만 실행된다(본 트리 금지)
+
+## 테스트
+
+```bash
+node --test $(git ls-files -co --exclude-standard | grep '\.test\.mjs$')   # 전량 (LLM 호출 0 · 실 알림 0 · 실제 git·실제 프로세스 사용)
+node night-batch-ops/engine/bench.mjs --stub                              # 하네스 벤치(스텁 실측) → references/hardening-2026-09-02/bench-stub.md
+```
+
+
+## 자율 마무리 — 범위를 사람이 정하지 않을 때
+
+「지금 상태를 파악하고 배포 가능한 수준까지 자율적으로 마무리해줘」 같은 요청이면
+큐를 손으로 짜지 말고 **자율 마무리 진입점**을 쓴다.
+
+    node <skill>/engine/autofinish.mjs --root <프로젝트> --max-rounds 3 --bmad-writes on
+
+하는 일: 프로젝트를 읽어 진단 → 남은 일을 7단계 우선순위로 세움 → 사람이 정할 8범주만 결정 인박스에
+올림 → BMAD 스토리에 등재 → 지휘 모델 계획(검증 통과 시에만 채택 · 아니면 규칙 계획) →
+`run-night --queue` 로 실행 → 다시 진단해 계속/중단/사람 호출을 판정 → 비개발자용 보고서.
+
+**하지 않는 일**: 푸시 · main 머지 · 배포 · 외부 발송 · main 직접 작업 · `_bmad-output/` 밖 쓰기.
+커밋은 종전 러너 계약대로 워크트리·`auto/<날짜>` 브랜치에서만 일어난다.
+
+먼저 볼 것: `--diagnose-only --no-gates` 는 **대상 저장소에 한 바이트도 쓰지 않고** 판정만 낸다.
+
+옵션·산출물 경로·안전 경계·문제 해결은 `AUTOFINISH.md` 에 있다.

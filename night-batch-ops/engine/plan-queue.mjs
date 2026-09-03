@@ -30,6 +30,11 @@ import {
   MOCKUP_GATE_DEFAULT, openFindings, isHumanGateLine,
   readStorySignals, parseSprint, epicSection, mockupGateOk,
 } from './story-ledger.mjs'
+// 계획 DAG·검증기(9점대 하네스 · 2026-09-02): 편성기가 만든 큐도 **자기 검증**을 통과해야 한다.
+// LLM 계획(orchestrate.mjs)과 같은 잣대로 본다 — 검증기가 규칙 계획만 봐주면 잣대가 아니다.
+import { buildDag, parseDependsOn, validatePlan } from './plan-dag.mjs'
+// 모델 배정은 홀짝이 아니라 **점수**(난이도·위험도·가용성·최근 실패)로 한다.
+import { ASSIGN_HISTORY_FILE, assignBatchModels, parseHistory } from './assign.mjs'
 export {
   MOCKUP_GATE_DEFAULT, openFindings, isHumanGateLine,
   readStorySignals, parseSprint, epicSection, mockupGateOk,
@@ -133,7 +138,12 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   const chainAgeDays = Math.max(0, Number(readJson(join(stateDir, 'chain-info.json')).ageDays ?? 0) || 0)
   const chainBlocksNew = !allowNewUnderChain(chainAgeDays)
 
-  const rows = parseSprint(sprintText).filter((r) => r.status !== 'done')
+  const allRows = parseSprint(sprintText)
+  const doneKeys = allRows.filter((r) => r.status === 'done').map((r) => r.key)
+  const rows = allRows.filter((r) => r.status !== 'done')
+  // 스토리 md 의 선행 표기(「선행: 2.1」 · 「depends-on: 11-3」) — DAG 간선 재료.
+  // 줄머리 라벨만 인정한다(본문에 스친 「선행」을 의존으로 읽으면 멀쩡한 스토리가 통째로 빠진다).
+  const depsOf = new Map()
   const excluded = []
   const exclude = (key, why) => excluded.push({ key, why })
   // 규칙 9 v2: 상한 대상이 「편성 횟수」가 아니라 **「무진전 편성의 연속 횟수」**다.
@@ -179,6 +189,7 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
       return { ...r, kind: 'new', files: [], stages: ['create', 'dev', 'review'], force: false }
     }
     const s = readStorySignals(text)
+    depsOf.set(r.key, parseDependsOn(text))
     if (s.openDecision) {
       const short = r.key.split('-').slice(0, 2).join('.')
       const inInbox = inboxText.includes(short) || inboxText.includes(r.key)
@@ -257,6 +268,45 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     }
   }
 
+  // 중요도 모델 배정 + 교차검증(dev ≠ review): cfg.models 가 평면({dev,review})이면 전 종류 공통(종전 호환),
+  // { new, recovery, closeout } 형태면 종류별 지정. 없으면 내장 기본 —
+  //   신규 dev=최상위/review=차상위 · 회수 dev=차상위/review=최상위(상위 교차) · 마감 재검수 review=차상위.
+  // 한도는 엔진 품질 사다리(자동 강등 · dev 모델 회피)가 흡수한다.
+  // Codex 교차 리뷰(2026-09-02 다중 프로바이더): providers.codex.enabled + roles 에 review + kind 가 reviewKinds 에 있으면
+  // review 스펙을 "codex" 로 둔다(구현 Claude → 리뷰 Codex = 다른 벤더의 눈). recovery 는 review 단계가 없어 대상이 아니다.
+  // 가용성(미설치·미인증·한도)은 엔진이 실행 시점에 판정해 claude 로 폴백한다 — 편성기는 의도만 적는다.
+  const codexCfg = cfg.providers?.codex ?? null
+  const codexReviewFor = (kind) => Boolean(codexCfg?.enabled) &&
+    (Array.isArray(codexCfg.roles) ? codexCfg.roles : ['review']).includes('review') &&
+    (Array.isArray(codexCfg.reviewKinds) ? codexCfg.reviewKinds : ['new', 'closeout']).includes(kind) &&
+    kind !== 'recovery'
+  const modelsFor = (kind) => {
+    let base =
+      models && (models.new || models.recovery || models.closeout) ? (models[kind] ?? null)
+        : models ? models
+          : kind === 'closeout' ? { review: 'opus' }
+            : kind === 'recovery' ? { dev: 'opus', review: 'fable' }
+              : { dev: 'fable', review: 'opus' }
+    if (codexReviewFor(kind)) base = { ...(base ?? {}), review: 'codex' }
+    // 소진 회피는 **짝 단위**로 한다 — 단계별로 따로 바꾸면 dev === review 가 되어 교차검증이 깨진다.
+    // exhaustedModels 에 "codex" 를 적으면 종전 짝 회피가 그대로 codex 를 claude 대체로 돌린다.
+    return base ? avoidExhaustedPair(base, exhausted) : null
+  }
+  // 배정기(assign.mjs) — 난이도·위험도·프로바이더 가용성·최근 실패 기록으로 짝을 조정한다.
+  // 설정(providers)·기록이 없으면 **modelsFor 결과를 그대로** 돌려준다(종전 큐와 바이트 동일).
+  const assignHistory = parseHistory(readJson(join(stateDir, ASSIGN_HISTORY_FILE)))
+  const modelsForBatch = (kind, group) => {
+    const base = modelsFor(kind)
+    if (!base) return null
+    return assignBatchModels({
+      base,
+      stories: group.map((c) => ({ key: c.key, kind, files: c.files ?? [] })),
+      providers: cfg.providers ?? {},
+      history: assignHistory,
+      config: { split: Boolean(cfg.providers?.codex?.split) },
+    })
+  }
+
   // 규칙 5: 회수끼리 File List 서로소면 2개까지 한 배치 · 신규는 단독 배치
   const batches = []
   const pool = [...capped]
@@ -267,32 +317,58 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     // 신규도 지시서에 File List 가 채워져 있으면 짝이 된다(빈 목록 = 파일을 모르는 스펙 → 단독).
     const realFiles = (c) => (c.files ?? []).filter((f) => !SHARED_BOOKKEEPING.includes(f))
     const headFiles = realFiles(head)
+    // 짝 크기 = cfg.workers.batchSize(기본 2 = 종전과 동일 · 절대 상한 6) — 러너의 워커 풀 폭과 함께 올려야 의미가 있다.
+    const batchSize = Math.max(1, Math.min(6, Number(cfg.workers?.batchSize) || 2))
     if (headFiles.length > 0) {
-      const mateIdx = pool.findIndex((c) => {
-        const mateFiles = realFiles(c)
-        return c.kind === head.kind && c.epic === head.epic && mateFiles.length > 0 &&
-          mateFiles.every((f) => !headFiles.includes(f))
-      })
-      if (mateIdx >= 0) batch.push(pool.splice(mateIdx, 1)[0])
+      while (batch.length < batchSize) {
+        const used = batch.flatMap(realFiles)
+        const mateIdx = pool.findIndex((c) => {
+          const mateFiles = realFiles(c)
+          return c.kind === head.kind && c.epic === head.epic && mateFiles.length > 0 &&
+            mateFiles.every((f) => !used.includes(f))
+        })
+        if (mateIdx < 0) break
+        batch.push(pool.splice(mateIdx, 1)[0])
+      }
     }
     batches.push(batch)
   }
+  // ── 자기 검증(9점대 하네스 · 2026-09-02) ──
+  // 규칙 10종은 「후보 하나하나가 편성 가능한가」만 본다. 만들어진 **큐 전체**가 모순인지
+  // (선행 미해소 · 배치 안 충돌 · 중복 · 모델 스펙 형식 · 상한 초과)는 아무도 안 봤다.
+  // 검증기는 LLM 계획(orchestrate)과 **같은 함수**다 — 규칙 계획만 봐주면 잣대가 아니다.
+  // 실패해도 throw 하지 않는다(밤이 서면 안 된다): 걸린 스토리만 빼고 사유를 큐에 남긴다.
+  const dag = buildDag({
+    stories: batches.flat().map((c) => ({ key: c.key, epic: c.epic, kind: c.kind, files: c.files ?? [], deps: depsOf.get(c.key) ?? [] })),
+    epicOrder: EPIC_ORDER,
+  })
+  const validation = validatePlan(
+    { batches: batches.map((b) => ({ stories: b.map((c) => c.key), stages: b[0].stages, ...(modelsForBatch(b[0].kind, b) ? { models: modelsForBatch(b[0].kind, b) } : {}) })) },
+    dag,
+    {
+      knownKeys: allRows.map((r) => r.key),
+      doneKeys,
+      epicOrder: EPIC_ORDER,
+      currentEpic,
+      parallelAllow: PARALLEL_ALLOW,
+      cap: { limit: cap, plannedToday: day.planned },
+      batchMax: Math.max(1, Math.min(6, Number(cfg.workers?.batchSize) || 2)),
+    },
+  )
+  if (!validation.ok) {
+    const bad = new Map()
+    for (const e of validation.errors) if (e.key && !bad.has(e.key)) bad.set(e.key, e.msg)
+    for (let i = batches.length - 1; i >= 0; i--) {
+      const keep = batches[i].filter((c) => !bad.has(c.key))
+      if (keep.length === batches[i].length) continue
+      for (const c of batches[i]) if (bad.has(c.key)) exclude(c.key, '계획 검증 실패 — ' + bad.get(c.key))
+      if (keep.length > 0) batches[i] = keep
+      else batches.splice(i, 1)
+    }
+  }
+
   const KIND_LABEL = { recovery: (c) => '회수(' + c.status + ')', closeout: () => '마감 재검수(review→done 후보 · 규칙 10)', new: () => '신규(backlog)' }
   const picked = batches.flat().map((c) => ({ key: c.key, why: (KIND_LABEL[c.kind] ?? KIND_LABEL.new)(c) }))
-  // 중요도 모델 배정 + 교차검증(dev ≠ review): cfg.models 가 평면({dev,review})이면 전 종류 공통(종전 호환),
-  // { new, recovery, closeout } 형태면 종류별 지정. 없으면 내장 기본 —
-  //   신규 dev=최상위/review=차상위 · 회수 dev=차상위/review=최상위(상위 교차) · 마감 재검수 review=차상위.
-  // 한도는 엔진 품질 사다리(자동 강등 · dev 모델 회피)가 흡수한다.
-  const modelsFor = (kind) => {
-    const base =
-      models && (models.new || models.recovery || models.closeout) ? (models[kind] ?? null)
-        : models ? models
-          : kind === 'closeout' ? { review: 'opus' }
-            : kind === 'recovery' ? { dev: 'opus', review: 'fable' }
-              : { dev: 'fable', review: 'opus' }
-    // 소진 회피는 **짝 단위**로 한다 — 단계별로 따로 바꾸면 dev === review 가 되어 교차검증이 깨진다.
-    return base ? avoidExhaustedPair(base, exhausted) : null
-  }
 
   const queue = {
     planned: 'auto',
@@ -307,8 +383,11 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
       stories: b.map((c) => c.key),
       stages: b[0].stages,
       force: b[0].force,
-      ...(modelsFor(b[0].kind) ? { models: modelsFor(b[0].kind) } : {}),
+      ...(modelsForBatch(b[0].kind, b) ? { models: modelsForBatch(b[0].kind, b) } : {}),
     })),
+    // 자기 검증 결과 — ok=false 여도 큐는 나간다(걸린 스토리는 위에서 이미 뺐다).
+    // 러너·브리핑이 「왜 빠졌나」를 근거로 읽는다.
+    validation,
     // cap = 실효 상한(기본 + /extend 연장) · capBonus = 연장분 · chainAgeDays = 미머지 체인 나이
     // notes = 스토리별이 아닌 편성 전체의 단서(예: 목업 게이트 미구성)
     _편성: { date: today, picked, excluded, notes: gateNotes, cap, capBonus, chainAgeDays, alreadyPlannedToday: day.planned.length },
