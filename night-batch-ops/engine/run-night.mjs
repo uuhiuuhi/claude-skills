@@ -1080,12 +1080,20 @@ function runIntegrationGate({ landedStories, landingBase, batchId, timeoutMin, r
         try { snapshots.push({ story: l.story, json: JSON.parse(readFileSync(p, 'utf8')) }) } catch { /* 손상 매니페스트는 건너뛴다 */ }
       }
       skipPush = true // reset 성공 여부와 무관하게 **먼저** 막는다
+      // 되돌림은 추적 파일인 integration-gate.log 까지 이전 라운드 내용으로 되돌린다 — RED 원인이 영영 사라진다
+      // (2026-09-04 실측: reset 뒤 로그가 05:06 GREEN 실행분으로 돌아가 실패 검사를 알 수 없었다). 상태 폴더에 사본을 먼저 남긴다.
+      let gateLogCopy = ''
+      try {
+        const arc = join(STATE_DIR, 'archive'); mkdirSync(arc, { recursive: true })
+        gateLogCopy = join(arc, `integration-gate-${batchId}.log`)
+        cpSync(join(LOG_DIR, 'integration-gate.log'), gateLogCopy)
+      } catch { gateLogCopy = '' }
       const rs = spawnSync('git', ['reset', '--hard', landingBase], { encoding: 'utf8' })
       const nowHead = headSha() // 「reset 을 불렀다」가 아니라 「되돌아갔다」를 확인한다
       const reverted = rs.status === 0 && nowHead === landingBase
       integration = { result: reverted ? 'rollback' : 'fail', qaExit, landingBase, at: new Date().toISOString(), ran: true, head: nowHead, batchId }
       if (reverted) {
-        record(`[INTEGRATION][FAIL] ${gate.why} — landing ${landedStories.length}건 되돌림(${landingBase.slice(0, 7)}) · 산출물 archive/integration-fail-* 태그 · log=auto-pipeline-logs/integration-gate.log`)
+        record(`[INTEGRATION][FAIL] ${gate.why} — landing ${landedStories.length}건 되돌림(${landingBase.slice(0, 7)}) · 산출물 archive/integration-fail-* 태그 · log=${gateLogCopy || 'auto-pipeline-logs/integration-gate.log(되돌림으로 이전 내용)'}`)
         notify('통합 게이트 RED', `landing ${landedStories.length}건이 합쳐진 트리에서 qa RED — 되돌리고 STOP. archive/integration-fail-* 태그와 integration-gate.log 확인`,
           `통합 게이트 RED · landing ${landedStories.length}건 되돌림. ${NTFY_BRIEF}`)
         worst ||= 1

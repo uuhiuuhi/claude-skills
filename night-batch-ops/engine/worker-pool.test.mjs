@@ -289,6 +289,9 @@ describe('[run-night] 배선 앵커 — 순수 규칙이 실제로 러너에 꽂
     assert.ok(src.includes('batch-${batchId}-manifest.json'))
     assert.ok(src.includes('night-batch-ops/batch-manifest/1'))
     assert.ok(src.includes('if (!existsSync(p)) { missing.push(l.story); continue }'), '매니페스트가 없으면 경고만 — 새로 만들지 않는다')
+    // 2026-09-04 — RED 되돌림(reset --hard)이 추적 로그 integration-gate.log 를 이전 라운드 내용으로 되돌려 원인이 사라졌다 → reset **전에** 상태 폴더 사본
+    const iCopy = src.indexOf('integration-gate-${batchId}.log'), iReset = src.indexOf("['reset', '--hard', landingBase]")
+    assert.ok(iCopy > 0 && iReset > iCopy, 'RED 게이트 로그 사본은 reset --hard 보다 앞에서 남긴다')
   })
   it('[#9] 증거 보관은 로그뿐 아니라 코드 diff·미추적 산출물·복구 절차를 남긴다 · 민감 경로는 애초에 제외', () => {
     for (const s of ["writeFileSync(join(dst, 'code.diff')", "join(dst, 'untracked', rel)", "writeFileSync(join(dst, 'summary.json')", "writeFileSync(join(dst, 'RESTORE.md')", 'EVIDENCE_DIFF_EXCLUDES', 'isSensitivePath(rel)', 'EVIDENCE_MAX_BYTES']) assert.ok(src.includes(s), `누락: ${s}`)
