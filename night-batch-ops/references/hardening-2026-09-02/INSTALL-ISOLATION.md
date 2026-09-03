@@ -12,3 +12,8 @@
 **권장 최소 조합** = **A + D**(비용 낮음 · 되돌리기 쉬움): push 권한 없는 토큰으로 러너 클론의 원격을 설정하고, `auto/*` push 는 러너 본 프로세스가 별도 자격증명으로 1회 수행(현재 코드가 이미 「러너 1회 push」 구조). 여기에 D 로 main 직접 push 를 서버에서 막는다.
 
 이 체크리스트가 채워지기 전에는 Codex 5차 판정대로 **BRIEF 정책 5 = PARTIAL** 이며, 엔진 교체는 「운영 격리 미비 상태」임을 알고 결정한다.
+
+## 2026-09-03 실측 추기 (👤 「A+D 하자」 승인 후 실행 시도)
+- **D 차단**: `gh api repos/jngsystem-corp/baro/rulesets` · `branches/main/protection` → HTTP 403 「Upgrade to GitHub Pro or make this repository public」. 비공개 저장소의 브랜치 보호·룰셋은 **조직 Team 플랜(또는 Pro)** 이 필요하다. 저장소 공개는 고객 정보 마스킹 제약상 불가.
+- **A 전제**: 러너 클론 `jng-os-auto` 의 자격증명은 시스템 gitconfig `credential.helper=manager`(박사장 본인 계정 uuhiuuhi · admin). 별도 push 제한 자격증명 = **기계 계정(machine user)** 이 필요하며 계정 생성·토큰 발급은 사람이 한다(클로드는 계정·비밀정보를 만들지 않는다).
+- 순서: ① 조직 플랜 Team 전환(D 가능해짐) ② 기계 계정 `jngsystem-bot` 생성 → baro 저장소 Write 초대 ③ 그 계정의 fine-grained PAT(Contents: Read/Write · baro 한정) 발급 ④ 러너 클론 원격을 그 계정으로(`git credential-manager` 에 별도 항목 · 클론 `credential.useHttpPath=true` 로 분리) ⑤ 룰셋: main 「직접 push 금지 · PR 필수」 bypass = 조직 admin(uuhiuuhi)만, `auto/**` 는 허용 ⑥ 클로드가 실측(러너 계정으로 main push 시도 → 거부) 후 엔진 교체.
