@@ -39,7 +39,7 @@ import { parallelHazardsCompat } from './conflicts.mjs'
 import { appendJsonl, metricsHistoryPath, parseCodexUsage, parseEngineLog, renderMetricsTable, summarizeTimeline, writeJsonAtomic } from './metrics.mjs'
 import { makeClaudePlanRunner, requestPlan } from './orchestrate.mjs'
 import { buildDag, parseDependsOn } from './plan-dag.mjs'
-import { applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, notifyChannel, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = join(homedir(), '.claude', 'skills', 'auto-story-finish', 'auto-story-pipeline.mjs')
 // mockup 단계가 든 배치는 목업 폴더(config mockupGate.mockupsDir · 기본 mockups)를 스토리 커밋에 함께 싣는다 —
@@ -119,7 +119,10 @@ const ORCH = {
   timeoutMin: Math.max(1, Number(CFG.orchestrator?.timeoutMin) || 5),
   cacheHours: Number.isFinite(Number(CFG.orchestrator?.cacheHours)) && Number(CFG.orchestrator?.cacheHours) >= 0 ? Number(CFG.orchestrator.cacheHours) : 12,
 }
+// 모델 사다리(👤 2026-09-04) — 설정 `orchestrator.ladder` 또는 기본 [model, 'fable', 'opus'] 중복 제거. 실행기 사고(한도·시간초과·비정상 종료)에만 다음 칸.
+ORCH.ladder = orchestratorLadder(ORCH.model, CFG.orchestrator?.ladder)
 let PLAN_SOURCE = 'deterministic' // run-summary·매니페스트에 남길 계획 출처
+let PLAN_MODEL = null // 이번 계획을 실제로 낸 모델(사다리로 바뀌었을 수 있다) — 채택 기록·캐시에 쓴다
 let PLAN_CACHE_NOTE = null // 계획 캐시 판정 한 줄(요약 전용 · 오케스트레이터가 꺼져 있으면 null)
 let PLAN_VALIDATION = null // 편성기 자기 검증 요약
 let codexAvailability = null // codex 가 켜졌을 때만 1회 감지 — 감지 코드는 엔진의 providers/ 계층 하나(중복 판정기 금지)
@@ -712,7 +715,7 @@ function doDownSync() {
 
 // ── Fable 오케스트레이터 배선 ─────────────────────────────────────────────────
 /** 계획 실행기 — 테스트·리허설은 `AUTO_PLAN_RUNNER_STUB`(실제 프로세스 · LLM 아님) 로 주입한다. */
-function makePlanRunner() {
+function makePlanRunner(model = ORCH.model) {
   const stub = process.env.AUTO_PLAN_RUNNER_STUB
   const timeoutMs = ORCH.timeoutMin * 60_000
   if (stub) {
@@ -723,7 +726,7 @@ function makePlanRunner() {
       return r.stdout ?? ''
     }
   }
-  return makeClaudePlanRunner({ bin: process.env.CLAUDE_BIN || 'claude', model: ORCH.model, cwd: process.cwd(), timeoutMs })
+  return makeClaudePlanRunner({ bin: process.env.CLAUDE_BIN || 'claude', model, cwd: process.cwd(), timeoutMs })
 }
 
 // ── 계획 캐시 (2026-09-03 👤 「(가)」) ────────────────────────────────────────
@@ -848,7 +851,7 @@ async function applyOrchestrator(q, outPath) {
         ...(src.replanHint ? { replanHint: src.replanHint } : {}),
       }
     })
-    q._orchestrator = { source, model: ORCH.model, at: new Date().toISOString(), rationale: plan.rationale ?? '' }
+    q._orchestrator = { source, model: PLAN_MODEL ?? ORCH.model, at: new Date().toISOString(), rationale: plan.rationale ?? '' }
     try { writeFileSync(outPath, JSON.stringify(q, null, 2) + '\n', 'utf8'); return true } catch (e) {
       console.log(`⚠ [ORCHESTRATOR] 채택 계획 기록 실패 — 규칙 큐로 계속: ${e?.message ?? e}`)
       PLAN_SOURCE = 'deterministic-fallback(write-error)'
@@ -898,22 +901,39 @@ async function applyOrchestrator(q, outPath) {
     writeOrchCache({ ...cache, runnerErrors: 0, cooldownUntil: null })
   }
 
-  let runner
-  try { runner = makePlanRunner() } catch (e) {
-    PLAN_SOURCE = 'deterministic-fallback(runner-reject)'
+  // 모델 사다리(👤 2026-09-04): 실행기 **사고**(runner-timeout·error·nonzero = 한도·인증·프로세스)에만 다음 모델로 한 번 더 묻는다.
+  // 형식 불량·검증 거부는 모델이 답한 것이라 사다리를 타지 않는다. 스텁(AUTO_PLAN_RUNNER_STUB)은 모델을 모르므로 첫 칸만.
+  const ladder = process.env.AUTO_PLAN_RUNNER_STUB ? [ORCH.model] : ORCH.ladder
+  let res = null
+  let usedModel = ORCH.model
+  for (let i = 0; i < ladder.length; i++) {
+    const model = ladder[i]
+    let runner
+    try { runner = makePlanRunner(model) } catch (e) {
+      console.log(`⚠ [ORCHESTRATOR] 계획 실행기 거부(${model}): ${e?.message ?? e}`)
+      res = { source: 'deterministic-fallback(runner-reject)', plan: null }
+      continue
+    }
+    res = await requestPlan({ ...planArgs, runner })
+    usedModel = model
+    PLAN_MODEL = model
+    if (res.source === 'fable' || !shouldLadderOn(res.source)) break
+    if (i + 1 < ladder.length) console.log(`[ORCHESTRATOR] ${model} 실행기 사고(${res.source}) → 사다리 다음 칸 ${ladder[i + 1]} 로 계획을 다시 묻는다`)
+  }
+  if (res?.source === 'deterministic-fallback(runner-reject)' && !res.plan) {
+    PLAN_SOURCE = res.source
     PLAN_CACHE_NOTE = 'cache miss'
     console.log(`[ORCHESTRATOR] source=${PLAN_SOURCE} (cache miss)`)
-    console.log(`⚠ [ORCHESTRATOR] 계획 실행기 거부: ${e?.message ?? e}`)
     noteRunnerError()
     return
   }
-  const res = await requestPlan({ ...planArgs, runner })
   if (res.source === 'fable') {
     if (!adopt(res.plan, 'fable', 'cache miss')) return
+    if (usedModel !== ORCH.model) console.log(`[ORCHESTRATOR] 사다리 채택 — 계획 모델 ${usedModel}(설정 ${ORCH.model} 은 사고)`)
     const plan = { ...res.plan } // 캐시에는 계획 본문만 — 출처·오류 상세는 그때그때 다시 붙인다
     delete plan.source
     delete plan.errorDetail
-    writeOrchCache({ fingerprint, at: new Date().toISOString(), plan, source: 'fable', model: ORCH.model, runnerErrors: 0, cooldownUntil: null })
+    writeOrchCache({ fingerprint, at: new Date().toISOString(), plan, source: 'fable', model: usedModel, runnerErrors: 0, cooldownUntil: null })
     return
   }
   // 폴백은 **캐시하지 않는다** — 다음 슬롯에 다시 시도한다(실행기 오류만 계수한다).

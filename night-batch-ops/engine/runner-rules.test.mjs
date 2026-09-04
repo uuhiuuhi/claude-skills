@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn } from './runner-rules.mjs'
 
 const RUN_NIGHT_URL = new URL('./run-night.mjs', import.meta.url)
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -492,5 +492,29 @@ describe('[M5] 통합 게이트 명령 정규화 — 셸 문자열 결합 제거
     for (const bad of ['curl http://x', 'wget http://x', 'sh tools/qa.sh', 'git push origin main', 'qa']) {
       assert.throws(() => integrationGateInvocation(bad, { platform: 'linux' }), (e) => e.code === 'UNSAFE_GATE', `거부하지 않았다: ${bad}`)
     }
+  })
+})
+
+describe('[사다리] 오케스트레이터 모델 사다리 — 👤 2026-09-04 「사다리(fable→opus)를 정본에 넣기」', () => {
+  it('기본 사다리 = [설정 모델, fable, opus] 중복 제거 · 첫 칸은 항상 설정 모델', () => {
+    assert.deepEqual(orchestratorLadder('fable'), ['fable', 'opus'])
+    assert.deepEqual(orchestratorLadder('opus'), ['opus', 'fable'])
+    assert.deepEqual(orchestratorLadder('sonnet'), ['sonnet', 'fable', 'opus'])
+    assert.deepEqual(orchestratorLadder(undefined), ['fable', 'opus'])
+  })
+  it('설정 ladder 가 있으면 그것을 쓰되 형식 위반·중복은 버리고 설정 모델을 앞에 세운다', () => {
+    assert.deepEqual(orchestratorLadder('fable', ['fable', 'opus', 'sonnet']), ['fable', 'opus', 'sonnet'])
+    assert.deepEqual(orchestratorLadder('fable', ['opus', 'opus', 'bad model; rm -rf', 'sonnet']), ['fable', 'opus', 'sonnet'])
+    assert.deepEqual(orchestratorLadder('fable', []), ['fable', 'opus'])
+  })
+  it('사다리는 실행기 사고(timeout·error·nonzero)에만 탄다 — 형식·검증 거부·지어낸 스토리는 규칙 계획으로', () => {
+    assert.equal(shouldLadderOn('deterministic-fallback(runner-timeout)'), true)
+    assert.equal(shouldLadderOn('deterministic-fallback(runner-error)'), true)
+    assert.equal(shouldLadderOn('deterministic-fallback(runner-nonzero)'), true)
+    assert.equal(shouldLadderOn('deterministic-fallback(parse:bad-json)'), false)
+    assert.equal(shouldLadderOn('deterministic-fallback(validator:batch-conflict)'), false)
+    assert.equal(shouldLadderOn('deterministic-fallback(invented-story:9-9)'), false)
+    assert.equal(shouldLadderOn('fable'), false)
+    assert.equal(shouldLadderOn(null), false)
   })
 })

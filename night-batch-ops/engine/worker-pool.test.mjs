@@ -302,6 +302,10 @@ describe('[run-night] 배선 앵커 — 순수 규칙이 실제로 러너에 꽂
     const iAttempt = src.indexOf('-attempt1.log'), iRetry = src.indexOf('[INTEGRATION][RETRY] 1차 RED'), iDecide = src.indexOf('integrationGateDecision({ enabled: true, landedCount')
     assert.ok(iAttempt > 0 && iRetry > iAttempt && iDecide > iRetry, 'RETRY 는 사본 → 재실행 → 판정 순서여야 한다')
     assert.ok(src.includes('(PCFG.integrationGate.retry ?? 0) > 0'), 'retry 설정이 0 이면 재실행하지 않는다')
+    // 👤 2026-09-04 사다리 — 실행기 사고(shouldLadderOn)에만 다음 모델 · 스텁이면 첫 칸만 · 채택 기록은 실제 모델(PLAN_MODEL)
+    assert.ok(src.includes("process.env.AUTO_PLAN_RUNNER_STUB ? [ORCH.model] : ORCH.ladder"), '스텁 실행기는 모델을 모르므로 사다리를 타지 않는다')
+    assert.ok(src.includes("if (res.source === 'fable' || !shouldLadderOn(res.source)) break"), '사다리는 실행기 사고에만 탄다')
+    assert.ok(src.includes('model: PLAN_MODEL ?? ORCH.model'), '채택 기록에는 실제로 계획을 낸 모델을 적는다')
   })
   it('[#9] 증거 보관은 로그뿐 아니라 코드 diff·미추적 산출물·복구 절차를 남긴다 · 민감 경로는 애초에 제외', () => {
     for (const s of ["writeFileSync(join(dst, 'code.diff')", "join(dst, 'untracked', rel)", "writeFileSync(join(dst, 'summary.json')", "writeFileSync(join(dst, 'RESTORE.md')", 'EVIDENCE_DIFF_EXCLUDES', 'isSensitivePath(rel)', 'EVIDENCE_MAX_BYTES']) assert.ok(src.includes(s), `누락: ${s}`)

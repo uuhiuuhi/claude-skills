@@ -605,3 +605,22 @@ export function blockedProviderFromExit(info) {
   if (!['limit', 'auth', 'spend'].includes(info.kind)) return null
   return info.provider === 'codex' ? 'codex' : info.provider === 'claude' ? 'claude' : null
 }
+
+// ── 오케스트레이터 모델 사다리 (👤 2026-09-04 「사다리(fable→opus)를 정본에 넣기 진행해줘」) ─────────────
+// 계획기 실행기가 **살아서 답하지 못한** 경우(runner-timeout · runner-error · runner-nonzero = 한도·인증·프로세스 사고)에만
+// 다음 모델로 한 번 더 묻는다. 형식 불량·검증 거부·지어낸 스토리(parse/validator/invented)는 모델이 답을 한 것이므로
+// 사다리를 타지 않고 종전대로 규칙 계획으로 간다. 사다리를 다 타고도 못 받으면 종전 폴백 + 오류 계수(쿨다운) 그대로.
+export const ORCH_LADDER_DEFAULT = Object.freeze(['fable', 'opus'])
+const ORCH_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,63}$/
+/** 설정 `orchestrator.ladder`(문자열 배열)가 있으면 그것, 없으면 `[model, ...기본]` — 중복 제거 · 형식 위반 제외 · 첫 칸은 항상 설정 모델. */
+export function orchestratorLadder(model, ladder = null) {
+  const first = typeof model === 'string' && ORCH_MODEL_RE.test(model) ? model : 'fable'
+  const src = Array.isArray(ladder) && ladder.length ? ladder : [first, ...ORCH_LADDER_DEFAULT]
+  const out = [first]
+  for (const m of src) if (typeof m === 'string' && ORCH_MODEL_RE.test(m) && !out.includes(m)) out.push(m)
+  return out
+}
+/** 이 폴백 사유면 다음 모델로 올라간다(실행기 사고만) — 형식·검증 거부는 false. */
+export function shouldLadderOn(source) {
+  return /^deterministic-fallback\((runner-timeout|runner-error|runner-nonzero)/.test(String(source ?? ''))
+}
