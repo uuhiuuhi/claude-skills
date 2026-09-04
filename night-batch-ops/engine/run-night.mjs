@@ -1050,15 +1050,29 @@ function runIntegrationGate({ landedStories, landingBase, batchId, timeoutMin, r
       return { integration: bad, skipPush: true, worst: 7 }
     }
     record(`[INTEGRATION][RUN] landing ${landedStories.length}건 뒤 통합 게이트: ${inv.display}`)
-    const g = spawnSync(inv.file, inv.argv, { shell: false, windowsVerbatimArguments: inv.verbatim, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: timeoutMin * 60 * 1000, windowsHide: true })
+    const runGate = () => spawnSync(inv.file, inv.argv, { shell: false, windowsVerbatimArguments: inv.verbatim, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: timeoutMin * 60 * 1000, windowsHide: true })
     mkdirSync(LOG_DIR, { recursive: true })
     // (N3/정책 2) 통합 로그도 마스킹해서 적는다 — 종전엔 qa stdout/stderr 원문이 그대로 남았다.
-    writeFileSync(join(LOG_DIR, 'integration-gate.log'), REDACT(`# ${inv.display}\n\n## stdout\n${g.stdout ?? ''}\n\n## stderr\n${g.stderr ?? ''}\n`), 'utf8')
-    const qaExit = g.status ?? 1
+    const writeGateLog = (g) => writeFileSync(join(LOG_DIR, 'integration-gate.log'), REDACT(`# ${inv.display}\n\n## stdout\n${g.stdout ?? ''}\n\n## stderr\n${g.stderr ?? ''}\n`), 'utf8')
+    let g = runGate()
+    writeGateLog(g)
+    let qaExit = g.status ?? 1
+    // RED 1회 재실행(👤 2026-09-04 「예」) — 같은 트리에서 한 번 더 돌려 플레이크(초점·타이밍 · 실측 2회/일)를 가른다.
+    // 1차 로그는 상태 폴더에 사본으로 남기고(재실행이 덮어쓴다), 두 번째도 RED 면 종전 rollback 경로 그대로다(우회 아님).
+    let firstExit = null
+    if (qaExit !== 0 && (PCFG.integrationGate.retry ?? 0) > 0) {
+      firstExit = qaExit
+      try { const arc = join(STATE_DIR, 'archive'); mkdirSync(arc, { recursive: true }); cpSync(join(LOG_DIR, 'integration-gate.log'), join(arc, `integration-gate-${batchId}-attempt1.log`)) } catch { /* 사본 실패는 재실행을 막지 않는다 */ }
+      record(`[INTEGRATION][RETRY] 1차 RED(exit ${qaExit}) — 같은 트리에서 1회 재실행(플레이크 판별 · 1차 로그 = archive/integration-gate-${batchId}-attempt1.log)`)
+      g = runGate()
+      writeGateLog(g)
+      qaExit = g.status ?? 1
+      if (qaExit === 0) record('[INTEGRATION][RETRY] 2차 GREEN — 1차는 플레이크로 본다(원인 검사는 attempt1 로그)')
+    }
     const gate = integrationGateDecision({ enabled: true, landedCount: landedStories.length, qaExit })
     if (gate.action === 'push') {
       record(`[INTEGRATION][PASS] ${gate.why} (log=auto-pipeline-logs/integration-gate.log)`)
-      integration = { result: 'pass', qaExit, landingBase, at: new Date().toISOString(), ran: true, batchId }
+      integration = { result: 'pass', qaExit, landingBase, at: new Date().toISOString(), ran: true, batchId, ...(firstExit != null ? { retried: true, firstExit } : {}) }
       const touched = applyStoryManifests(integration)
       // 매니페스트 갱신분은 **커밋해 둔다** — 남겨 두면 작업 트리가 dirty 로 남아 다음 라운드의 cherry-pick 이
       // 같은 파일에서 거부된다(landing 실패로 둔갑). ignore 대상이면 add 가 아무것도 안 하고 commit 이 조용히 실패한다.
@@ -1091,7 +1105,7 @@ function runIntegrationGate({ landedStories, landingBase, batchId, timeoutMin, r
       const rs = spawnSync('git', ['reset', '--hard', landingBase], { encoding: 'utf8' })
       const nowHead = headSha() // 「reset 을 불렀다」가 아니라 「되돌아갔다」를 확인한다
       const reverted = rs.status === 0 && nowHead === landingBase
-      integration = { result: reverted ? 'rollback' : 'fail', qaExit, landingBase, at: new Date().toISOString(), ran: true, head: nowHead, batchId }
+      integration = { result: reverted ? 'rollback' : 'fail', qaExit, landingBase, at: new Date().toISOString(), ran: true, head: nowHead, batchId, ...(firstExit != null ? { retried: true, firstExit } : {}) }
       if (reverted) {
         record(`[INTEGRATION][FAIL] ${gate.why} — landing ${landedStories.length}건 되돌림(${landingBase.slice(0, 7)}) · 산출물 archive/integration-fail-* 태그 · log=${gateLogCopy || 'auto-pipeline-logs/integration-gate.log(되돌림으로 이전 내용)'}`)
         notify('통합 게이트 RED', `landing ${landedStories.length}건이 합쳐진 트리에서 qa RED — 되돌리고 STOP. archive/integration-fail-* 태그와 integration-gate.log 확인`,

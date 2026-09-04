@@ -42,6 +42,11 @@ describe('[workers] 설정 정규화 — 없으면 종전 동작(configured=fals
     const p = providerConfig({ integrationGate: { enabled: true, pushOnFail: true } })
     assert.equal(p.integrationGate.enabled, true)
     assert.equal(Object.hasOwn(p.integrationGate, 'pushOnFail'), false, 'pushOnFail 키 자체가 없어야 한다')
+    // 👤 2026-09-04 「예」 — RED 1회 재실행: 기본 1 · 상한 1 · 0 으로 끌 수만 있다(우회 스위치가 아니라 더 엄격해지는 방향)
+    assert.equal(p.integrationGate.retry, 1)
+    assert.equal(providerConfig({ integrationGate: { enabled: true, retry: 5 } }).integrationGate.retry, 1)
+    assert.equal(providerConfig({ integrationGate: { enabled: true, retry: 0 } }).integrationGate.retry, 0)
+    assert.equal(providerConfig({ integrationGate: { enabled: true, retry: 'x' } }).integrationGate.retry, 1)
     assert.ok(p.warnings.some((w) => /pushOnFail 은 폐지됨/.test(w)), p.warnings.join('|'))
     // false 로 적어 둔 옛 설정도 「그런 스위치가 있다」는 오해를 남기므로 똑같이 경고한다
     assert.ok(providerConfig({ integrationGate: { enabled: true, pushOnFail: false } }).warnings.some((w) => /pushOnFail/.test(w)))
@@ -293,6 +298,10 @@ describe('[run-night] 배선 앵커 — 순수 규칙이 실제로 러너에 꽂
     // 2026-09-04 — RED 되돌림(reset --hard)이 추적 로그 integration-gate.log 를 이전 라운드 내용으로 되돌려 원인이 사라졌다 → reset **전에** 상태 폴더 사본
     const iCopy = src.indexOf('integration-gate-${batchId}.log'), iReset = src.indexOf("['reset', '--hard', landingBase]")
     assert.ok(iCopy > 0 && iReset > iCopy, 'RED 게이트 로그 사본은 reset --hard 보다 앞에서 남긴다')
+    // 👤 2026-09-04 「예」 — RED 1회 재실행은 「1차 로그 사본 → 재실행 → 판정(integrationGateDecision 2차 호출)」 순서이고, retry 가 0 이면 돌지 않는다
+    const iAttempt = src.indexOf('-attempt1.log'), iRetry = src.indexOf('[INTEGRATION][RETRY] 1차 RED'), iDecide = src.indexOf('integrationGateDecision({ enabled: true, landedCount')
+    assert.ok(iAttempt > 0 && iRetry > iAttempt && iDecide > iRetry, 'RETRY 는 사본 → 재실행 → 판정 순서여야 한다')
+    assert.ok(src.includes('(PCFG.integrationGate.retry ?? 0) > 0'), 'retry 설정이 0 이면 재실행하지 않는다')
   })
   it('[#9] 증거 보관은 로그뿐 아니라 코드 diff·미추적 산출물·복구 절차를 남긴다 · 민감 경로는 애초에 제외', () => {
     for (const s of ["writeFileSync(join(dst, 'code.diff')", "join(dst, 'untracked', rel)", "writeFileSync(join(dst, 'summary.json')", "writeFileSync(join(dst, 'RESTORE.md')", 'EVIDENCE_DIFF_EXCLUDES', 'isSensitivePath(rel)', 'EVIDENCE_MAX_BYTES']) assert.ok(src.includes(s), `누락: ${s}`)

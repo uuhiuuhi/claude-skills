@@ -406,7 +406,10 @@ export function providerConfig(cfg = {}) {
   const g = c.integrationGate ?? {}
   // pushOnFail 은 폐지(2026-09-02 hardening #5) — 「RED 인데 push」 를 설정 한 줄로 되살릴 수 있으면
   // 통합 게이트는 안전장치가 아니라 권고가 된다. 남아 있는 키는 **무시하고 경고**한다(조용히 먹지 않는다).
-  const integrationGate = { enabled: c.integrationGate !== undefined && g.enabled !== false }
+  // retry = RED 1회 재실행(👤 2026-09-04 「예」) — 플레이크(초점·타이밍) 1번에 30~60분 landing 을 되돌리지 않는다.
+  // 상한 1 · 우회 아님: 두 번째도 RED 면 종전대로 rollback 이다(hardening #5 「RED 는 설정으로 push 되지 않는다」 유지).
+  const retry = Math.max(0, Math.min(1, Number.isFinite(Number(g.retry)) ? Number(g.retry) : 1))
+  const integrationGate = { enabled: c.integrationGate !== undefined && g.enabled !== false, retry }
   if (g.pushOnFail !== undefined) warnings.push('[INTEGRATION] pushOnFail 은 폐지됨 — RED 는 항상 rollback')
   // 자율운전(2026-09-03): mode 'full' 만 켜짐 — 편성기(plan-queue)와 엔진(--autonomy)이 같은 값을 본다.
   const autonomy = { mode: c.autonomy?.mode === 'full' ? 'full' : 'guarded' }
