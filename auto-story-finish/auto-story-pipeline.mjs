@@ -371,7 +371,11 @@ const AUTH_RE = /(\b401\b|unauthorized|failed to authenticate|invalid.{0,3}api.{
 // ---- (U8) 사용량 한도 패턴 — 인증(재로그인 필요)과 구분: 한도는 리셋 대기만으로 복구 ----
 // "monthly spend limit"(월 지출 한도 — 2026-08-28 실측: 이 문구가 기존 패턴에 안 걸려 STOP 으로
 // 오분류돼 차단기에 카운트됐다) 포함. 월 한도는 대기로 안 풀린다 — 모델 전환이 답(큐 모델 장부).
-const LIMIT_RE = /(usage.?limit|rate.?limit|\b429\b|quota exceeded|limit (reached|exceeded|will reset)|too many requests)/i;
+// 2026-09-04 실측 추가 — **모델별 한도** 문구는 어순이 반대라 종전 패턴에 안 걸렸다:
+//   "You've reached your Fable 5 limit. Switch to another model, or manage usage credits at …"
+// → `other` 로 오분류돼 exit 1 STOP · 사다리(fable→opus)가 돌지 않았고 같은 서명 2회로 밤 창이 통째로 차단됐다.
+// 이 문구의 처방은 대기가 아니라 **모델 전환**이고, 그게 limit 갈래의 사다리다(spend 와 달리 다른 모델은 산다).
+const LIMIT_RE = /(usage.?limit|rate.?limit|\b429\b|quota exceeded|limit (reached|exceeded|will reset)|reached your [^.\n]{0,40}limit|switch to another model|too many requests)/i;
 // ---- (U8-b) **월 지출 한도**는 사용량 한도와 다른 갈래다 (2026-08-30 반복 종결) ----
 // 2026-08-28 에 이 문구를 LIMIT_RE 에 **넣기만** 하고 같은 갈래로 묶었다. 그때 주석에는
 // 「월 한도는 대기로 안 풀린다」고 정확히 적어 놓고 **대기하는 갈래에 분류**했다 — 진단은

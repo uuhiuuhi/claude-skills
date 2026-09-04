@@ -53,6 +53,12 @@ check('사용량 한도는 종전대로 limit', classify('usage limit exceeded')
 check('rate limit 도 limit', classify('rate limit · 429') === 'limit', 'rate limit 회귀')
 check('401 은 auth (spend 보다 우선)', classify('401 unauthorized · spend limit') === 'auth', '인증 우선순위 깨짐')
 check('무관한 실패는 other', classify('ECONNRESET') === 'other', 'other 갈래 붕괴')
+// 2026-09-04 실측 — 모델별 한도(어순 반대 · 처방 = 모델 전환 = limit 사다리). other 로 새면 exit 1 STOP → 창 차단(그날 실사고)
+const 모델한도문구 = "You've reached your Fable 5 limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+check('모델별 한도 문구 → limit(사다리로 opus 전환)', classify(모델한도문구) === 'limit',
+  `받은 값 = ${classify(모델한도문구)} · other 면 사다리가 안 돌아 배치가 선다`)
+check('「Switch to another model」 단독도 limit', classify('Switch to another model to continue') === 'limit', '모델 전환 지시 누락')
+check('모델별 한도가 spend 를 가로채지 않는다', classify("You've hit your monthly spend limit — switch to another model") === 'spend', 'spend 우선순위 붕괴')
 
 console.log('── ② 안내 문구 ──')
 const spendFix = /spend:\s*\{[\s\S]*?fix:\s*"([^"]+)"/.exec(src)?.[1] ?? ''
