@@ -179,6 +179,17 @@ describe('[OPS-1] 편성 규칙 8종', () => {
     assert.equal((queue.validation?.errors ?? []).length, 0, '검증기 ④ 가 review 전용 배치의 겹침을 충돌로 세면 안 된다')
   })
 
+  it('규칙 6 — 부정문 「새 화면 0 이므로 목업 선행 대상이 아니다(UX-DR-27 단서)」 는 게이트 대상이 아니다 (2026-09-04 2.23 NO-OP STOP 실사고)', () => {
+    const epics = '### Story 2.1: a\n**Then** 새 화면 0 이므로 목업 선행 대상이 아니다(UX-DR-27 단서) — 대신 스크린샷으로 잘림 0 을 확인한다.\n## 끝'
+    const r = run({ sprint: '  2-1-a: backlog\n', epics })
+    assert.equal(r.queue._편성.picked.length, 1, JSON.stringify(r.queue._편성.excluded))
+    assert.ok(r.queue.batches.every((b) => !(b.stages ?? []).includes('mockup')), '부정문에 mockup 단계를 붙이면 워커가 NO-OP STOP 으로 배치를 세운다')
+    // 같은 절 **안**에 긍정 언급이 하나라도 있으면 종전대로 대상이다(절은 다음 h2/h3 경계에서 끊긴다 — 문장은 「## 끝」 앞에 둔다)
+    const bothEpics = '### Story 2.1: a\n**Then** 새 화면 0 이므로 목업 선행 대상이 아니다(UX-DR-27 단서).\n이 스토리는 새 화면 1장을 만든다(UX-DR-27).\n## 끝'
+    const both = run({ sprint: '  2-1-a: backlog\n', epics: bothEpics })
+    assert.ok(both.queue._편성.excluded[0]?.why.includes('목업 부재'), '긍정 언급이 있으면 게이트 적용(guarded = 승인 목업 부재로 제외): ' + JSON.stringify(both.queue._편성))
+  })
+
   it('규칙 6 — 새 화면(UX-DR-27) backlog 는 승인 목업이 있어야 편성한다', () => {
     const epics = '### Story 2.1: a\n새 화면이므로 구현 전 목업 확인(UX-DR-27)\n## 끝'
     const blocked = run({ sprint: '  2-1-a: backlog\n', epics })

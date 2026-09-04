@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { plan, readStorySignals } from './plan-queue.mjs'
+import { mockupMarkerApplies } from './story-ledger.mjs'
 import { PLAN_SCHEMA, buildPlanPrompt, makeClaudePlanRunner, validatePlanShape } from './orchestrate.mjs'
 import { STAGE_NAMES, buildDag, validatePlan } from './plan-dag.mjs'
 import { engineFlagsFromConfig, parallelPlan, providerConfig } from './runner-rules.mjs'
@@ -238,5 +239,23 @@ describe('[자율운전] 원장 신호 · 검증기 · 오케스트레이터 · 
     assert.equal(providerConfig({ autonomy: { mode: 'full' } }).configured, false)
     assert.equal(parallelPlan({ storyCount: 2, stages: ['replan', 'dev'], parallel: 2 }), 2)
     assert.equal(parallelPlan({ storyCount: 2, stages: ['mockup', 'dev', 'review'], parallel: 2 }), 1)
+  })
+})
+
+describe('[목업 게이트] marker 부정문 인식 — 2026-09-04 2.23 NO-OP STOP 실사고(「새 화면 0 이므로 목업 선행 대상이 아니다(UX-DR-27 단서)」)', () => {
+  const gate = { marker: '새 화면', ruleId: 'UX-DR-27', mockupsDir: 'mockups' }
+  it('긍정 언급 = 대상 · 부정 꼬리(0 · 없음 · 아니) = 대상 아님', () => {
+    assert.equal(mockupMarkerApplies('새 화면이므로 구현 전 목업 확인(UX-DR-27)', gate), true)
+    assert.equal(mockupMarkerApplies('**Then** 새 화면 0 이므로 목업 선행 대상이 아니다(UX-DR-27 단서)', gate), false)
+    assert.equal(mockupMarkerApplies('새 화면 없음 · UX-DR-27 해당 없음', gate), false)
+    assert.equal(mockupMarkerApplies('새 화면은 아니다(UX-DR-27)', gate), false)
+    assert.equal(mockupMarkerApplies('새 화면 = 0 (UX-DR-27)', gate), false)
+  })
+  it('같은 절에 긍정 언급이 하나라도 있으면 대상 · ruleId 가 없으면 종전대로 대상 아님 · marker 없으면 false', () => {
+    assert.equal(mockupMarkerApplies('새 화면 0 인 화면과 별개로, 새 화면 1장을 만든다(UX-DR-27)', gate), true)
+    assert.equal(mockupMarkerApplies('새 화면이므로 목업 확인', gate), false)
+    assert.equal(mockupMarkerApplies('새 화면이므로 목업 확인', { marker: '새 화면', ruleId: null }), true)
+    assert.equal(mockupMarkerApplies('목업 이야기 없음', gate), false)
+    assert.equal(mockupMarkerApplies('', gate), false)
   })
 })

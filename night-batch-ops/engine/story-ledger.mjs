@@ -89,17 +89,47 @@ export const MOCKUP_GATE_DEFAULT = Object.freeze({
   verdictsPath: 'tools/dev-status/mockup-verdicts.json',
 })
 
+/** marker 바로 뒤의 부정 꼬리 — 「새 화면 0」「새 화면 없음」「새 화면이 없」「새 화면은 아니」「새 화면 = 0」 류. */
+const MARKER_NEGATION_TAIL_RE = /^\s*(?:[=:：]\s*)?(?:0\b|없|이\s*없|은\s*없|는\s*없|이\s*아니|은\s*아니|는\s*아니|아님|무\b)/
+/** marker 가 든 문장 자체가 「목업 대상이 아니다」라고 말하는 경우. */
+const MARKER_NEGATION_LINE_RE = /목업\s*(?:선행\s*)?(?:대상|게이트)?\s*(?:이|은|는)?\s*(?:아니|없|불필요|제외)/
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/**
+ * marker 판정 — **긍정 언급이 하나라도 있어야** 게이트 대상이다. 부정문(「새 화면 0 이므로 목업 선행 대상이
+ * 아니다」 · 「새 화면 없음」)만 있는 절은 대상이 아니다.
+ * 왜(실사고): 2026-08-31 · 2026-09-04 — 2.23 epics 의 「새 화면 0 이므로 목업 선행 대상이 아니다(UX-DR-27 단서)」가
+ * marker+ruleId 부분 문자열로 매치돼 mockup 단계가 편성됐고, 워커는 (옳게) 아무것도 안 만들어 NO-OP STOP(exit 4)으로
+ * 배치가 통째로 섰다. ruleId 는 종전대로 절 어디에든 함께 있어야 한다.
+ */
+export function mockupMarkerApplies(section, gate = MOCKUP_GATE_DEFAULT) {
+  const marker = gate?.marker
+  const text = String(section ?? '')
+  if (!marker || !text.includes(marker)) return false
+  if (gate.ruleId && !text.includes(gate.ruleId)) return false
+  const re = new RegExp(escapeRe(marker), 'g')
+  let m
+  while ((m = re.exec(text)) !== null) {
+    const after = text.slice(m.index + marker.length, m.index + marker.length + 16)
+    if (MARKER_NEGATION_TAIL_RE.test(after)) continue
+    const lineStart = text.lastIndexOf('\n', m.index) + 1
+    const lineEnd = text.indexOf('\n', m.index)
+    const line = text.slice(lineStart, lineEnd < 0 ? text.length : lineEnd)
+    if (MARKER_NEGATION_LINE_RE.test(line)) continue
+    return true // 긍정 언급 1건 = 대상
+  }
+  return false
+}
+
 /**
  * 목업 게이트(규칙 6): 새 화면 스토리는 approved 목업이 실재해야 후보.
- * ⚠️ 부분 문자열 함정(2026-08-31 실사고): 「새 화면 0」 같은 **부정문**도 트리거를 밟는다 —
- * epics 절에는 「신설 화면 0」으로 표기한다. 근본 해결은 P1 구조화 필드.
+ * 부분 문자열 함정(2026-08-31 실사고)은 mockupMarkerApplies 가 부정문을 걸러 막는다 — epics 절의
+ * 「새 화면 0」「목업 선행 대상이 아니다」는 더 이상 트리거가 아니다. 근본 해결은 P1 구조화 필드.
  */
 export function mockupGateOk(section, key, verdicts, gate = MOCKUP_GATE_DEFAULT) {
   const marker = gate?.marker
   if (!marker) return { ok: true, unconfigured: true }
-  if (!section.includes(marker)) return { ok: true }
-  // ruleId 는 선택 — 지정하면 marker 와 **함께** 있을 때만 게이트가 걸린다(오탐 축소용).
-  if (gate.ruleId && !section.includes(gate.ruleId)) return { ok: true }
+  // ruleId 는 선택 — 지정하면 marker 와 **함께** 있을 때만 게이트가 걸린다(오탐 축소용). 부정문만 있으면 대상 아님.
+  if (!mockupMarkerApplies(section, gate)) return { ok: true }
   const dir = String(gate.mockupsDir ?? MOCKUP_GATE_DEFAULT.mockupsDir).replace(/[/\\]+$/, '')
   const prefix = dir + '/story-' + key.split('-').slice(0, 2).join('-') + '-'
   const mine = Object.entries(verdicts?.items ?? {}).filter(([k]) => k.startsWith(prefix))
@@ -113,8 +143,7 @@ export function mockupGateOk(section, key, verdicts, gate = MOCKUP_GATE_DEFAULT)
 /** 목업 항목 실측(자율운전 재료) — 이 스토리 접두('<dir>/story-<에픽>-<번호>-')의 verdict 목록.
  *  applies=false 면 게이트 대상 스토리가 아니다(marker/ruleId 판정은 mockupGateOk 와 같다). */
 export function mockupEntries(section, key, verdicts, gate = MOCKUP_GATE_DEFAULT) {
-  const marker = gate?.marker
-  if (!marker || !section.includes(marker) || (gate.ruleId && !section.includes(gate.ruleId))) return { applies: false, entries: [] }
+  if (!mockupMarkerApplies(section, gate)) return { applies: false, entries: [] }
   const dir = String(gate.mockupsDir ?? MOCKUP_GATE_DEFAULT.mockupsDir).replace(/[/\\]+$/, '')
   const prefix = dir + '/story-' + key.split('-').slice(0, 2).join('-') + '-'
   const entries = Object.entries(verdicts?.items ?? {}).filter(([k]) => k.startsWith(prefix))
