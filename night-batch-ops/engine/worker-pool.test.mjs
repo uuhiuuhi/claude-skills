@@ -56,10 +56,11 @@ describe('[workers] 병렬 폭 — 종전 parallelPlan 과 같은 값(기본) ·
     }
     assert.equal(parallelPlanWithWorkers({ storyCount: 5, stages: ['dev'], parallel: 8 }), 3)
   })
-  it('workers.max 로 확장 — 4폭 허용 · 6 초과는 6 · dev 없는 배치는 여전히 1', () => {
+  it('workers.max 로 확장 — 4폭 허용 · 6 초과는 6 · review 전용도 병렬(👤 2026-09-04) · mockup 만 있는 배치는 여전히 1', () => {
     assert.equal(parallelPlanWithWorkers({ storyCount: 5, stages: ['dev'], parallel: 4, maxWorkers: 6 }), 4)
     assert.equal(parallelPlanWithWorkers({ storyCount: 9, stages: ['dev'], parallel: 9, maxWorkers: 99 }), 6)
-    assert.equal(parallelPlanWithWorkers({ storyCount: 5, stages: ['review'], parallel: 4, maxWorkers: 6 }), 1)
+    assert.equal(parallelPlanWithWorkers({ storyCount: 5, stages: ['review'], parallel: 4, maxWorkers: 6 }), 4)
+    assert.equal(parallelPlanWithWorkers({ storyCount: 5, stages: ['mockup'], parallel: 4, maxWorkers: 6 }), 1)
     assert.equal(parallelPlanWithWorkers({ storyCount: 5, stages: ['dev'], parallel: 4, maxWorkers: 2 }), 2)
   })
 })

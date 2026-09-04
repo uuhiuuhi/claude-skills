@@ -70,7 +70,9 @@ describe('[OPS-2] 러너 판정 규칙', () => {
     assert.equal(parallelPlan({ storyCount: 1, stages: ['dev'], parallel: 2 }), 1)
     assert.equal(parallelPlan({ storyCount: 3, stages: ['dev', 'review'], parallel: 2 }), 2) // 신규(dev+review) 병렬 — 08-28 확장
     assert.equal(parallelPlan({ storyCount: 2, stages: ['create', 'dev', 'review'], parallel: 2 }), 2) // create 는 스펙 실재 시 skip
-    assert.equal(parallelPlan({ storyCount: 2, stages: ['review'], parallel: 2 }), 1) // dev 없는 배치(재검수)는 순차
+    assert.equal(parallelPlan({ storyCount: 2, stages: ['review'], parallel: 2 }), 2) // review 전용(재검수)도 병렬 — 👤 2026-09-04 「리뷰 병렬 만들어」
+    assert.equal(parallelPlan({ storyCount: 2, stages: ['create'], parallel: 2 }), 1) // create·mockup 만 있는 배치는 순차
+    assert.equal(parallelPlan({ storyCount: 2, stages: ['mockup', 'review'], parallel: 2 }), 1) // mockup 은 공유 장부 — 순차
     assert.equal(parallelPlan({ storyCount: 3, stages: ['dev'], parallel: 3 }), 3)
   })
 

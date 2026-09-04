@@ -415,13 +415,18 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     const headFiles = realFiles(head)
     // 짝 크기 = cfg.workers.batchSize(기본 2 = 종전과 동일 · 절대 상한 6) — 러너의 워커 풀 폭과 함께 올려야 의미가 있다.
     const batchSize = Math.max(1, Math.min(6, Number(cfg.workers?.batchSize) || 2))
-    if (headFiles.length > 0) {
+    // 마감 재검수(closeout · review 만)는 코드를 쓰지 않는다 — File List 겹침과 무관하게 같은 에픽끼리 짝을 짓는다
+    // (러너가 review 전용 배치를 워크트리 병렬로 돌리고 장부는 union 으로 합친다 · 👤 2026-09-04 「리뷰 병렬 만들어」).
+    const reviewOnly = head.kind === 'closeout' && !(head.stages ?? []).includes('dev')
+    if (headFiles.length > 0 || reviewOnly) {
       while (batch.length < batchSize) {
         const used = batch.flatMap(realFiles)
         const mateIdx = pool.findIndex((c) => {
           const mateFiles = realFiles(c)
-          return c.kind === head.kind && c.epic === head.epic && mateFiles.length > 0 &&
-            (c.stages ?? []).join() === (head.stages ?? []).join() && (c.replanHint ?? '') === (head.replanHint ?? '') && // 단계 서명이 같은 것끼리만(replan 유무)
+          const sameShape = c.kind === head.kind && c.epic === head.epic &&
+            (c.stages ?? []).join() === (head.stages ?? []).join() && (c.replanHint ?? '') === (head.replanHint ?? '') // 단계 서명이 같은 것끼리만(replan 유무)
+          if (reviewOnly) return sameShape
+          return sameShape && mateFiles.length > 0 &&
             mateFiles.every((f) => !used.includes(f)) &&
             parallelHazardsExtended([...batch.map((b) => b.files ?? []), c.files ?? []]).parallelOk // 검증기와 같은 잣대로 짝을 고른다
         })

@@ -70,6 +70,14 @@ describe('[DAG] 검증기 — 무엇을 거부하는가', () => {
     assert.deepEqual(v.errors, [])
   })
 
+  it('④ 같은 배치 안 File List 겹침 — dev 배치는 batch-conflict · review 전용(마감 재검수) 배치는 코드 무접촉이라 통과 (👤 2026-09-04 리뷰 병렬)', () => {
+    const overlap = buildDag({ stories: [S('2-1-a', { files: ['src/a.ts'] }), S('2-2-b', { files: ['src/a.ts'] })], epicOrder: [2] })
+    assert.deepEqual(codes({ batches: [{ stories: ['2-1-a', '2-2-b'], stages: ['dev'] }] }, base, overlap), ['batch-conflict'])
+    assert.deepEqual(codes({ batches: [{ stories: ['2-1-a', '2-2-b'], stages: ['review'] }] }, base, overlap), [])
+    // stages 를 안 적은 배치는 종전대로 코드를 쓴다고 보고 검사한다(보수 방향)
+    assert.deepEqual(codes({ batches: [{ stories: ['2-1-a', '2-2-b'] }] }, base, overlap), ['batch-conflict'])
+  })
+
   it('없는 스토리 키 · 중복 편성 · 빈 배치 · 배치 상한 초과', () => {
     assert.deepEqual(codes({ batches: [{ stories: ['9-9-x'] }] }), ['unknown-story'])
     assert.deepEqual(codes({ batches: [{ stories: ['2-1-a'] }, { stories: ['2-1-a'] }] }), ['duplicate'])

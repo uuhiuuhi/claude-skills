@@ -135,7 +135,7 @@ if (process.env.E2E_QA_FAIL_WHEN_BOTH_COMMITTED === '1') {
 process.exit(0)
 `
 
-function makeFixture({ config = {}, models = { dev: 'fable', review: 'codex' }, queueDefaults = {} } = {}) {
+function makeFixture({ config = {}, models = { dev: 'fable', review: 'codex' }, queueDefaults = {}, stages = ['dev', 'review'], storyStatus = 'ready-for-dev', storyFiles = { '2-1-a': 'src/a.ts', '2-2-b': 'src/b.ts' } } = {}) {
   const T = mkdtempSync(join(tmpdir(), 'nbo-e2e-'))
   const home = join(T, 'home'), state = join(T, 'state'), bin = join(T, 'bin'), proj = join(T, 'proj')
   mkdirSync(home, { recursive: true }); mkdirSync(state, { recursive: true }); mkdirSync(bin, { recursive: true })
@@ -175,10 +175,12 @@ function makeFixture({ config = {}, models = { dev: 'fable', review: 'codex' }, 
   mkdirSync(join(proj, 'src'), { recursive: true }); writeFileSync(join(proj, 'src', 'keep.ts'), 'export const keep = 1\n')
   mkdirSync(join(proj, 'secrets'), { recursive: true }); writeFileSync(join(proj, 'secrets', 'app.pem'), '-----BEGIN PRIVATE KEY-----\nORIGINAL_PEM_BODY\n-----END PRIVATE KEY-----\n')
   writeFileSync(join(proj, '.gitignore'), 'node_modules\n.env*\n!.env.example\n_bmad-output/implementation-artifacts/auto-pipeline-logs/*qa*.log\n')
-  const story = (key, file) => `# Story ${key}\n\nStatus: ready-for-dev\n\n## Acceptance Criteria\n\n- AC-1 x\n\n## Tasks / Subtasks\n\n- [ ] T1 구현\n\n### File List\n\n- \`${file}\`\n\n## Dev Notes\n\n없음\n`
-  writeFileSync(join(art, '2-1-a.md'), story('2-1-a', 'src/a.ts'))
-  writeFileSync(join(art, '2-2-b.md'), story('2-2-b', 'src/b.ts'))
-  writeFileSync(join(art, 'sprint-status.yaml'), 'last_updated: 2026-09-01\ndevelopment_status:\n  2-1-a: ready-for-dev\n  2-2-b: ready-for-dev\n')
+  // storyStatus 'review' = 마감 재검수 픽스처(Task 전부 [x] · 리뷰 전용 배치 재료)
+  const task = storyStatus === 'review' ? '- [x] T1 구현' : '- [ ] T1 구현'
+  const story = (key, file) => `# Story ${key}\n\nStatus: ${storyStatus}\n\n## Acceptance Criteria\n\n- AC-1 x\n\n## Tasks / Subtasks\n\n${task}\n\n### File List\n\n- \`${file}\`\n\n## Dev Notes\n\n없음\n`
+  writeFileSync(join(art, '2-1-a.md'), story('2-1-a', storyFiles['2-1-a']))
+  writeFileSync(join(art, '2-2-b.md'), story('2-2-b', storyFiles['2-2-b']))
+  writeFileSync(join(art, 'sprint-status.yaml'), `last_updated: 2026-09-01\ndevelopment_status:\n  2-1-a: ${storyStatus}\n  2-2-b: ${storyStatus}\n`)
   writeFileSync(join(art, 'deferred-work.md'), '# Deferred\n')
   writeFileSync(join(art, 'DECISIONS-INBOX.md'), '# 결정 인박스\n')
   writeFileSync(join(art, 'auto-pipeline-logs', 'state.json'), '{"done":{}}\n')
@@ -192,7 +194,7 @@ function makeFixture({ config = {}, models = { dev: 'fable', review: 'codex' }, 
   }, null, 2))
   writeFileSync(join(proj, 'tools', 'auto', 'night-queue.json'), JSON.stringify({
     planned: 'manual-e2e', defaults: { commit: true, push: false, parallel: 2, stageTimeoutMin: 5, waitAuthMin: 0, ...queueDefaults },
-    batches: [{ label: 'E2E 병렬 짝', enabled: true, stories: ['2-1-a', '2-2-b'], stages: ['dev', 'review'], models }],
+    batches: [{ label: 'E2E 병렬 짝', enabled: true, stories: ['2-1-a', '2-2-b'], stages, models }],
   }, null, 2))
   writeFileSync(join(proj, '.env.local'), 'SECRET_TOKEN=abcdefghijklmnop\n')
   ok(git(proj, ['add', '-A']), 'add'); ok(git(proj, ['commit', '-q', '-m', 'init']), 'commit'); ok(git(proj, ['push', '-q', 'origin', 'HEAD:main']), 'push')
@@ -1141,5 +1143,46 @@ describe('[e2e][M5] 통합 게이트 명령의 셸 결합 제거 — 두 번째 
   it('스토리 단계(엔진 qa = `npm run qa`)는 정상으로 돌았다 — 과잉 차단이 아니다', () => {
     assert.match(r.out, /\[2-1-a\]/, r.out.slice(-2000))
     assert.ok(existsSync(join(fx.state, 'qa-calls.log')), '엔진 qa 가 아예 안 돌았다면 이 시험은 게이트를 증명하지 못한다')
+  })
+})
+
+// ── 👤 2026-09-04 「리뷰 병렬 만들어」 — review 전용(마감 재검수) 배치도 워크트리 병렬로 돈다 ──
+// 두 스토리가 **같은 파일**(src/a.ts)을 File List 에 두어도 리뷰는 코드를 쓰지 않으므로 병렬 폴백이 아니라 2폭이어야 하고,
+// 각 워커의 review 커밋(스토리 md + sprint-status)이 landing 에서 union 으로 합쳐져 둘 다 done 이 돼야 한다.
+describe('[e2e] review 전용 배치 병렬 — File List 겹침 무시 · 장부 union landing · 통합 게이트 PASS', { timeout: 300_000 }, () => {
+  let fx, r
+  before(() => {
+    fx = makeFixture({
+      stages: ['review'], storyStatus: 'review', models: { review: 'fable' }, // claude 스텁 리뷰 = Status done + sprint done
+      storyFiles: { '2-1-a': 'src/a.ts', '2-2-b': 'src/a.ts' },
+      queueDefaults: { push: true },
+    })
+    fixtures.push(fx)
+    r = runRunner(fx)
+  })
+
+  it('러너 exit 0 · review 전용 병렬 2폭(File List 판정 생략) · 두 스토리 모두 landing', () => {
+    assert.equal(r.status, 0, r.out.slice(-3000))
+    assert.match(r.summary, /병렬 실행 2폭 — review 전용/, r.summary.slice(-2000))
+    assert.doesNotMatch(r.summary, /병렬 폴백/, '겹친 File List 로 폴백하면 리뷰 병렬이 아니다')
+    assert.match(r.summary, /완주: 2-1-a \(병렬 dev → landing/)
+    assert.match(r.summary, /완주: 2-2-b \(병렬 dev → landing/)
+    assert.match(r.summary, /\[INTEGRATION\]\[PASS\]/)
+  })
+
+  it('두 스토리 모두 done — 장부(sprint-status)가 union 으로 합쳐졌고 코드 파일은 만들지 않았다', () => {
+    const sprint = readFileSync(join(fx.art, 'sprint-status.yaml'), 'utf8')
+    assert.match(sprint, /^  2-1-a: done$/m, sprint)
+    assert.match(sprint, /^  2-2-b: done$/m, sprint)
+    for (const k of ['2-1-a', '2-2-b']) assert.match(readFileSync(join(fx.art, `${k}.md`), 'utf8'), /^Status: done$/m)
+    assert.ok(!existsSync(join(fx.proj, 'src', 'a.ts')), '리뷰 전용 배치가 코드를 만들면 안 된다')
+    assert.match(r.calls, /review 2-1-a/); assert.match(r.calls, /review 2-2-b/)
+    assert.doesNotMatch(r.calls, /dev 2-/, 'dev 가 돌면 리뷰 전용이 아니다')
+  })
+
+  it('원격 auto/<날짜> 에 두 review 커밋이 올라갔다(스토리 2 + 통합 매니페스트 1)', () => {
+    assert.ok(originHeads(fx.proj).some((h) => /refs\/heads\/auto\//.test(h)), originHeads(fx.proj).join(','))
+    const cs = commitsOnBranch(fx.proj)
+    assert.equal(cs.filter((l) => /auto\(2-[12]-[ab]\)/.test(l)).length, 2, cs.join('|'))
   })
 })

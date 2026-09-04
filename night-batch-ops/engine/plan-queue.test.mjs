@@ -170,6 +170,15 @@ describe('[OPS-1] 편성 규칙 8종', () => {
     assert.equal(queue.batches[0].stories.length, 2)
   })
 
+  it('규칙 5 — 마감 재검수(closeout · review 만)는 File List 가 겹쳐도 같은 에픽끼리 한 배치로 묶는다 (👤 2026-09-04 리뷰 병렬)', () => {
+    // story() 기본 = 전부 [x] · Patch 0 · 같은 src/a.ts → 둘 다 closeout · 코드 무접촉이라 겹침이 병렬을 깨지 않는다
+    const { queue } = run({ sprint: '  2-1-a: review\n  2-2-b: review\n', stories: { '2-1-a': story(), '2-2-b': story() } })
+    assert.equal(queue.batches.length, 1, JSON.stringify(queue.batches))
+    assert.deepEqual(queue.batches[0].stages, ['review'])
+    assert.equal(queue.batches[0].stories.length, 2)
+    assert.equal((queue.validation?.errors ?? []).length, 0, '검증기 ④ 가 review 전용 배치의 겹침을 충돌로 세면 안 된다')
+  })
+
   it('규칙 6 — 새 화면(UX-DR-27) backlog 는 승인 목업이 있어야 편성한다', () => {
     const epics = '### Story 2.1: a\n새 화면이므로 구현 전 목업 확인(UX-DR-27)\n## 끝'
     const blocked = run({ sprint: '  2-1-a: backlog\n', epics })

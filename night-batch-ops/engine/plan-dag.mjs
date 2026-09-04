@@ -186,7 +186,9 @@ export function validatePlan(plan, dag = { nodes: [], edges: [], cycles: [], byK
       if (!STAGE_NAMES.includes(s)) errors.push(E('stage', stories[0] ?? null, `배치 ${bi + 1} 에 알 수 없는 단계 '${s}'`))
     }
     // ④ 같은 배치 안 충돌 — File List 겹침 + 범주별 위험(마이그레이션·스키마·계약·설정·테스트 환경)
-    if (stories.length >= 2) {
+    //    review 전용 배치(마감 재검수 · dev 없음)는 코드를 쓰지 않으므로 겹침이 병렬을 깨지 않는다 — 검사 생략(👤 2026-09-04).
+    const writesCode = !Array.isArray(b?.stages) || b.stages.includes('dev')
+    if (stories.length >= 2 && writesCode) {
       const lists = stories.map((k) => byKey.get(k)?.files ?? [])
       const hz = parallelHazardsExtended(lists, constraints.hazardOpts ?? {})
       if (!hz.parallelOk) {

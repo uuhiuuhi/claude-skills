@@ -97,8 +97,11 @@ export function parallelPlan({ storyCount, stages, parallel }) {
   if (!Number.isInteger(parallel) || parallel < 2) return 1
   // dev 전용뿐 아니라 dev+review(신규 스토리) 배치도 병렬 대상 — 각 워크트리 안에서
   // dev→qa→review 까지 돌고 커밋 1개로 landing 한다. create 는 스토리 파일 실재 시 skip 되고
-  // File List 실측 대조(호출부)가 그 실재를 전제한다. dev 없는 배치(재검수 등)는 순차.
-  if (!Array.isArray(stages) || !stages.includes('dev')) return 1
+  // File List 실측 대조(호출부)가 그 실재를 전제한다.
+  // review 전용 배치(마감 재검수 · 👤 2026-09-04 「리뷰 병렬 만들어」)도 병렬 — 리뷰는 코드를 안 쓰고
+  // 스토리 md + 공유 장부만 쓰므로 File List 겹침이 무의미하고(호출부가 검사를 건너뛴다), 장부는
+  // landing 의 union 해소가 합친다. create·mockup 만 있는 배치는 종전대로 순차.
+  if (!Array.isArray(stages) || !(stages.includes('dev') || stages.includes('review'))) return 1
   // replan(시니어 재계획 · 스토리 md 만 씀)은 워크트리 안에서 함께 돌아도 된다. mockup 은 공유 장부
   // (tools/dev-status/mockup-verdicts.json)를 쓰므로 순차(landing 충돌 방지).
   if (stages.some((s) => !['create', 'dev', 'review', 'replan'].includes(s))) return 1

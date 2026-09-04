@@ -1210,15 +1210,23 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
     return f ? readFileSync(join(ART, f), 'utf8') : null
   })
   const lists = storyText.map((t) => (t == null ? null : parseFileList(t)))
-  // 빈 목록(절은 있는데 항목 0 — 아직 dev 안 돈 스펙)도 「모르는 것」이다 — 파일을 모르는 채
-  // 병렬로 돌리면 겹침 판정이 무의미하다. 신규 스토리를 병렬로 돌리려면 지시서에 예상 File List 를 채운다.
-  if (lists.some((l) => l == null || l.length === 0)) { record('· 병렬 폴백 — File List 부재/빈 목록 스토리 존재(모르는 채 병렬 금지)'); return null }
-  if (fileListConflicts(lists)) { record('· 병렬 폴백 — File List 실측 겹침'); return null }
-  // 내장 toolchain 검사 + **확장 충돌 판정기 주입**(conflicts.parallelHazardsCompat).
-  // 마이그레이션 번호 경합·생성물 스키마·API 계약·공유 설정·테스트 환경은 File List 가 겹치지 않아도
-  // 병렬이 깨진다 — 걸리면 자동으로 뭉개지 않고 **순차로 내려간다**(사유를 로그에 남긴다).
-  const hz = parallelHazards(lists, { judges: [parallelHazardsCompat] })
-  if (!hz.ok) { record(`· 병렬 폴백 — [PARALLEL][HAZARD] ${hz.why}`); return null }
+  // review 전용 배치(마감 재검수)는 코드를 쓰지 않는다 — 스토리 md + 공유 장부(union 해소)뿐이라 File List
+  // 겹침·toolchain 위험 판정이 무의미하다. 스토리 파일 실재만 확인하고 판정을 건너뛴다(👤 2026-09-04 「리뷰 병렬 만들어」).
+  const reviewOnly = !(batch.stages ?? ['dev']).includes('dev')
+  const laneLabel = reviewOnly ? 'REVIEW' : 'DEV'
+  if (reviewOnly) {
+    if (storyText.some((t) => t == null)) { record('· 병렬 폴백 — 스토리 파일 부재(리뷰 대상이 없다)'); return null }
+  } else {
+    // 빈 목록(절은 있는데 항목 0 — 아직 dev 안 돈 스펙)도 「모르는 것」이다 — 파일을 모르는 채
+    // 병렬로 돌리면 겹침 판정이 무의미하다. 신규 스토리를 병렬로 돌리려면 지시서에 예상 File List 를 채운다.
+    if (lists.some((l) => l == null || l.length === 0)) { record('· 병렬 폴백 — File List 부재/빈 목록 스토리 존재(모르는 채 병렬 금지)'); return null }
+    if (fileListConflicts(lists)) { record('· 병렬 폴백 — File List 실측 겹침'); return null }
+    // 내장 toolchain 검사 + **확장 충돌 판정기 주입**(conflicts.parallelHazardsCompat).
+    // 마이그레이션 번호 경합·생성물 스키마·API 계약·공유 설정·테스트 환경은 File List 가 겹치지 않아도
+    // 병렬이 깨진다 — 걸리면 자동으로 뭉개지 않고 **순차로 내려간다**(사유를 로그에 남긴다).
+    const hz = parallelHazards(lists, { judges: [parallelHazardsCompat] })
+    if (!hz.ok) { record(`· 병렬 폴백 — [PARALLEL][HAZARD] ${hz.why}`); return null }
+  }
 
   // 배치 트리를 오늘 브랜치로(순차 경로에선 엔진 ensureBranch 몫 — 병렬은 러너가 선다)
   const cur = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).stdout.trim()
@@ -1255,7 +1263,7 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
     // nested 워커 deny 설정(pipeline-settings.json)은 **사본을 흩뿌리지 않는다** — 러너가 시작 시 실측한
     // 절대경로를 `--pipeline-settings` 로 넘긴다(engineArgsFor). 워크트리에 그 파일이 없어도 워커가 본다.
   }
-  record(`· 병렬 실행 ${workers}폭 — dev 만 병렬, 커밋 가드는 엔진 그대로, landing·push 는 직렬`)
+  record(`· 병렬 실행 ${workers}폭 — ${reviewOnly ? 'review 전용(코드 무접촉 · File List 판정 생략) 병렬' : 'dev 만 병렬'}, 커밋 가드는 엔진 그대로, landing·push 는 직렬`)
 
   // ── 워커 배정(assign.assignWorkers) + 프로바이더별 동시 상한 ──
   // 종전 홀짝 분할(runner-rules.assignProviders)을 대체한다: 난이도·위험도·역할·슬롯 상한·과거
@@ -1298,8 +1306,10 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
       }
       w.dev = dev
       w.review = review
-      w.devProvider = specProvider(dev)
       w.reviewProvider = specProvider(review)
+      // 레인(pickRunnable 의 프로바이더 상한)은 devProvider 로 센다 — review 전용 배치는 실제로 도는 것이 리뷰뿐이므로
+      // 리뷰 프로바이더를 레인으로 삼는다(codex max 1 이 codex 리뷰 동시 실행을 실제로 제한하게).
+      w.devProvider = reviewOnly ? w.reviewProvider : specProvider(dev)
       w.assignWhy = why
       if (PCFG.configured) record(`· [ASSIGN] ${w.story} dev=${dev || '(기본)'}(${w.devProvider}) review=${review || '(없음)'}(${w.reviewProvider}) — 난이도 ${a.difficulty}·위험 ${a.risk}${a.flags.length ? `(${a.flags.join(',')})` : ''} · ${why}`)
     }
@@ -1345,13 +1355,13 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
       for (const wt of pickRunnable(pending, [...running.values()], caps)) {
         pending.splice(pending.indexOf(wt), 1)
         running.set(wt.story, wt)
-        console.log(`[${wt.story}][${wt.devProvider.toUpperCase()}][DEV] spawn wt=${wt.dir} · 동시 ${running.size}/${caps.total}${wt.review ? ` · review=${wt.review}` : ''}`)
+        console.log(`[${wt.story}][${wt.devProvider.toUpperCase()}][${laneLabel}] spawn wt=${wt.dir} · 동시 ${running.size}/${caps.total}${wt.review ? ` · review=${wt.review}` : ''}`)
         runOne(wt).then((o) => {
           running.delete(wt.story)
           outs.push(o)
           // 워크트리 로그는 **제거 전에** 읽는다(cleanup 뒤엔 없다) — 단계 타임라인·Codex 토큰의 유일한 원본.
           wt.stageEvents = readWorktreeTimeline(wt)
-          console.log(`[${wt.story}][${wt.devProvider.toUpperCase()}][DEV] exit=${o.code} · 남은 대기 ${pending.length} · 실행 중 ${running.size}`)
+          console.log(`[${wt.story}][${wt.devProvider.toUpperCase()}][${laneLabel}] exit=${o.code} · 남은 대기 ${pending.length} · 실행 중 ${running.size}`)
           const info = readExitInfo(wt.dir)
           const bp = blockedProviderFromExit(info)
           if (bp && !blocked.includes(bp) && pending.length > 0) {
@@ -1458,7 +1468,8 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   if (!dryRun) {
     writeAssignHistory(wts.flatMap((wt) => {
       const okStory = (outs.find((o) => o.story === wt.story)?.code ?? 1) === 0
-      const rows = [{ story: wt.story, provider: wt.devProvider ?? 'claude', role: 'dev', ok: okStory, rounds: 1 }]
+      // review 전용 배치는 dev 가 돌지 않았다 — dev 성적을 적으면 다음 배정이 없는 실패/성공을 근거로 삼는다
+      const rows = reviewOnly ? [] : [{ story: wt.story, provider: wt.devProvider ?? 'claude', role: 'dev', ok: okStory, rounds: 1 }]
       if (wt.review) rows.push({ story: wt.story, provider: wt.reviewProvider ?? specProvider(wt.review), role: 'review', ok: okStory, rounds: 1 })
       return rows
     }))
