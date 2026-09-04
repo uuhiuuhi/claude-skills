@@ -306,6 +306,10 @@ describe('[run-night] 배선 앵커 — 순수 규칙이 실제로 러너에 꽂
     assert.ok(src.includes("process.env.AUTO_PLAN_RUNNER_STUB ? [ORCH.model] : ORCH.ladder"), '스텁 실행기는 모델을 모르므로 사다리를 타지 않는다')
     assert.ok(src.includes("if (res.source === 'fable' || !shouldLadderOn(res.source)) break"), '사다리는 실행기 사고에만 탄다')
     assert.ok(src.includes('model: PLAN_MODEL ?? ORCH.model'), '채택 기록에는 실제로 계획을 낸 모델을 적는다')
+    // 2026-09-04 18:44 실사고 — 순차 배치 뒤 병렬 landing 이 「추적 로그 dirty」로 cherry-pick 거부(충돌 파일 0)되고 「자동 해소 불가 충돌」로 오보됐다
+    const iLogCommit = src.indexOf('landing 전 로그 정리(추적 로그 dirty → cherry-pick 거부 방지)'), iPick = src.indexOf("spawnSync('git', ['cherry-pick', head]")
+    assert.ok(iLogCommit > 0 && iPick > iLogCommit, 'landing 전에 러너·엔진 소유 로그(LOG_PREFIX)를 커밋해 트리를 깨끗이 한다')
+    assert.ok(src.includes("'cherry-pick 거부: '"), '충돌 파일 0 이면 「충돌」이 아니라 git 거부 사유를 적는다')
   })
   it('[#9] 증거 보관은 로그뿐 아니라 코드 diff·미추적 산출물·복구 절차를 남긴다 · 민감 경로는 애초에 제외', () => {
     for (const s of ["writeFileSync(join(dst, 'code.diff')", "join(dst, 'untracked', rel)", "writeFileSync(join(dst, 'summary.json')", "writeFileSync(join(dst, 'RESTORE.md')", 'EVIDENCE_DIFF_EXCLUDES', 'isSensitivePath(rel)', 'EVIDENCE_MAX_BYTES']) assert.ok(src.includes(s), `누락: ${s}`)

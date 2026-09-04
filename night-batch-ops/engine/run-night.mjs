@@ -39,7 +39,7 @@ import { parallelHazardsCompat } from './conflicts.mjs'
 import { appendJsonl, metricsHistoryPath, parseCodexUsage, parseEngineLog, renderMetricsTable, summarizeTimeline, writeJsonAtomic } from './metrics.mjs'
 import { makeClaudePlanRunner, requestPlan } from './orchestrate.mjs'
 import { buildDag, parseDependsOn } from './plan-dag.mjs'
-import { applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { LOG_PREFIX, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = join(homedir(), '.claude', 'skills', 'auto-story-finish', 'auto-story-pipeline.mjs')
 // mockup 단계가 든 배치는 목업 폴더(config mockupGate.mockupsDir · 기본 mockups)를 스토리 커밋에 함께 싣는다 —
@@ -1414,6 +1414,19 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   // landing — 원래 배치 순서 그대로 직렬(같은 브랜치 커밋 경합 방지). 실패 스토리는 건너뛰되
   // 나머지는 마저 반영한다(성공분을 버리지 않는다), 끝에 배치 STOP 으로 보고.
   let worst = 0
+  // landing 전 — 배치 트리에 **추적 로그의 미커밋 변경**이 있으면 cherry-pick 이 「local changes would be overwritten」로
+  // 적용 자체를 거부한다(충돌 파일 0 → landingResolution([]) = null → 「자동 해소 불가 충돌」로 오보 · 2026-09-04 18:44 실사고:
+  // 순차 배치(AUTO-4)의 엔진이 커밋 뒤에도 run-summary.log 에 「배치 완료」 줄을 더 적어 트리가 dirty 인 채 병렬 AUTO-5 가 왔다).
+  // 러너·엔진 소유 로그(LOG_PREFIX)만 먼저 커밋해 트리를 깨끗이 한다 — 통합 매니페스트 커밋과 같은 성격의 부기 커밋이다.
+  {
+    const dirtyLogs = (spawnSync('git', ['-c', 'core.quotePath=false', 'status', '--porcelain', '--untracked-files=no', '--', LOG_PREFIX], { encoding: 'utf8' }).stdout ?? '')
+      .split(/\r?\n/).map((l) => l.slice(3).trim()).filter(Boolean)
+    if (dirtyLogs.length) {
+      spawnSync('git', ['add', '-u', '--', LOG_PREFIX])
+      const c = spawnSync('git', ['-c', 'core.editor=true', 'commit', '-q', '-m', 'chore(batch): landing 전 로그 정리(추적 로그 dirty → cherry-pick 거부 방지)'], { encoding: 'utf8' })
+      record(c.status === 0 ? `- landing 전 로그 커밋 ${dirtyLogs.length}건(추적 로그 dirty 해소)` : `⚠ landing 전 로그 커밋 실패 — ${(c.stderr ?? '').trim().split('\n')[0]}`)
+    }
+  }
   const landingBase = headSha() // 통합 게이트 RED 시 여기로 되돌린다
   const landedStories = [] // { story, head } — 통합 게이트 대상(아래 충돌 분기의 boolean `landed` 와 다른 변수)
   const evidence = {} // story → 증거 폴더 경로(배치 매니페스트가 가리킨다)
@@ -1454,7 +1467,9 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
       if (!landed) {
         spawnSync('git', ['cherry-pick', '--abort'])
         spawnSync('git', ['tag', `archive/parallel-${wt.story}-${Date.now()}`, head]) // 산출물 보존 — 유실 금지
-        record(`- **landing 실패(자동 해소 불가 충돌): ${wt.story}** — 산출물은 archive/parallel-* 태그 보존 · 다음 순차 라운드가 회수`)
+        // 충돌 파일 0 = 충돌이 아니라 **적용 거부**(dirty 트리·잘못된 부모 등)다 — 사유를 그대로 적어야 다음 사람이 헛짚지 않는다.
+        const why = conflicted.length ? '자동 해소 불가 충돌: ' + conflicted.slice(0, 4).join(', ') : 'cherry-pick 거부: ' + ((pick.stderr ?? '').trim().split('\n').find((l) => /error|fatal/i.test(l)) ?? (pick.stderr ?? '').trim().split('\n')[0] ?? '?').slice(0, 160)
+        record(`- **landing 실패(${why}): ${wt.story}** — 산출물은 archive/parallel-* 태그 보존 · 다음 순차 라운드가 회수`)
         worst ||= 1
         continue
       }
