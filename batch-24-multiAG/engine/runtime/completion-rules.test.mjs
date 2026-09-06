@@ -259,6 +259,28 @@ describe('completion-rules — T7 BMAD 상태 = 코드 상태', () => {
     assert.equal(idOf(c, 'T7').result, FAIL)
   })
 
+  it('Status 값 뒤의 HTML 주석(워커 회차 메모)은 무시하고 값만 읽는다 · 주석 아닌 꼬리는 여전히 Status 줄 없음', () => {
+    const withNote = storyMd({ status: 'review <!-- 2026-09-06 **dev 13차 세션** 회수 라운드 완주 → review -->' })
+    const r = bmadStateAgreesWithCode({ storyText: withNote, sprintStatus: 'review', manifest: manifest() })
+    assert.equal(r.statusInFile, 'review')
+    assert.notEqual(r.why, '스토리에 Status 줄이 없다')
+    const paren = bmadStateAgreesWithCode({ storyText: storyMd({ status: 'review (2026-08-25 dev 5차)' }), sprintStatus: 'review', manifest: manifest() })
+    assert.equal(paren.statusInFile, null)
+    assert.equal(paren.ok, null)
+    // Sol-high 10차 L2 — 주석은 같은 줄 하나만: 두 번째 꼬리 · 다음 줄 주석 · 여러 줄 주석 · 주석만 있는 값은 전부 Status 줄 없음
+    for (const bad of ['review <!-- first --> outside -->', 'review <!-- open\nclose -->', 'review <!-- open\u2028close -->', 'review <!-- open\u2029close -->', '<!-- done -->']) {
+      const r2 = bmadStateAgreesWithCode({ storyText: storyMd({ status: bad }), sprintStatus: 'review', manifest: manifest() })
+      assert.ok(!r2.statusInFile, JSON.stringify(bad) + ' → ' + JSON.stringify(r2.statusInFile))
+      assert.equal(r2.ok, null, JSON.stringify(bad))
+    }
+    // 다음 줄의 주석은 별개 줄이다 — Status 줄 자체는 온전하므로 값을 읽는다
+    assert.equal(bmadStateAgreesWithCode({ storyText: storyMd({ status: 'review\n<!-- note -->' }), sprintStatus: 'review', manifest: manifest() }).statusInFile, 'review')
+    // 주석이 상태값을 덮어쓰지 못한다 · CRLF 줄끝에서도 값만 읽는다
+    assert.equal(bmadStateAgreesWithCode({ storyText: storyMd({ status: 'done <!-- review -->' }), sprintStatus: 'done', manifest: manifest() }).statusInFile, 'done')
+    assert.equal(bmadStateAgreesWithCode({ storyText: storyMd({ status: 'review <!-- 메모 -->' }).replace(/\n/g, '\r\n'), sprintStatus: 'review', manifest: manifest() }).statusInFile, 'review')
+    assert.equal(bmadStateAgreesWithCode({ storyText: storyMd({ status: 'review' }).replace(/\n/g, '\r\n'), sprintStatus: 'review', manifest: manifest() }).statusInFile, 'review')
+  })
+
   it('Status 줄이 없거나 본문이 없으면 미달이 아니라 not-verified 다', () => {
     assert.equal(bmadStateAgreesWithCode({ storyText: '' }).ok, null)
     assert.equal(bmadStateAgreesWithCode({ storyText: '# Story 2.1\n\n내용만 있다' }).ok, null)

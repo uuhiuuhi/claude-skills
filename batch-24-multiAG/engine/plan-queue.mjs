@@ -483,7 +483,9 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
       ' · 오늘 기편성 ' + day.planned.length + (chainAgeDays > 0 ? ' · 체인 ' + chainAgeDays + '일' : '') + ')',
     // parallel ≥ 2 = 병렬 점화 — File List 서로소 2스토리 dev 배치(규칙 5 짝)만 러너가
     // 워크트리 분리 병렬로 돌린다. 조건 미달 배치는 러너가 순차 폴백(runner-rules.parallelPlan).
-    defaults: { waitAuthMin: 480, stageTimeoutMin: 150, commit: true, push: true, parallel: cfg.parallel ?? 2 },
+    // push 는 **기본 끔** — 프로젝트 설정 `push: true`(사람이 원격 push 를 승인한 표시)일 때만 켠다. 값이 없거나 오타면 push 하지 않는다
+    // (Sol-high 10차: 옵트아웃이면 설정 누락이 곧 무승인 push 다). commit 은 그대로 로컬 auto/* 에 남는다.
+    defaults: { waitAuthMin: 480, stageTimeoutMin: 150, commit: true, push: cfg.push === true, parallel: cfg.parallel ?? 2 },
     batches: batches.map((b, i) => ({
       label: 'AUTO-' + (i + 1) + ': ' + b.map((c) => c.key.split('-').slice(0, 2).join('-')).join(' · ') + ' (' + (b[0].kind === 'recovery' ? '회수' : b[0].kind === 'closeout' ? '마감 재검수' : '신규') + ')',
       enabled: true,

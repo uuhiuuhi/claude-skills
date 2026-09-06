@@ -96,3 +96,12 @@ Claude `C:/Users/user/.claude/skills/batch-24-multiAG`와 Codex `C:/Users/user/.
 - **어댑터 env 파일**: 프로젝트 테스트처럼 `.env.local` 을 읽어 `requiredEnv` 존재를 판정(값 출력 0). 러너는 `.env.local` 을 프로세스 env 로 내보내지 않으므로 이것이 없으면 운영에서 integration 게이트가 항상 「env 없음」으로 실패했을 것이다.
 - **준비본 정리**: `d77f61dc` 가 옛 엔진째 복사해 둔 `tools/auto/runtime/*.test.mjs` 9개(가짜 시크릿 픽스처)가 프로젝트 `deploy-guard` ② 를 RED 로 만들어 제거했다(설치기가 배포하지 않는 파일 · main 에 없음 · Sol 승인).
 - Sol-high 독립 리뷰 7라운드(1차 3건 → … → 7차 「Release blocker: No」). 리뷰어 샌드박스는 임시 폴더 쓰기가 막혀 픽스처 테스트는 작성자 환경에서만 완주(54/54).
+
+
+## 후속 2 — 2026-09-06 밤: 첫 실배치 COMPLETION STOP 과 운영 수정 (push 기본 끔 · Status 주석 · 구현자 기록 복원 · 러너 독립 clone)
+
+- **첫 실배치 결과(18:39 슬롯)**: 운영 전환 자체는 완료됐으나(pinned `bef98b22` 기동 · `[MODEL-ROUTE]` codex:gpt-6-astra · 병렬 2 · lock 해제 정상) **정상 완주 배치는 0건**. 「2-4·2-25 마감 재검수」가 COMPLETION STOP — Codex 리뷰 clean 인데 T6(구현자 기록 없음)·T7(2-4 Status 꼬리 주석 미파싱 / 2-25 는 T6 미성립 상태에서 done 전이)로 not-verified · landing 0 · push 0. 원인은 코드 결함이 아니라 **운영 데이터 형식**(옛 엔진의 verification.json 은 새 엔진 증거로 승격되지 않음 · dev 워커의 `Status: x <!-- 메모 -->` 관례).
+- **수정(정본 · Sol-high 10~11차)**: `plan-queue` `defaults.push` 를 **기본 끔**(`cfg.push === true` 만 켬 — 10차 High) · T7 Status 정규식이 같은 줄 HTML 주석 꼬리 하나만 허용(10차 L2 · 11차 L1 강화). 초점 테스트 164/164. 기록: `SOL-HIGH-REVIEW-2026-09-06-SKIP-POLICY-GUARD.md` 10·11차.
+- **운영 데이터 복원(추측 없음)**: `state.json.workers` 11건은 run-summary `exit=0` dev 줄과 verification.json `workers.dev` 가 일치할 때만 복원(`restoredFrom` 동봉 · done 은 만들지 않음). 1-10 은 불일치로 `BLOCKED-ON-HUMAN` 보류(편성기가 사람 질문으로 분류하는 것을 `plan-queue` 로 실측). 필수 DB 검사 53건의 landing 차단은 그대로.
+- **러너 독립 clone**: 공유 `.git` 링크드 워크트리는 개발 저장소의 정상 커밋/fetch 를 워커 변경으로 오판한다(실측: 개발 저장소에 임시 브랜치+fetch+커밋 → 옛 폴더 지문 변경 / 독립 clone 지문 불변). `C:/Projects/jng-os-runner` = 로컬 저장소에서 clone(로컬 전용 커밋 승계) → origin 을 GitHub 로 재지정 · fetch → 무시 파일 335건(.env.local · 마커 · qa 로그) 복사 → `npm ci` → pin diff 0. 워커 자신의 브랜치 생성·commit→reset 탐지와 refs/codex 무시는 그대로. 옛 폴더 `C:/Projects/jng-os-auto` 는 복구용 보존(스케줄 작업만 새 경로로).
+- **남는 것**: 정상 완주 배치는 다음 슬롯 이후 확인 · 구 전역 스킬 보존 유지 · 운영 원격 push 는 사람 승인(`auto.config.json` `push: true`) 전까지 없음.

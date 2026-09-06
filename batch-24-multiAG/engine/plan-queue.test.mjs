@@ -245,8 +245,16 @@ describe('[OPS-1] 편성 규칙 8종', () => {
     assert.equal(queue.planned, 'auto')
     // toMatchObject — 부분 일치
     assert.equal(queue.defaults.commit, true)
-    assert.equal(queue.defaults.push, true)
+    // push 는 기본 끔 — 원격 push 는 프로젝트 설정 `push: true`(사람 승인 표시)로만 켜진다(Sol-high 10차 · 설정 누락·오타 = push 안 함)
+    assert.equal(queue.defaults.push, false)
     assert.deepEqual(queue.batches[0].stories, ['2-1-a'])
+    const fx = fixture({ sprint: '  2-1-a: review\n', stories: { '2-1-a': story({ findings: '- [ ] [Review][Patch] a' }) } })
+    const on = plan({ ...fx, config: { ...fx.config, push: true }, max: 12, today: '2026-08-26' }).queue
+    assert.equal(on.defaults.push, true)
+    assert.equal(on.defaults.commit, true)
+    for (const v of [false, 'true', 1, undefined]) {
+      assert.equal(plan({ ...fx, config: { ...fx.config, push: v }, max: 12, today: '2026-08-26' }).queue.defaults.push, false, `push=${String(v)}`)
+    }
     assert.ok(queue._편성.picked.length + queue._편성.excluded.length > 0)
   })
 

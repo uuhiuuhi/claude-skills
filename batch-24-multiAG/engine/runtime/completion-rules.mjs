@@ -113,7 +113,10 @@ export function crossReviewResult(manifest) {
  */
 export function bmadStateAgreesWithCode({ storyText = '', sprintStatus = null, manifest = null } = {}) {
   const text = str(storyText)
-  const m = /^\s*(?:\*\*)?Status(?:\*\*)?\s*:\s*([A-Za-z가-힣\- ]+?)\s*$/m.exec(text)
+  // 워커가 `Status: review <!-- 회차 메모 -->` 처럼 상태 뒤에 HTML 주석을 붙여 두는 관례를 인정한다 — 주석은 상태값이 아니다.
+  // 주석 밖의 다른 꼬리(괄호 메모 등)는 종전대로 「Status 줄 없음」이다(상태값을 추측하지 않는다).
+  // 같은 줄의 주석 하나만(첫 `-->` 에서 닫힘 · 줄바꿈 불가(LF·CR·U+2028/2029) · 꼬리 공백은 공백·탭·CR 만 — Sol-high 10차 L2 · 11차 L1) — 다음 줄의 주석이나 두 번째 꼬리는 인정하지 않는다.
+  const m = /^\s*(?:\*\*)?Status(?:\*\*)?\s*:\s*([A-Za-z가-힣\- ]+?)[ \t\r]*(?:<!--(?:(?!-->)[^\r\n\u2028\u2029])*-->[ \t\r]*)?$/m.exec(text)
   const statusInFile = m ? m[1].trim() : null
   const inSprint = sprintStatus == null ? null : str(sprintStatus).trim()
   const openPatch = countOpenFindings(text, 'Patch')

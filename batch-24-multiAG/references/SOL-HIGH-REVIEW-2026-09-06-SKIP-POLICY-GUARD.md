@@ -791,3 +791,38 @@ Markdown under 40 lines: `## Decision` (release blocker yes/no), `## Findings` (
 - `node --test batch-24-multiAG/engine/assign.test.mjs`: 14/14 passed
 - `node --check` on all three changed files: passed
 - `git diff --check -- <three reviewed files>`: passed; CRLF conversion warning only
+
+
+## 10차 · 11차 — 2026-09-06 밤: 첫 실배치 COMPLETION STOP 뒤의 운영 수정 2건 (push 스위치 · Status 주석 허용)
+
+### 배경
+
+pinned tooling `bef98b22` 의 첫 실슬롯(18:39 KST · 배치 「2-4·2-25 마감 재검수(병렬 2)」)이 **COMPLETION STOP** 으로 끝났다 — Codex(gpt-6-astra) 교차 리뷰는 두 스토리 모두 clean 이었으나 ① T6 「구현자(workers.dev.provider) 기록이 없어 만든 쪽과 다른 쪽인지 확인하지 못했다」(새 엔진은 옛 verification.json 의 workers 를 증거로 승격하지 않고 `state.workers` 만 본다 — 운영 state.json 에는 `workers` 가 없었다) ② 2-4 는 T7 「스토리에 Status 줄이 없다」(dev 워커가 남긴 `Status: review <!-- 회차 메모 -->` 꼬리 주석을 정규식이 거부). 실행 보고서는 「푸시 켬」이었고 push 를 끌 설정 스위치가 없었다(plan-queue 하드코딩 `push: true`).
+
+### 수정(정본 · 4파일)
+
+- `engine/plan-queue.mjs` — `defaults.push = cfg.push === true` (**기본 끔** · 프로젝트 `auto.config.json` 의 `push: true` 만 켠다). 10차 1차안은 `cfg.push !== false`(옵트아웃)였고 Sol 이 High 로 막았다.
+- `engine/runtime/completion-rules.mjs` — T7 Status 정규식이 같은 줄 HTML 주석 꼬리 하나를 허용(첫 `-->` 에서 닫힘 · LF/CR/U+2028/U+2029 불가 · 꼬리 공백은 공백·탭·CR). 주석 아닌 꼬리(괄호 메모)는 종전대로 「Status 줄 없음」.
+- 테스트: plan-queue(기본 false · true 만 켬 · `false`/`'true'`/`1`/`undefined` 전부 false) · completion-rules(주석 꼬리 → 값 · 두 번째 꼬리/여러 줄/주석만 → 없음 · `done <!-- review -->` → done · CRLF).
+- 초점 테스트 164/164(completion-rules · plan-queue · runner-rules · autonomy · autofinish). 운영 프로젝트 활성 스토리 23건의 Status 줄 전건이 새 정규식으로 sprint-status 와 일치.
+
+### 10차 프롬프트 요지
+
+두 파일 diff 만 검토. 질문: ① `cfg.push !== false` 기본값이 맞는가 · push false 일 때 다른 push 경로가 남는가 ② 주석 정규식이 속을 수 있는가(`done <!-- review -->` · `<!-- done -->` · `-->` 두 번 · 여러 줄 주석) ③ `.*?` 에 s 플래그가 필요한가.
+
+### 10차 결과 (gpt-5.6-sol · high)
+
+**Release blocker: YES.** ① High — 옵트아웃 기본값은 설정 누락·오타가 곧 무승인 push 다 → `cfg.push === true` 로. ② Low — 같은 줄 `-->` 두 번은 백트래킹으로 통과, `\s*` 가 줄을 넘는다. 잔여: push false 면 run-night 1374·1515·1687·1711 어느 경로도 push 하지 않음 · `setStoryStatus` 는 상태 토큰만 바꾸고 주석을 보존(story-writes.mjs:28-30) · bmad-sync 는 줄 전체 비교 그대로.
+
+### 11차 프롬프트 요지
+
+10차 지적 반영분만 재검토(`=== true` 기본 끔 · 정규식 강화). 질문: ① fail-closed 인가 ② 평문/굵게/CRLF Status 회귀 없나 ③ 긴 주석 줄에서 재앙적 백트래킹 위험.
+
+### 11차 결과
+
+**Release blocker: No.** push 는 fail-closed(plan-queue.mjs:488 · run-night 4경로 확인). 평문·굵게·CRLF 정상. 1,000,000자 주석 5.9ms(닫힘)/13.4ms(미닫힘) — 선형. Low 1건: `[^\S\n]`·`[^\r\n]` 가 U+2028/U+2029 를 허용 → 작성자가 `[ \t\r]` · `[^\r\n\u2028\u2029]` 로 조인 뒤 테스트 2건 추가(11차 이후 기계적 강화 · 재리뷰 없음).
+
+### 운영 반영
+
+- 운영 state.json `workers[<story>::dev]` 11건 복원(2-4 · 2-22 · 2-23 · 2-25 · 3-6 · 3-7 · 11-2 · 11-3 · 11-6 · 11-7 · 4-0) — run-summary.log 의 `dev (model=opus)` 시작줄과 뒤따르는 `exit=0` 줄 + `<story>-verification.json` `workers.dev=claude/opus` 두 기계 기록이 일치할 때만, `restoredFrom` 근거를 동봉해 기록. 완료 상태(done)는 만들지 않았다. 1-10 은 기록 불일치(로그 08-13 opus vs 문서 fable · verification 없음)로 `BLOCKED-ON-HUMAN` 보류.
+- 운영 러너는 공유 `.git` 링크드 워크트리(`C:/Projects/jng-os-auto`)에서 **독립 clone**(`C:/Projects/jng-os-runner` · 로컬 전용 커밋 7건 + 오늘 커밋 승계)으로 이전 — 개발 저장소의 브랜치/fetch/커밋이 워커 지문을 바꾸지 않고(실측 A) 워커 자신의 브랜치·commit→reset 은 계속 잡히며(실측 B·C) refs/codex 는 무시(D)한다.
