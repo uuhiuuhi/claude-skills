@@ -752,14 +752,18 @@ async function applyOrchestrator(q, outPath) {
     const f = readdirSync(ART).find((n) => n.startsWith(key) && n.endsWith('.md'))
     const text = f ? readFileSync(join(ART, f), 'utf8') : ''
     const b = batches.find((x) => (x.stories ?? []).includes(key)) ?? {}
+    // parseFileList() returns null when the story has no `## File List` section (new backlog story, or no story file yet):
+    // treat that as an empty list here — an unknown file set is scored as maximum risk/difficulty below, never a crash
+    // (2026-09-06 rehearsal: `--auto-plan --dry-run` threw on a backlog story without a File List).
+    const files = (text ? parseFileList(text) : null) ?? []
     return {
       key,
       epic: Number(String(key).split('-')[0]) || null,
       kind: /회수/.test(b.label ?? '') ? 'recovery' : /마감/.test(b.label ?? '') ? 'closeout' : 'new',
       force: Boolean(b.force),
-      files: text ? parseFileList(text) : [],
-      risk: Math.max(parseFileList(text).length ? 0 : 4, storyRisk({ text, files: parseFileList(text) }).score),
-      difficulty: Math.max(parseFileList(text).length ? 0 : 8, storyDifficulty({ text, files: parseFileList(text) }).score),
+      files,
+      risk: Math.max(files.length ? 0 : 4, storyRisk({ text, files }).score),
+      difficulty: Math.max(files.length ? 0 : 8, storyDifficulty({ text, files }).score),
       deps: text ? parseDependsOn(text) : [],
       stages: b.stages ?? [],
       status: /^Status:\s*(\S+)/m.exec(text)?.[1] ?? '', // 지문 재료 — 같은 후보라도 상태가 바뀌면 다시 묻는다

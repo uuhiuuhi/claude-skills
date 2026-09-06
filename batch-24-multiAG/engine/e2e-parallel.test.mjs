@@ -943,6 +943,27 @@ describe('[e2e][#18] Fable 계획 — 채택 · 거부 폴백 · 기본 꺼짐',
     assert.match(r.summary, /- 계획 출처: `deterministic`/, r.summary)
     assert.ok(!/- 계획 캐시:/.test(r.summary), '꺼져 있으면 캐시 줄도 없다')
   })
+
+  // 2026-09-06 운영 리허설 실사고: File List 절이 없는 스토리(새 backlog · 스토리 파일 미생성)가 후보에 들면
+  // metaFor 가 parseFileList() 의 null 을 배열로 가정해 TypeError 로 러너가 죽었다. 파일 목록 미상은 「최대 위험/난도」로
+  // 점수화될 뿐 밤이 서면 안 된다.
+  it('File List 절이 없는 스토리가 후보여도 오케스트레이터는 죽지 않고 계획을 채택한다', () => {
+    const fx = orchFixture(true)
+    const md = join(fx.art, '2-1-a.md')
+    const text = readFileSync(md, 'utf8')
+    const at = text.search(/^#{2,3} File List\s*$/m)
+    assert.ok(at >= 0, '전제: 픽스처 스토리에 File List 절이 있다')
+    const rest = text.slice(at).split('\n').slice(1)
+    const next = rest.findIndex((l) => /^#{1,6} /.test(l))
+    writeFileSync(md, text.slice(0, at) + (next >= 0 ? rest.slice(next).join('\n') : ''))
+    assert.equal(/^#{2,3} File List\s*$/m.test(readFileSync(md, 'utf8')), false, '전제: File List 절을 지웠다')
+    ok(git(fx.proj, ['commit', '-qam', 'story without File List']), 'commit')
+    const stub = planStub(fx, JSON.stringify({ rationale: '스텁 계획', batches: [{ label: '스텁 A', stories: ['2-1-a'], stages: ['create', 'dev', 'review'] }, { label: '스텁 B', stories: ['2-2-b'], stages: ['create', 'dev', 'review'] }] }))
+    const r = runRunner(fx, { args: ['--auto-plan', '--dry-run'], env: { AUTO_PLAN_RUNNER_STUB: stub } })
+    assert.equal(r.status, 0, r.out.slice(-3000))
+    assert.ok(!/TypeError|Cannot read properties of null/.test(r.out), r.out.slice(-2000))
+    assert.match(r.out, /\[ORCHESTRATOR\] source=fable/, r.out.slice(-2000))
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────

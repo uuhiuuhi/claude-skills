@@ -694,3 +694,51 @@ Markdown under 60 lines: `## Decision` (release blocker yes/no), `## Blocker sta
 
 - 7라운드 끝에 **Release blocker: No**(7차). 시정 이력: 1차 3건(fail-open 변경 범위 · documented/env 면제 · 무장/우선순위) → 2차 2건(csv/jsonl 문서 취급 · envSource 결박 부재) → 3차 2건(디렉터리 접두 예외 · 주석/문자열 정규식 매칭) → 4차 1건(정규식 리터럴) → 5차 1건(문맥 판정 한계 → TypeScript AST 로 교체) → 6차 1건(비소스 접미사 import) → 7차 없음. 1차-b(중단 명령의 뒤늦은 산출물)의 「모듈 단위 거절 우회」·「capability 문구」도 6차 전에 반영.
 - 리뷰어 샌드박스는 임시 폴더 쓰기가 막혀 픽스처 테스트를 완주하지 못했다 — 작성자 환경 실행 54/54(어댑터·가드 refs·엔진 가드), 프로젝트 `readConfig` 67건(53 required-missing / 14 optional), 실DB 실측 차단 53 / 승인 14(로그 헤더에 BATCH_BASE/CHANGED 기록).
+---
+
+## 8차 (별건 · 운영 리허설에서 발견한 run-night null 가드) — 출시 차단 없음
+
+### 요청
+
+You are the same independent release reviewer (OpenAI Codex, gpt-5.6-sol, reasoning high). **Eighth round — a separate, small change** found during the operational rehearsal after your round-7 "no blocker" decision (that change set is now committed as `bdba6ec`). Review ONLY the current uncommitted diff (`git status`, `git diff`): `batch-24-multiAG/engine/run-night.mjs` and `batch-24-multiAG/engine/e2e-parallel.test.mjs`. Do not modify files; no git write commands. Cite file:line.
+
+## What happened
+
+`node tools/auto/run-night.mjs --auto-plan --dry-run` in the operational clone (`C:/Projects/jng-os-auto`, pinned tooling `429aa3ca`) crashed:
+```
+run-night.mjs:761  risk: Math.max(parseFileList(text).length ? 0 : 4, …)
+TypeError: Cannot read properties of null (reading 'length')  at metaFor → applyOrchestrator → selectQueue
+```
+`parseFileList()` (`engine/runner-rules.mjs:126`) returns `null` when the story has no `## File List` section (new backlog story, or no story file yet → `text === ''`). `metaFor()` guarded `files:` but not `risk`/`difficulty`.
+
+## Remediation (author's statement — verify)
+
+- `engine/run-night.mjs` `metaFor()`: compute `const files = (text ? parseFileList(text) : null) ?? []` once and use it for `files`, `risk` and `difficulty` (an unknown file set still scores maximum risk 4 / difficulty 8 as before; behaviour for stories *with* a File List is unchanged — same values, one parse instead of five).
+- `engine/e2e-parallel.test.mjs` `[e2e][#18]`: new case strips the `## File List` section from fixture story `2-1-a`, commits, runs `--auto-plan --dry-run` with a stub plan naming that story, and asserts exit 0, no `TypeError`, and `[ORCHESTRATOR] source=fable`. Focused runs: that case + the existing "유효 계획" case 2/2; `runner-rules.test.mjs` + `orchestrate.test.mjs` 51/51.
+
+## Required output
+
+Markdown under 50 lines: `## Decision` (release blocker yes/no), `## Findings` (only if genuinely within this diff; numbered; severity; blocker yes/no; file:line; reproduction), `## Residual risks`, `## Commands you ran`. Do not re-review the already-reviewed skip-policy/guard change. Print the markdown to stdout as your final message.
+
+### 결과
+
+## Decision
+
+**Release blocker: No.** The normalization at `batch-24-multiAG/engine/run-night.mjs:758` safely converts missing `File List` data to `[]`; lines 764–766 consistently reuse it without changing populated-list behavior. The regression covers the reported real CLI path at `batch-24-multiAG/engine/e2e-parallel.test.mjs:950`.
+
+## Residual risks
+
+- Filesystem-backed tests could not complete independently because this review sandbox denies `mkdtemp` with `EPERM`. The 44 non-filesystem tests passed; the remaining 7, including both focused E2E cases, failed during fixture creation rather than product execution.
+- The new test verifies crash prevention and Fable-plan adoption (`e2e-parallel.test.mjs:962–965`), but does not directly assert the risk/difficulty values. Their preservation is clear from `run-night.mjs:765–766`.
+- Applied the `batch-24-multiAG` skill’s review and QA guidance.
+
+## Commands you ran
+
+- `git status --short`
+- `git diff -- batch-24-multiAG/engine/run-night.mjs batch-24-multiAG/engine/e2e-parallel.test.mjs`
+- `git diff --check` — clean
+- `node --check` on both changed files — passed
+- Focused E2E command — 2/2 blocked at `mkdtemp` by sandbox `EPERM`
+- `runner-rules.test.mjs` + `orchestrate.test.mjs` — 44/51 passed; 7 blocked at `mkdtemp`
+- Retried with workspace `TEMP`/`TMP`; same sandbox denial
+- Escalated retry was unavailable because approval policy is `Never`
