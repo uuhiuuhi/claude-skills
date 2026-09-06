@@ -1,15 +1,28 @@
 {
   "schema": "batch-24-multiag/consolidation-verification/1",
-  "generatedAt": "2026-09-06T13:55:15.693008+09:00",
-  "scope": "repository source validation; not an operational story completion manifest",
+  "generatedAt": "2026-09-06T06:54:24.803Z",
+  "scope": "Repository implementation and isolated project installation; not operational story completion",
   "baseCommit": "166e28cf4af31c3309f9f19a7b8ed0f0219f94c3",
+  "implementationCommit": "be8e77694c7f06e3dcee2eeb6d11dc6ceb0f5d3e",
   "branch": "codex/quality-gates-9-consolidation",
   "repositoryChecks": "pass",
-  "releaseDecision": "review-candidate",
-  "operationalRollout": "blocked",
-  "codeFingerprint": "8a95cd1284577d1d8ef031753827d89968355eb4ae6e3194e691c1c91ed90604",
-  "fingerprintAlgorithm": "SHA256 of sorted compact JSON mapping repository-relative .mjs paths to SHA256 file bytes",
+  "completionVerdict": "ready",
+  "releaseDecision": "reviewed-feature-branch; operational rollout blocked",
+  "operationalRollout": "not-verified",
+  "codeFingerprint": "a02c61b447793c74ae57816a5960cc258388c3bd876fb37a33c73bd74dfd874e",
+  "fingerprintAlgorithm": "SHA256(sorted repo-relative mjs path + NUL + physical bytes + NUL)",
+  "review": {
+    "model": "gpt-5.6-sol",
+    "reasoning": "high",
+    "independentModel": true,
+    "crossProvider": false,
+    "remainingCodeBlockers": 0,
+    "reviewedImplementationFingerprint": "02ff9429f77ad3c7b1ebd1988da8b3fa658e47e72e163044e1df7166676c5245",
+    "report": "../SOL-HIGH-REVIEW-RESULT.md"
+  },
   "sourceSha256": {
+    "batch-24-multiAG/adapters/vitest-quality.mjs": "76f66f084488d3d2f75b8e13abf2254261dc51bfed8f94e5f9148231bbae5d12",
+    "batch-24-multiAG/adapters/vitest-quality.test.mjs": "e0f4b4f1bb270fbbfb81f3ae65414c128b807d24eece54b834843be9a93a9bca",
     "batch-24-multiAG/engine/asf-resolve.mjs": "e76f53d446e36a55cb115c48090b8fcd45ea37c67192c6400495c1486be4aa72",
     "batch-24-multiAG/engine/assign.mjs": "16322f6ed0ab2ef3003f05d1e6154bd6bc22f40e1466b25da09ef208ed53eb4b",
     "batch-24-multiAG/engine/assign.test.mjs": "45a25663927fc64c70ac25cc9b9d8b8be5fa994c7710b7f6e8bf9b5572e39669",
@@ -25,7 +38,7 @@
     "batch-24-multiAG/engine/bmad-sync.test.mjs": "e64849948271c008b08e0fa0a416a7ce4c75178e0f81aeba229ee973aca0e272",
     "batch-24-multiAG/engine/conflicts.mjs": "f0dbc325e782e49512791a6a6dda60af028ee6c48787df80c28ae3d8b1aabb40",
     "batch-24-multiAG/engine/conflicts.test.mjs": "cf9425c0638e8f37cdb2bac3884bc88d12ab6e08ebafc56bb60029df8c9cb54b",
-    "batch-24-multiAG/engine/consolidation.test.mjs": "ef7d84e75632e3d8323b07975dfd7300c2a892995ddb66b8e0872e2d0ae3509a",
+    "batch-24-multiAG/engine/consolidation.test.mjs": "d832e97b24b058767c0af8012c8ad6f2d20dcca634dca31ed2973f74b7671b70",
     "batch-24-multiAG/engine/decisions.mjs": "064c25c8d0fb191ba75398872f157346cb7fc0f237297f3371ccf1ba7f807d59",
     "batch-24-multiAG/engine/decisions.test.mjs": "4ed3ee4d8153818dde4baa76e9bd20a5b71f7d01c872d441dfef8a3353b7e252",
     "batch-24-multiAG/engine/diagnose.mjs": "7cd9a4e27c68fa6c6cea2a3b3b5a7953a58cfc67b4e5c162fbd8696cbfac3e43",
@@ -38,7 +51,10 @@
     "batch-24-multiAG/engine/fixtures/stub-claude.mjs": "d2966387a610f6df22300506169cb666c213c9548dad63752e0276ab0e82c9af",
     "batch-24-multiAG/engine/fixtures/stub-codex.mjs": "82cf8ad1327c99796613b199a87a418bf3a57a6d8112ee3c12d3dfdc5ea6ce36",
     "batch-24-multiAG/engine/gate-benchmark.mjs": "b7e67b89305a17dd9a3c7b41aa3c8e71f6266ede76bd2e4d1cfbe9ff766afb1a",
-    "batch-24-multiAG/engine/gate-benchmark.test.mjs": "d2ef45fa26cc7c46e6ac697a8c745609b0e470ded48ff7e69609dfdcdf633af6",
+    "batch-24-multiAG/engine/gate-benchmark.test.mjs": "225d60bc4afa1fa1c65952bd2b9f9ad9d93023e0384341f84084d65620eed935",
+    "batch-24-multiAG/engine/install-contract.test.mjs": "ecb66c4ab9a583241eb26e4fd409ce188da5fa27cb1b1c742dc205a01a179e17",
+    "batch-24-multiAG/engine/landing-publication.mjs": "12f9c61f3ab0a5dd725854434aaf6acd6534d45d774dd74a5b00418d7dd0a62e",
+    "batch-24-multiAG/engine/landing-publication.test.mjs": "9645b2d144c2e58a103007334ccf4d817aeb8501b376cb0caa4f27a2eb767606",
     "batch-24-multiAG/engine/manual-cli.test.mjs": "420def3cd37cdf507c680420fa34f1675862a7cf8037803594c2eca12051ce1c",
     "batch-24-multiAG/engine/metrics.mjs": "deb91a9f1d97f053661648abf35092dadc67cd048e2d8d349839a91c7ea41c55",
     "batch-24-multiAG/engine/metrics.test.mjs": "472ac6cb471f74a4628a10294620930e2e2180a3207a9933eb734061421cbfc2",
@@ -54,40 +70,44 @@
     "batch-24-multiAG/engine/readiness.test.mjs": "c9ca833992fd212011b2d31bae92b1837ea4bfdfa85df20fd6a1eb142b19ac9d",
     "batch-24-multiAG/engine/report.mjs": "bfae2b61727f5baff32197c46dc25b0873b519f380a63b8bebffc1b2eafd83f2",
     "batch-24-multiAG/engine/report.test.mjs": "0f8508eafe8be5471adffb3b5997c92ecbf11322bdc899948cbe48303e0d4864",
-    "batch-24-multiAG/engine/run-night.mjs": "39464017d7dd83ab048b6e281330993bb81c8b8370182bf197a40a7e383097bc",
+    "batch-24-multiAG/engine/run-night.mjs": "d83440d510cfd543503a1524af9680952de48ba1e55d30367b7d4069ee7313ce",
     "batch-24-multiAG/engine/runner-rules.mjs": "fd36e16d9bc17a0abb179e1300d86762d62af53264161e7b9cb5fe59790cc410",
     "batch-24-multiAG/engine/runner-rules.test.mjs": "d1e47a5f3786f76473688536366275df7c41e524d186eb59ff5e69c59fc95572",
+    "batch-24-multiAG/engine/runtime-pin.mjs": "885f4c1d552986291c22d5c0c5f370c418116a003ee0819ec8fe437f5dfa21c5",
+    "batch-24-multiAG/engine/runtime-pin.test.mjs": "c5fa4ddf44be9ac219de14994aeded22be488df13169fcec0c265681793c3125",
+    "batch-24-multiAG/engine/runtime-resolution.test.mjs": "e84c0d349c4253df8d00241d686566737bd8b4a51dd4590d1bea59468a1771e3",
+    "batch-24-multiAG/engine/runtime/api-surface.mjs": "0efb6fbe8b09e3bc6ff3bb7e649254ea0bed0aca7b44e83628ed07c71e11444a",
+    "batch-24-multiAG/engine/runtime/api-surface.test.mjs": "cd2dc11705218931917250f87cffde67a437bfca51829659c2cb82706a99631d",
     "batch-24-multiAG/engine/runtime/authorization-matrix.mjs": "6808ec69c76c8c4cb5495c6cf211c652e1fa740c6855bcbfc705b26a8e8a6878",
     "batch-24-multiAG/engine/runtime/authorization-matrix.test.mjs": "1efef3f8570bac98e688f17b8e5a25b678997ca770678de200efb77fbb49b910",
-    "batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs": "b495d5ffd24c03a3ec6d319f8aaa5c1a7bf3f255f25e368006dc6bec3e53b867",
+    "batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs": "ae668b4f2e724f515d8e70cccfc66143a9851191e2843a724c615952486e42e6",
     "batch-24-multiAG/engine/runtime/claude-trace.test.mjs": "2e3b3cc4234314d1ff475a5d17b9403da2162eb4124dd986cf744bc7e58b1484",
     "batch-24-multiAG/engine/runtime/completion-rules.mjs": "0bdebf921e4505bc653a9dc0b7ff3527628a35cdbcd0e2eec7e09c8dbcc09780",
     "batch-24-multiAG/engine/runtime/completion-rules.test.mjs": "581c3768b3eac00ab436d80631e7c2024b49bb6768ba8f3988b5465b72c122ea",
-    "batch-24-multiAG/engine/runtime/engine-e2e.test.mjs": "177de44caca8a760c269bbb6db18bd9a671a5bc7c35cbf64f3457b4c14e99d3e",
+    "batch-24-multiAG/engine/runtime/engine-e2e.test.mjs": "e5f29fc68282a354fe408bbdbe26385110d6f7aa8d2a3672eb96e1ddc80a8d82",
     "batch-24-multiAG/engine/runtime/engine-guards.test.mjs": "e453f753c5b560c7442d2b218f2217e5d4d5cae3cbe625d631277af54e289cce",
     "batch-24-multiAG/engine/runtime/failure-classify.test.mjs": "a92dd4786720174605d2fada83430087b0f5c03d4d600a4a7109bde423ece53f",
     "batch-24-multiAG/engine/runtime/model-health.mjs": "cfb7088d42cdd87c60404c687c3385c05f3b2d9475b3795f87e823a84d076cd2",
     "batch-24-multiAG/engine/runtime/model-policy.mjs": "bf5ed560e09654e893aa8c376edcaad688e84c6aad160d48e622fdeddf420cbf",
     "batch-24-multiAG/engine/runtime/notify-push.mjs": "5c100c740b5be4c7709820525cebddc24af56b5dc62de932b66eb5e8e93cc871",
+    "batch-24-multiAG/engine/runtime/providers-hardening.test.mjs": "bcee02fdaa09000c1b36fae0c74cfa7311ce8b5f088d322e13620ca0836a166b",
+    "batch-24-multiAG/engine/runtime/providers.test.mjs": "680139a9acb434af7762589587ecc31cb5611b0aa83b26ca7aa170777d8c4cd6",
     "batch-24-multiAG/engine/runtime/providers/claude.mjs": "57582835c52433dcd345f373be2129d886c40047ce43d2b54bb920d94319356a",
-    "batch-24-multiAG/engine/runtime/providers/codex.mjs": "2ad64ac5619e1ec49d0811c6d6d4f55ccf1f6050e973597a92f45c92b735277a",
+    "batch-24-multiAG/engine/runtime/providers/codex.mjs": "5007b9ee9d3b264079ec91a7636dbe51dd7ad26477106d42288cd20d4dd32932",
     "batch-24-multiAG/engine/runtime/providers/git-guard.mjs": "9e14abf94a921b7fbb464554954774a06a818ca5ee7c5b9450756c359ac86430",
     "batch-24-multiAG/engine/runtime/providers/index.mjs": "e232a9e0086315f07e4a7c2ef070f9a45f9c08c929da20161bfd5874d75683a5",
     "batch-24-multiAG/engine/runtime/providers/redact.mjs": "9387d268108ed8f91d2323adf0bd29be9e5d2598b020c43153455d99da148ec8",
     "batch-24-multiAG/engine/runtime/providers/spawn-safe.mjs": "779b6440ba4f75f8df8cd3ef4f4446f58a1af2694be9566041b48d6e95c98893",
-    "batch-24-multiAG/engine/runtime/providers-hardening.test.mjs": "bc4f0af3c3a2a19325c0047d7baeb9354d0838f8ebd2ad36406347f00a22d9bf",
-    "batch-24-multiAG/engine/runtime/providers.test.mjs": "90e86eb56875eb169b98afb5669da9d4067a64285b5db5a88496c78aa227ff64",
     "batch-24-multiAG/engine/runtime/push-guard.mjs": "1c41e01f3497e04321c9e7b4bb23af05d7ef5bac914f4bbf7c298efba98b81fa",
     "batch-24-multiAG/engine/runtime/push-guard.test.mjs": "c921619df369de72e603029accb53d5c04d2d03776aa2c1f4be63e2b31593da8",
-    "batch-24-multiAG/engine/runtime/quality-gates.mjs": "6f71197cec4d8a4b056787f8eb0c95db6fd0b65c3f62fbc18fd2317cbe216a6f",
-    "batch-24-multiAG/engine/runtime/quality-gates.test.mjs": "3855387598b001e48cc45cf711c6cefa522f3d53b09ba4e0c32a24a6591e3459",
-    "batch-24-multiAG/engine/runtime/quality-rules.mjs": "ce138bd1e101c3dab0a1c9a36e924afafbcc116d54e5e83f7d2eae6b86108f01",
+    "batch-24-multiAG/engine/runtime/quality-gates.mjs": "e4e1708c64247ac9813bdaec71af2cac504eeb38b0072edc8dd2ce9e9f8613a9",
+    "batch-24-multiAG/engine/runtime/quality-gates.test.mjs": "bd66091319dd963d4d31693f666f991d1925742b7ff5207b0c07d4f9f5c7208d",
+    "batch-24-multiAG/engine/runtime/quality-rules.mjs": "eaf73c92d5b483def3ac76105ee7c5dc0197f66d53a92c97e9ebc991d6c7240c",
     "batch-24-multiAG/engine/runtime/quality-rules.test.mjs": "9b8a36e3a8d96f477dc1d5d5a250bd2175500d5c16cdc4fd3274340dbb6055af",
     "batch-24-multiAG/engine/runtime/schema-migration.mjs": "87d9458a35a54374b54ac34e0a282841cc0eba41cd502e086cf0cdf4f6d699fd",
     "batch-24-multiAG/engine/runtime/stage-router.mjs": "5b7493624bbbf16519dee69cffa552f20127bdcf30e5ec6ca58ca28fa21cd50c",
     "batch-24-multiAG/engine/runtime/story-writes.mjs": "589a57b828f0edb3e06894e256b43cc3b3ca3e255b6380a9dfe877ae67943f53",
     "batch-24-multiAG/engine/runtime/story-writes.test.mjs": "debd739f7253d351ba5730cee4c2b7d057402169e74c8620654f2c0d1764e670",
-    "batch-24-multiAG/engine/runtime-resolution.test.mjs": "e84c0d349c4253df8d00241d686566737bd8b4a51dd4590d1bea59468a1771e3",
     "batch-24-multiAG/engine/spawn-deadline.mjs": "9325d9127249820c09946eb9764c0a364850228bcf182cab474ea7b97a8566e3",
     "batch-24-multiAG/engine/spawn-deadline.test.mjs": "4d23cc16db43bfda7b2ea4b943e9fd1c04eb4bea7878210bdde21c723e768e68",
     "batch-24-multiAG/engine/story-ledger.mjs": "4954745faae18fc9f8a1d862629c832f2c6bd05b57765b7d6a9d1dc8bd5d760f",
@@ -96,121 +116,25 @@
     "batch-24-multiAG/engine/telegram-rules.mjs": "7c6719fb4f14679130fcd56cf26c20236595a6d0a74a394a4a1bbf6c189b4c95",
     "batch-24-multiAG/engine/telegram-rules.test.mjs": "26d636e62710b5a2257bb12c373a9d9421ec81cd8348442e817127bdddee9010",
     "batch-24-multiAG/engine/worker-pool.test.mjs": "3959d733ecc01ee998da9a35231e0c8629245daf05c108a6d071cce59cddff29",
-    "batch-24-multiAG/install.mjs": "2a6be00fdd7863274c356e9a0747e044e252844d7e68e67ed9d79acb26afddb8"
+    "batch-24-multiAG/engine/worktree-refresh.mjs": "39f8d6b8c6113333ce363db567450c4bf946c606d35a6e9eed9bd4b7d5b79dcd",
+    "batch-24-multiAG/engine/worktree-refresh.test.mjs": "ef28047683c4a64a28fe9ea0d6f9a7af19500dce9458a7c875b8899a7153c99a",
+    "batch-24-multiAG/install.mjs": "54495c5c7094fa72c5bbbf6e6b4a8c3e4f963fef8ba5ea26b4554593a73fa0ab",
+    "dev-status/batch-sources.mjs": "593020c07aeecc675cb6ec0756f0700c08eaa9959fa43a8176bff49bc5d577d6",
+    "dev-status/batch-sources.test.mjs": "8f7f49135d4b57eeffd36853824bf6469418a45a6afd6cb0e6af7234937b7091",
+    "dev-status/build.mjs": "3fb0d9788fe294b8f197f95f2e1fae494574f13a8cb6f16c40445478329495dc",
+    "dev-status/daily-metrics.mjs": "54f4e61c5a1abc7f78651ab2381e54082819e07efc3647934c205326dba48d4d",
+    "dev-status/daily-metrics.test.mjs": "37846aca9f105137e61a12b501c6b33001c1ab7ee88168f72436bbe815c1fa08",
+    "dev-status/render-batch.mjs": "992eba728b373453c8246dc4a8fafa9f5b489e4ca31d0043d93f7974245f6d0e",
+    "dev-status/render-batch.test.mjs": "2d3d4235e8ff7a60f9b80c5b929cb5ac97f325805db19e0e9ccdcce4fc9938ae",
+    "dev-status/scan.mjs": "b7161604ba4e9ed6bbeaeeb0c53ca6b369fb847065081719f9b693a4c5aab4d8",
+    "dev-status/scan.test.mjs": "864007059e5949953e4171319b8d899f876ce6855d7b0ab8333c0b6e76a053c7",
+    "dev-status/serve.mjs": "38ac8bb023ee83274af6a9466a7dc6d4996bdb3eab92527c9f7c6e39fdb7360d",
+    "dev-status/verdict.mjs": "7ff1e6e1c50560cb949614c6a06d2a02e711885c2632d1f783a0fbd2d15942ee",
+    "dev-status/verdict.test.mjs": "024961da4391e49d84b9761ce21c61cf7eaa3afd821c1fb3bf709927d2e72b8b"
   },
-  "regression": {
-    "baseline": {
-      "tests": 897,
-      "passed": 897,
-      "durationMs": 991660
-    },
-    "fullRun": {
-      "tests": 966,
-      "passed": 963,
-      "failed": 3,
-      "durationMs": 2416787.8137,
-      "instrumented": true
-    },
-    "resolution": {
-      "workerContract": {
-        "tests": 31,
-        "passed": 31
-      },
-      "sequentialRollback": {
-        "tests": 3,
-        "passed": 3
-      },
-      "reason": "Two obsolete retry assertions and one sequential call-count assertion updated; rollback and remote protection passed in original full run."
-    },
-    "additionalUniqueTests": 8,
-    "finalUniqueTests": 974,
-    "testFiles": 45,
-    "unresolvedFailures": 0,
-    "method": "Full regression plus affected reruns and eight newly added cases; not a claim of a fresh single 974/974 run."
-  },
-  "syntax": {
-    "command": "node --check <each canonical .mjs>",
-    "files": 87,
-    "passed": 87,
-    "reusedByExactHash": 80
-  },
-  "lint": {
-    "command": "git diff --check; git diff --cached --check",
-    "result": "pass",
-    "scope": "whitespace/conflict diagnostics; repository has no configured ESLint project"
-  },
-  "typecheck": {
-    "result": "not-applicable",
-    "reason": "This skill repository contains untyped JavaScript and has no TypeScript project. node --check is syntax validation, not semantic typechecking. Installed workers require the target project typecheck command."
-  },
-  "coverage": {
-    "result": "pass",
-    "mode": "changed-lines-and-branches",
-    "minimum": 90,
-    "percent": 97.78911564625851,
-    "branchPercent": 90.50554870530209,
-    "total": 1176,
-    "covered": 1150,
-    "branches": 811,
-    "coveredBranches": 734,
-    "unknown": []
-  },
-  "coverageMethod": "Node v24.18.0 V8 execution coverage. Loaded source SHA256 plus PID/URL maps copied runtime files back to canonical sources only when current bytes match; old source hashes rejected. LCOV intersected with diff against 166e28c including untracked additions before commit. Raw V8 and source maps retained locally in _verification/.",
-  "performance": {
-    "beforeMs": 22240,
-    "afterMs": 26408,
-    "increasePercent": 18.741007194244606,
-    "thresholdPercent": 30,
-    "result": "pass",
-    "samples": {
-      "baseline": 3,
-      "candidate": 3
-    },
-    "limitation": "Synthetic CLI fixture; real model latency is not measured."
-  },
-  "installation": {
-    "canonicalOnlyFixture": "4/4 pass",
-    "globalClaudeRouting": "17/17 pass",
-    "globalCodexRouting": "17/17 pass",
-    "globalCoreFilesVerifiedEach": 120,
-    "legacyGlobalsRetained": true,
-    "reason": "Existing jng-os and jng-os-auto do not yet have pinned runtime or affected/coverage/API/auth/security/integration adapters."
-  },
-  "review": "Sol-high checklist prepared; independent review not yet performed",
-  "evidenceSha256": {
-    "verified-regression.log": "b59d4c37de9790a04e7730e18bcdcefc2f6953f64cc1b1448d83ba45804bc549",
-    "worker-contract-final.log": "15321e35a479455a6061ac4c82b7988b9d6d6ad19390ad05d52d2a6778ccd81e",
-    "sequential-red-final.log": "bc6770e92d7c18cb32d1028104720f2919173a1f2cfaff0941c26e27fa215eac",
-    "quality-language-final.log": "7c19cd0947ef74c5c293cedf4638bec6b7da03bdd562b91603a87de0225b8df0",
-    "fixture-migration-final.log": "24db141f4b2362f86be8d73321a9ce866a66b2e661abcf30135cdd87aa53bfc4",
-    "resolution-routing-final.log": "9f187f6cf181307b8d92b15a137597c046cee5d2b2b7f9690b6712036965703c",
-    "canonical-only-install.log": "07e941b4e7b90f3889159a8ef48c6d3ac2a0f635531fd0b6e2fdf4b5a67546d8",
-    "global-claude-routing.log": "b9b47900188f6b5bbd5efed34c0040c613f0f965a5b90bcba11b9d2e65eb1d68",
-    "global-codex-routing.log": "2607ce4308724a76ece641c4cfbcdb2c093fe7546d81551dabe0c640cf16be8b"
-  },
-  "commands": [
-    "node --test --test-concurrency=2 --experimental-test-coverage <42 original canonical/dev-status test files>",
-    "node --test batch-24-multiAG/engine/worker-pool.test.mjs",
-    "node --test --test-name-pattern=\"\\[e2e\\]\\[N1\\]\" batch-24-multiAG/engine/e2e-parallel.test.mjs",
-    "node --test batch-24-multiAG/engine/runtime/quality-gates.test.mjs",
-    "node --test batch-24-multiAG/engine/fixture-protocol.test.mjs batch-24-multiAG/engine/telegram-migration.test.mjs",
-    "node --test batch-24-multiAG/engine/runtime-resolution.test.mjs batch-24-multiAG/engine/runtime/providers.test.mjs",
-    "node --test batch-24-multiAG/engine/consolidation.test.mjs",
-    "node batch-24-multiAG/engine/gate-benchmark.mjs --baseline-engine <166e28c-worktree>/batch-24-multiAG/engine --samples 3 --out benchmark.json"
-  ],
-  "originalEvidenceSha256": {
-    "verified-regression.log": "9d1f3432d1ddfa0496a51f35d380adaef4858e1b574fa0456f1901d0e7627a4b",
-    "worker-contract-final.log": "15321e35a479455a6061ac4c82b7988b9d6d6ad19390ad05d52d2a6778ccd81e",
-    "sequential-red-final.log": "bc6770e92d7c18cb32d1028104720f2919173a1f2cfaff0941c26e27fa215eac",
-    "quality-language-final.log": "7c19cd0947ef74c5c293cedf4638bec6b7da03bdd562b91603a87de0225b8df0",
-    "fixture-migration-final.log": "24db141f4b2362f86be8d73321a9ce866a66b2e661abcf30135cdd87aa53bfc4",
-    "resolution-routing-final.log": "9f187f6cf181307b8d92b15a137597c046cee5d2b2b7f9690b6712036965703c",
-    "canonical-only-install.log": "07e941b4e7b90f3889159a8ef48c6d3ac2a0f635531fd0b6e2fdf4b5a67546d8",
-    "global-claude-routing.log": "b9b47900188f6b5bbd5efed34c0040c613f0f965a5b90bcba11b9d2e65eb1d68",
-    "global-codex-routing.log": "2607ce4308724a76ece641c4cfbcdb2c093fe7546d81551dabe0c640cf16be8b"
-  },
-  "evidenceFormatting": "Published log receipts normalize line endings and trailing whitespace; original log byte hashes are retained separately and originals remain in the local worktree.",
   "gitIndexSourceSha256": {
+    "batch-24-multiAG/adapters/vitest-quality.mjs": "c11da8f7bebc51d7af9a7d5d537bd1caebdf4ac4faf5a9da99304638891bc01a",
+    "batch-24-multiAG/adapters/vitest-quality.test.mjs": "491d96f1cb5e0c6df58ebc6136d5139dea9144ea54d4e71aa5e19eda54be43ac",
     "batch-24-multiAG/engine/asf-resolve.mjs": "ce126fdff12342da66a47787cbd510ce87ecaa0ef7db1dd693d221c0c21df263",
     "batch-24-multiAG/engine/assign.mjs": "bf5da14b7069680e386bf687f1a89fb62de0b353a41635a7dbea94429c94d8c6",
     "batch-24-multiAG/engine/assign.test.mjs": "3a51810f2fc38329e4e3a638ff57687f80eb3289e4e45260d0b870ea87d1ccc0",
@@ -226,7 +150,7 @@
     "batch-24-multiAG/engine/bmad-sync.test.mjs": "5c93f3cc1ceb5e0a9198d529f9d5045c1bb7127d6d6a58739a3e3084eae70d45",
     "batch-24-multiAG/engine/conflicts.mjs": "af175ac3cc22e813ceccf354761e12adac4e31a5a537d0eb9230e7ba4931882e",
     "batch-24-multiAG/engine/conflicts.test.mjs": "a982f5a3f42bfe07609d578b960ceb7829120bf049712181b7f5443ae6cf6e29",
-    "batch-24-multiAG/engine/consolidation.test.mjs": "a5ff13bf691d77ae941e8405c50424aaee6358dc1a9a8b70d1f377b45403018e",
+    "batch-24-multiAG/engine/consolidation.test.mjs": "4e1482d21cab4b728c93190ffc75f8242163eb74a6e9bb730541d8e6e6e8478c",
     "batch-24-multiAG/engine/decisions.mjs": "9fd2baf97d986df31f0738f59dc3615f26f468cfdcffcc534173db13697d1cc5",
     "batch-24-multiAG/engine/decisions.test.mjs": "1e463f90c9569992991bec6ae39aff2c89d549afd5bb5ccaf1f8b9c5feed3f6f",
     "batch-24-multiAG/engine/diagnose.mjs": "23dfe61b940be3be65dbdb881172b4bac9af5230ff8094cb7b15b30759bed911",
@@ -239,7 +163,10 @@
     "batch-24-multiAG/engine/fixtures/stub-claude.mjs": "2e8b1b771edc70eabc3c6b894724f46d17f4b96a319941cda98afae3920bd9fa",
     "batch-24-multiAG/engine/fixtures/stub-codex.mjs": "63f18e4ed21dc475db60e125a756607657a9230c9eae169e75179bb26b270dab",
     "batch-24-multiAG/engine/gate-benchmark.mjs": "edfd8fb26191ba6252ddbf1f1cb5bb1502c517e5a9bd942abc2e9379200156df",
-    "batch-24-multiAG/engine/gate-benchmark.test.mjs": "fb89070c33281ef85ee6ad6f6f19239c445013a0f6a1c1d5db75f47828ab8bd8",
+    "batch-24-multiAG/engine/gate-benchmark.test.mjs": "7ba94e968fdc3ff11aa92da3d4b07c10946f41c1851464813720b841342883f1",
+    "batch-24-multiAG/engine/install-contract.test.mjs": "75cfd7c6529bf2e9d515a4e0d9d120b4733c154155e20f8fa3cbe022a4678198",
+    "batch-24-multiAG/engine/landing-publication.mjs": "12f9c61f3ab0a5dd725854434aaf6acd6534d45d774dd74a5b00418d7dd0a62e",
+    "batch-24-multiAG/engine/landing-publication.test.mjs": "9645b2d144c2e58a103007334ccf4d817aeb8501b376cb0caa4f27a2eb767606",
     "batch-24-multiAG/engine/manual-cli.test.mjs": "801a0337df887db695ed84883213ed1f092d3f331b3d09ce0cbc659b1f766fcc",
     "batch-24-multiAG/engine/metrics.mjs": "31e5bae52d164725e29f12c021dfe65748aecf45802b3ca9bf555d50c0a400b0",
     "batch-24-multiAG/engine/metrics.test.mjs": "60a52f70137abf648299d02da66bf7c1acc65f30ea3d1fd7f49e4eddd4748009",
@@ -255,40 +182,44 @@
     "batch-24-multiAG/engine/readiness.test.mjs": "6d5b6932e84ffc60728c468c2d6bebe6d78652f1e03349a38463d9f1fb40e16b",
     "batch-24-multiAG/engine/report.mjs": "25f3410c3e7fcc5ff6d0072393e24030af51c260e31dd0a89663cd0cc65b3316",
     "batch-24-multiAG/engine/report.test.mjs": "7af8d6288b4eb20ff34c8208944c40a9e344ce17e2fbd11fdc28e360a699a641",
-    "batch-24-multiAG/engine/run-night.mjs": "f450b50af55ca40abc2adb81b2f244c0f9f837b713d3d416ccc3f7b3ce80f78d",
+    "batch-24-multiAG/engine/run-night.mjs": "62b794c501414737fe2a76f3f5a94329f76311d3d018b1f2aac5359a59ddec04",
     "batch-24-multiAG/engine/runner-rules.mjs": "08a8fc0535aa46755c68c496a3bbfa1954b618dbb89871ad4aa3d0d462e01b4f",
     "batch-24-multiAG/engine/runner-rules.test.mjs": "75f9b60a503dee6b191b881e76ea5e18847ce53a3b98c1b39298af7c18f7b9f7",
+    "batch-24-multiAG/engine/runtime-pin.mjs": "9ec686719705bda33d5f974f8fd608a814d64f1865f34a41ddb216cc20a25d21",
+    "batch-24-multiAG/engine/runtime-pin.test.mjs": "1bff01d10e00d6fc737d2c25b1e1594dbe324e7a97d6efbb589a680f01466a60",
+    "batch-24-multiAG/engine/runtime-resolution.test.mjs": "992aea9ab6ebc5c1cf13259234d06439f59e8e056194d0a309959b29b82849f9",
+    "batch-24-multiAG/engine/runtime/api-surface.mjs": "0efb6fbe8b09e3bc6ff3bb7e649254ea0bed0aca7b44e83628ed07c71e11444a",
+    "batch-24-multiAG/engine/runtime/api-surface.test.mjs": "cd2dc11705218931917250f87cffde67a437bfca51829659c2cb82706a99631d",
     "batch-24-multiAG/engine/runtime/authorization-matrix.mjs": "6808ec69c76c8c4cb5495c6cf211c652e1fa740c6855bcbfc705b26a8e8a6878",
     "batch-24-multiAG/engine/runtime/authorization-matrix.test.mjs": "1efef3f8570bac98e688f17b8e5a25b678997ca770678de200efb77fbb49b910",
-    "batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs": "f0220bf2a2d054c044e6309110de5ba27dfd558092be67c2f49b7131026b07f9",
+    "batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs": "73536c37abb01677c5c3fff20030f7fd09bbf1411181448b0fcc6f2d34aaea8b",
     "batch-24-multiAG/engine/runtime/claude-trace.test.mjs": "e3b6003815eacdce583e8f656e2483ae215c8db79f6d556aaf1d1baaf5a9e1ec",
     "batch-24-multiAG/engine/runtime/completion-rules.mjs": "411763b27281645e5c62ca5e915873114bcb23a306c9c085a61eca810ac77106",
     "batch-24-multiAG/engine/runtime/completion-rules.test.mjs": "31b969f26be0b3d01c5293a7660e972b1ee02bfdcf2debe73bfc205cbd9efaf9",
-    "batch-24-multiAG/engine/runtime/engine-e2e.test.mjs": "ffa22050e6ecee6b4cab4396e5c7be782e305516ef4f24001b7f8bf222811bf7",
+    "batch-24-multiAG/engine/runtime/engine-e2e.test.mjs": "091bbbf2f66e513ae415a4631e95a40b96d422d49b06061ea4f7a93c99fe307d",
     "batch-24-multiAG/engine/runtime/engine-guards.test.mjs": "db8e980c37e5cda1e3c20e4d4c812bfe1164fbcdf2e3a6f1c7bbd6ad7528d3a9",
     "batch-24-multiAG/engine/runtime/failure-classify.test.mjs": "e9f10f722c084b69831c154f7760a38118fdc4623166e675a148a5a959ebf38e",
     "batch-24-multiAG/engine/runtime/model-health.mjs": "f01ef7473eef0bba1a9cd6c9b88a43ff4c2990e1795768af53c69ad6123d3205",
     "batch-24-multiAG/engine/runtime/model-policy.mjs": "8a40ea053fafcb883cecbdbb29129d1e692bebb4e1fc924f53ffc5f31c24555d",
     "batch-24-multiAG/engine/runtime/notify-push.mjs": "4d6b43915cdb53fd0a106f71c0b80ec10f252c2a0c0c51455dd745a6b1af6943",
+    "batch-24-multiAG/engine/runtime/providers-hardening.test.mjs": "fe302532ded7372b48f7e17524a81741540b4599c0dc775e8711216b7b86f248",
+    "batch-24-multiAG/engine/runtime/providers.test.mjs": "462a6a81a8b5772fd965b02531bc7ac2b34c6c33923af56cedf0f29283cda5bb",
     "batch-24-multiAG/engine/runtime/providers/claude.mjs": "1abfd8313a8cf4d4d9fa03dfccc2140ce591192ca58430e4a081109374d8ff8c",
-    "batch-24-multiAG/engine/runtime/providers/codex.mjs": "5058886735aca14f0a63f423f525f0941062996b1e942f03e970cc97ca549eed",
+    "batch-24-multiAG/engine/runtime/providers/codex.mjs": "5651d53022cf0d92d466830ceed8c8a0b68426f4e48619e2518111881cc66858",
     "batch-24-multiAG/engine/runtime/providers/git-guard.mjs": "d1461e22e7ce48e88318f5a2042f88ff6476aec19340589de072dde3708e42af",
     "batch-24-multiAG/engine/runtime/providers/index.mjs": "43817968a3900ac99fe27703bec81d3dd2d846698bf4180a3da54ea9e2ca2a5b",
     "batch-24-multiAG/engine/runtime/providers/redact.mjs": "bcd1d095992d215d38acce49748689bfd2ac2d0f7b25d6fe4cdf7accfa12cc55",
     "batch-24-multiAG/engine/runtime/providers/spawn-safe.mjs": "f99a1e01c948328346370d7404a9d4d13d8ade9a007a9fd5c59885d75bb700e5",
-    "batch-24-multiAG/engine/runtime/providers-hardening.test.mjs": "933a2999fb56131aae9727db88294359a89a6b24e733fa0da9f5c06c948755f4",
-    "batch-24-multiAG/engine/runtime/providers.test.mjs": "30d5cedea65646b7f0cd8cecf248342baec3d0db2d68f38e00330c9889eaa664",
     "batch-24-multiAG/engine/runtime/push-guard.mjs": "aabb73408fedcb6d88adef5abda1cb433ccc4898157ec751a3b2a9e6d0577616",
     "batch-24-multiAG/engine/runtime/push-guard.test.mjs": "d5c02800756ccd239451e50218a1602d771210292a0fc770b149228ca5c4d8be",
-    "batch-24-multiAG/engine/runtime/quality-gates.mjs": "d3d4894129bf0d792daa939a0b99d85a8d0484a60ea4f8a1b4d4173a36ea27e9",
-    "batch-24-multiAG/engine/runtime/quality-gates.test.mjs": "8a2bfa4ff4dd0af086851d50511d2fbe266b03286d54a0d6a791d94c38e6174b",
-    "batch-24-multiAG/engine/runtime/quality-rules.mjs": "66963ca1ca6e1f4d2fd4e083ff0fa29281295623c3d8e3813da0700263417c16",
+    "batch-24-multiAG/engine/runtime/quality-gates.mjs": "e4e1708c64247ac9813bdaec71af2cac504eeb38b0072edc8dd2ce9e9f8613a9",
+    "batch-24-multiAG/engine/runtime/quality-gates.test.mjs": "cb3a99afc3789381b6c6a82d3f54082fc710e23a69d878fcf48847ca0de99375",
+    "batch-24-multiAG/engine/runtime/quality-rules.mjs": "bcf9d3d190573e4b537f5895fdd6d5b9d043b30dfeb906e963ddf6c656a6d6f9",
     "batch-24-multiAG/engine/runtime/quality-rules.test.mjs": "4a7b58429af6ede6c5f32164970a06b5953170c92bf56d92ddd34391f61ed46d",
     "batch-24-multiAG/engine/runtime/schema-migration.mjs": "87d9458a35a54374b54ac34e0a282841cc0eba41cd502e086cf0cdf4f6d699fd",
     "batch-24-multiAG/engine/runtime/stage-router.mjs": "05e769e91ef89bf123df5ba80122b58c9b66b6400680b62fb5e2405087f9b82f",
     "batch-24-multiAG/engine/runtime/story-writes.mjs": "9065021a4ca16485fb77fcc8241ee9928ad458bc6c0f3695463f9db3f0681501",
     "batch-24-multiAG/engine/runtime/story-writes.test.mjs": "db50d6b5b4002cbb0d1a3e60b1ea31487f428a91ff75680ce031a506a4c28633",
-    "batch-24-multiAG/engine/runtime-resolution.test.mjs": "992aea9ab6ebc5c1cf13259234d06439f59e8e056194d0a309959b29b82849f9",
     "batch-24-multiAG/engine/spawn-deadline.mjs": "9495822ee8898be880f94c2e382167e5fffc8cfb7906e0587c73dbfe80f9326c",
     "batch-24-multiAG/engine/spawn-deadline.test.mjs": "385e63b871ccd2d14724597ad888241d8333286f9eeedf09f2ca38d7203ed878",
     "batch-24-multiAG/engine/story-ledger.mjs": "5d847be2e2408c404dcf100dfc6e473351de6a23993fdd6dd80f11b98154b325",
@@ -297,18 +228,423 @@
     "batch-24-multiAG/engine/telegram-rules.mjs": "ba890d48bb24bcab7318cc92dd105ae17e6a3dcb063fb7a9b7cf3820ca822d84",
     "batch-24-multiAG/engine/telegram-rules.test.mjs": "30283b5a66ab42ebb297ec2e27afb7d9234f77fe7fcd90b007b5f02c4789a2cd",
     "batch-24-multiAG/engine/worker-pool.test.mjs": "e04ff61032766cf9c886e6093ffb934b9bea8579dbfc4ca2accd4064ff191ea5",
-    "batch-24-multiAG/install.mjs": "010bd27094a31d4851b1c48735feecd504eb5fd7d2b5291961de538109b961e5"
+    "batch-24-multiAG/engine/worktree-refresh.mjs": "39f8d6b8c6113333ce363db567450c4bf946c606d35a6e9eed9bd4b7d5b79dcd",
+    "batch-24-multiAG/engine/worktree-refresh.test.mjs": "ef28047683c4a64a28fe9ea0d6f9a7af19500dce9458a7c875b8899a7153c99a",
+    "batch-24-multiAG/install.mjs": "54495c5c7094fa72c5bbbf6e6b4a8c3e4f963fef8ba5ea26b4554593a73fa0ab",
+    "dev-status/batch-sources.mjs": "e2d44ebfbbbf1fe490a89c6644a625ca586f2ff40e0aa0b72c8f4a96e2bcb4a9",
+    "dev-status/batch-sources.test.mjs": "a7183300575bf6864168eb0ad15cdf19f3a19b8f29de439f9f313e4291049d98",
+    "dev-status/build.mjs": "1aad9a8680a348eae6636a38d562c79a5cede872f1af0367712e3ddab99dcd6e",
+    "dev-status/daily-metrics.mjs": "f86b56b60284edee8580fbc7cd51d35c93684bdb0d2e37f70ab454c79946b194",
+    "dev-status/daily-metrics.test.mjs": "815bcb4629bae5a04ccc452c00c9bcc4504c1d72917e5d273867b89e65978bf5",
+    "dev-status/render-batch.mjs": "1e87e199eeadadbce53b2b0a102c60ea44a0c794a8188c44fc314afabebe5117",
+    "dev-status/render-batch.test.mjs": "5568e7d0d7459bef926c04f4e798f224a532bef4a8b11554b6616a4073812af4",
+    "dev-status/scan.mjs": "a8049c09d5cbe9ed1edf8b74e66506e571e4500678be6a00cd40258698ea0c51",
+    "dev-status/scan.test.mjs": "864007059e5949953e4171319b8d899f876ce6855d7b0ab8333c0b6e76a053c7",
+    "dev-status/serve.mjs": "5d567c1ae4796300ede43e0bc7d781820585334b3d671c4a51322b02de686f92",
+    "dev-status/verdict.mjs": "9354a5d6a4a751a55d0ed0e8a997f3e98ba31b02557cc08bdf13961e3d182186",
+    "dev-status/verdict.test.mjs": "8cf30128408624e802afd72504b3990b59c0a96df96ea17bf9a07c37f7bacb7d"
   },
-  "gitLineEndingNormalizationCount": 84,
-  "gitIndexEvidenceSha256": {
-    "verified-regression.log": "0bb4d6c7645b6c03d18a453f47b083f07d9d9c038a88b0d480f8a0335d510770",
-    "worker-contract-final.log": "78fbeb3c2d47f406938cf50e8e94aa261a2c85ae9606ba08956325d33b196555",
-    "sequential-red-final.log": "9f2fa6bc8f48f9f3dff8cae3ff95e87773ef6017e689589bdd4a5e2c4dcdf795",
-    "quality-language-final.log": "a2821cc60c947dc42774842cf6761f3426c9eeb32cc6c599b5f8bbeed4f1e4cb",
-    "fixture-migration-final.log": "37699a93abc073c8b76474e6b3f29b072e5f4e894a805491b0763a370b76ee66",
-    "resolution-routing-final.log": "4709ad9f341d86478dfb81f836d55e31c75e5eac6d1e89143646b4abe612a1a7",
-    "canonical-only-install.log": "9bfe925ddb7b3fec63c0d10f7c4ae581f7ae8cf7dfc9aaabc5681149b1657a9a",
-    "global-claude-routing.log": "09670e2e079d55a8dd8ecb5884042f504ba30ba90e0480c77f6cb3529c8922f7",
-    "global-codex-routing.log": "cfe8575277257b2bdaccd3a507277a6824aedf3022a562280a085ded9493ef81"
-  }
+  "evidenceSha256": {
+    "coverage.lcov": "b0428fcc6d8a3cd86ba2802beb016e0bc932760cf73b419cab33715167403919",
+    "changed-coverage.json": "3d3b0edaf5a98a31a5e8a2f1821bed218935255faa725805421f53147b665708",
+    "benchmark.json": "03d189387c68888e30085968f24a3e7fa8a7dbe955e1cdd2a880e65feba6fede",
+    "paired-benchmark-before-path-guard.json": "ac00445ca751c47c67d143acf1bcba9fea64d6e9c5722e7769532ef806f09990",
+    "full-regression-1010.log": "1589632fdbecdb00b575c70725c20650052618f3b9d9199cc508fb94b24fa006",
+    "full-regression-evidence.json": "38ad81b61ce59ff6cb3798337df7b60e8857fb53527525cb38f73ca43ab31524",
+    "bench-isolated.log": "e8b7c6ac74b84fb9856e1633da488ab38e953854db33f32b97ff7747089410db",
+    "integration-red-isolated.log": "4d1ae49ce4e22a4badd26f9d92a1763f65ecde043f4f1bb50d5069995dfabafd",
+    "frozen-boundaries.log": "65f7c14c5b5ef598264591548afbd41422c526f62fa35f64962c0b91b5a2a8f0",
+    "refresh-final.log": "13b1d7d41297db2111ab8b8709c0eb39f33d34687a1416e8badc850d82aae0a9",
+    "install-final.log": "8540d1efc996d289352867ca98e398dfdfba4e3caec49b47a1bd8a0d2c898df5",
+    "benchmark-args-final.log": "9aef39c548f16fb85fe2ebec3e618e1622ff89d448c20a24b6f4f4cc46c51144",
+    "pin-input-final.log": "cc9f87977fb473c3f81e1c1e8ac359e45c20fa781edbc289ea4ccb7f0a7f881d"
+  },
+  "regression": {
+    "full": {
+      "tests": 1010,
+      "pass": 1006,
+      "fail": 4,
+      "skipped": 0,
+      "durationMs": 2895389,
+      "command": "node --test --test-concurrency=3 --experimental-test-coverage <49 discovered test files>",
+      "result": "4 assertions from two interrupted 300-second child fixtures; resolved by identical targeted re-execution"
+    },
+    "resolved": [
+      {
+        "file": "bench-isolated.log",
+        "tests": 1,
+        "pass": 1,
+        "durationMs": 45637.7276
+      },
+      {
+        "file": "integration-red-isolated.log",
+        "tests": 3,
+        "pass": 3,
+        "durationMs": 28430.2028
+      }
+    ],
+    "lateUniqueTests": {
+      "runtimePin": 9,
+      "refreshAdded": 6,
+      "installer": 2,
+      "benchmarkInput": 3,
+      "pinInput": 3
+    },
+    "currentTestFiles": 51,
+    "currentUniqueVerified": 1033,
+    "unresolvedFailures": 0,
+    "singleFull1033PassClaim": false
+  },
+  "coverage": {
+    "result": "pass",
+    "mode": "changed-lines-and-branches",
+    "minimum": 90,
+    "percent": 96.8213604577241,
+    "branchPercent": 90.21459227467811,
+    "total": 1573,
+    "covered": 1523,
+    "branches": 1165,
+    "coveredBranches": 1051,
+    "unknown": [],
+    "files": [
+      {
+        "path": "batch-24-multiAG/engine/asf-resolve.mjs",
+        "total": 9,
+        "covered": 9
+      },
+      {
+        "path": "batch-24-multiAG/engine/assign.mjs",
+        "total": 1,
+        "covered": 1
+      },
+      {
+        "path": "batch-24-multiAG/engine/autofinish.mjs",
+        "total": 27,
+        "covered": 27
+      },
+      {
+        "path": "batch-24-multiAG/engine/backlog.mjs",
+        "total": 1,
+        "covered": 1
+      },
+      {
+        "path": "batch-24-multiAG/engine/bench.mjs",
+        "total": 20,
+        "covered": 20
+      },
+      {
+        "path": "batch-24-multiAG/engine/bmad-sync.mjs",
+        "total": 2,
+        "covered": 2
+      },
+      {
+        "path": "batch-24-multiAG/engine/diagnose.mjs",
+        "total": 3,
+        "covered": 3
+      },
+      {
+        "path": "batch-24-multiAG/engine/finish-stories.mjs",
+        "total": 35,
+        "covered": 35
+      },
+      {
+        "path": "batch-24-multiAG/engine/fixtures/fake-bmad-project.mjs",
+        "total": 293,
+        "covered": 293
+      },
+      {
+        "path": "batch-24-multiAG/engine/fixtures/strict-quality-fixture.mjs",
+        "total": 49,
+        "covered": 49
+      },
+      {
+        "path": "batch-24-multiAG/engine/fixtures/stub-claude.mjs",
+        "total": 123,
+        "covered": 120
+      },
+      {
+        "path": "batch-24-multiAG/engine/fixtures/stub-codex.mjs",
+        "total": 71,
+        "covered": 71
+      },
+      {
+        "path": "batch-24-multiAG/engine/gate-benchmark.mjs",
+        "total": 27,
+        "covered": 12
+      },
+      {
+        "path": "batch-24-multiAG/engine/metrics.mjs",
+        "total": 2,
+        "covered": 2
+      },
+      {
+        "path": "batch-24-multiAG/engine/orchestrate.mjs",
+        "total": 5,
+        "covered": 5
+      },
+      {
+        "path": "batch-24-multiAG/engine/plan-queue.mjs",
+        "total": 4,
+        "covered": 4
+      },
+      {
+        "path": "batch-24-multiAG/engine/push-guard.mjs",
+        "total": 1,
+        "covered": 1
+      },
+      {
+        "path": "batch-24-multiAG/engine/readiness.mjs",
+        "total": 5,
+        "covered": 5
+      },
+      {
+        "path": "batch-24-multiAG/engine/report.mjs",
+        "total": 1,
+        "covered": 1
+      },
+      {
+        "path": "batch-24-multiAG/engine/run-night.mjs",
+        "total": 97,
+        "covered": 74
+      },
+      {
+        "path": "batch-24-multiAG/engine/runner-rules.mjs",
+        "total": 6,
+        "covered": 6
+      },
+      {
+        "path": "batch-24-multiAG/engine/runtime/authorization-matrix.mjs",
+        "total": 17,
+        "covered": 17
+      },
+      {
+        "path": "batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs",
+        "total": 126,
+        "covered": 122
+      },
+      {
+        "path": "batch-24-multiAG/engine/runtime/completion-rules.mjs",
+        "total": 13,
+        "covered": 13
+      },
+      {
+        "path": "batch-24-multiAG/engine/runtime/model-health.mjs",
+        "total": 2,
+        "covered": 2
+      },
+      {
+        "path": "batch-24-multiAG/engine/runtime/providers/claude.mjs",
+        "total": 18,
+        "covered": 18
+      },
+      {
+        "path": "batch-24-multiAG/engine/runtime/providers/codex.mjs",
+        "total": 5,
+        "covered": 5
+      },
+      {
+        "path": "batch-24-multiAG/engine/runtime/providers/index.mjs",
+        "total": 3,
+        "covered": 3
+      },
+      {
+        "path": "batch-24-multiAG/engine/runtime/quality-gates.mjs",
+        "total": 218,
+        "covered": 218
+      },
+      {
+        "path": "batch-24-multiAG/engine/runtime/quality-rules.mjs",
+        "total": 54,
+        "covered": 54
+      },
+      {
+        "path": "batch-24-multiAG/engine/runtime/schema-migration.mjs",
+        "total": 7,
+        "covered": 7
+      },
+      {
+        "path": "batch-24-multiAG/engine/telegram-commands.mjs",
+        "total": 1,
+        "covered": 1
+      },
+      {
+        "path": "batch-24-multiAG/install.mjs",
+        "total": 18,
+        "covered": 17
+      },
+      {
+        "path": "batch-24-multiAG/adapters/vitest-quality.mjs",
+        "total": 149,
+        "covered": 145
+      },
+      {
+        "path": "batch-24-multiAG/engine/landing-publication.mjs",
+        "total": 11,
+        "covered": 11
+      },
+      {
+        "path": "batch-24-multiAG/engine/runtime-pin.mjs",
+        "total": 35,
+        "covered": 35
+      },
+      {
+        "path": "batch-24-multiAG/engine/runtime/api-surface.mjs",
+        "total": 36,
+        "covered": 36
+      },
+      {
+        "path": "batch-24-multiAG/engine/worktree-refresh.mjs",
+        "total": 78,
+        "covered": 78
+      }
+    ]
+  },
+  "performance": {
+    "beforeMs": 21756,
+    "afterMs": 26124,
+    "increasePercent": 20.077220077220076,
+    "thresholdPercent": 30,
+    "result": "pass",
+    "samples": {
+      "baseline": 3,
+      "candidate": 3
+    },
+    "limitation": "Synthetic CLI fixture; real model latency is not measured."
+  },
+  "checks": [
+    {
+      "gate": "typecheck",
+      "command": "npm run typecheck",
+      "scope": "isolated application with unchanged TS source/config",
+      "result": "pass",
+      "reason": "semantic project typecheck; engine mjs parsed by Node execution",
+      "durationMs": null,
+      "timingLimitation": "Exact duration of the manual successful command was not retained; not re-run only for timing."
+    },
+    {
+      "gate": "lint",
+      "command": "npm run lint",
+      "scope": "isolated release project",
+      "result": "pass",
+      "errors": 0,
+      "warnings": 0,
+      "reason": "existing ESLint rules; no configuration weakening",
+      "durationMs": null,
+      "timingLimitation": "Exact duration of the manual successful command was not retained; not re-run only for timing."
+    },
+    {
+      "gate": "installed-routing-quality-auth",
+      "command": "node --test tools/auto/model-routing.test.mjs tools/auto/runtime/quality-gates.test.mjs tools/auto/runtime/authorization-matrix.test.mjs",
+      "result": "pass",
+      "tests": 71,
+      "skipped": 0,
+      "durationMs": 83356.3361
+    },
+    {
+      "gate": "changed-coverage",
+      "command": "changedCoverage(collectChanges(root, base).diff, current-coverage.lcov)",
+      "result": "pass",
+      "reason": "current loaded source SHA only; changed lines and branches >=90"
+    },
+    {
+      "gate": "performance",
+      "command": "gate-benchmark.mjs --baseline-engine <166e28c engine> --samples 3; final candidate-only 3 samples with unchanged baseline reused",
+      "result": "pass",
+      "reason": "normal synthetic batch cost vs 30% threshold"
+    }
+  ],
+  "project": {
+    "installation": "C:/Projects/jng-os-batch24-release",
+    "branch": "codex/batch24-runtime-release",
+    "base": "d77f61dc53df9009fe5d4399c850a45cfb29e0e8",
+    "pinnedRuntimeFilesVerified": 53,
+    "unit": {
+      "files": 169,
+      "passed": 4600,
+      "legacySkipped": 3,
+      "durationMs": 65390
+    },
+    "integration": {
+      "files": 48,
+      "executed": false,
+      "result": "not-verified",
+      "reason": "isolated credentials intentionally not connected; existing hard-coded and conditional DB skips do not meet strict zero-skip landing contract"
+    },
+    "optionalAdapters": {
+      "api": "required only on affected API; unavailable",
+      "authorization": "required only on auth/DB/RLS; unavailable",
+      "security": "required only on security/auth/DB/RLS; unavailable",
+      "performance": "required only on performance-sensitive changes; unavailable"
+    },
+    "dryPlan": {
+      "command": "node tools/auto/plan-queue.mjs --dry --state <existing state directory>",
+      "exit": 0
+    },
+    "operationalModified": false
+  },
+  "globalInstall": {
+    "at": "2026-09-06T06:52:51.464Z",
+    "implementationCommit": "be8e77694c7f06e3dcee2eeb6d11dc6ceb0f5d3e",
+    "backup": "C:\\Users\\user\\AppData\\Local\\Temp\\batch24-reviewed-globals-2026-09-06T06-52-51-462Z",
+    "targets": [
+      {
+        "path": "C:\\Users\\user\\.claude\\skills\\batch-24-multiAG",
+        "copiedFiles": 146,
+        "legacyRetained": [
+          "night-batch-ops",
+          "auto-story-finish"
+        ]
+      },
+      {
+        "path": "C:\\Users\\user\\.codex\\skills\\batch-24-multiAG",
+        "copiedFiles": 146,
+        "legacyRetained": [
+          "auto-story-finish"
+        ]
+      }
+    ],
+    "legacyRemoved": false,
+    "reason": "actual legacy-dependent project rollout remains incomplete"
+  },
+  "operationalState": {
+    "at": "2026-09-06T15:53:17.4363389+09:00",
+    "operationalModified": false,
+    "tasks": [
+      {
+        "name": "BaroOS-auto-slots",
+        "state": "Ready",
+        "nextRun": "2026-09-06T16:05:00.0000000+09:00",
+        "lastRun": "2026-09-06T15:35:01.0000000+09:00",
+        "lastResult": 0
+      },
+      {
+        "name": "BaroOS-night-batch",
+        "state": "Disabled",
+        "nextRun": "2026-09-06T18:00:00.0000000+09:00",
+        "lastRun": "2026-08-29T18:00:01.0000000+09:00",
+        "lastResult": 4294967295
+      },
+      {
+        "name": "BaroOS-telegram-commands",
+        "state": "Ready",
+        "nextRun": "2026-09-06T15:59:00.0000000+09:00",
+        "lastRun": "2026-09-06T15:49:01.0000000+09:00",
+        "lastResult": 0
+      },
+      {
+        "name": "inspectier-auto-slots",
+        "state": "Disabled",
+        "nextRun": "2026-09-06T20:00:00.0000000+09:00",
+        "lastRun": "1999-11-30T00:00:00.0000000+09:00",
+        "lastResult": 267011
+      }
+    ]
+  },
+  "limits": [
+    "Scores describe the gate engine, not application security certification.",
+    "Regex/static inventory and test names do not prove assertion semantics.",
+    "Local code owners can alter the verifier; this is not a hostile-admin attestation boundary.",
+    "Full regression instrumentation caused long fixture execution; do not combine full V8 capture with timing benchmarks.",
+    "Global legacy deletion and operational migration require project integration readiness and idle boundary validation."
+  ]
 }

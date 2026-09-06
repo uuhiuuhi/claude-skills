@@ -1,0 +1,41 @@
+✔ dry-run and absent marker never call git (1.8076ms)
+✔ dirty source, Korean story, logs, staged changes and stash remain byte-for-byte in place (1325.1976ms)
+✔ untracked marker alone permits safe detached refresh (2217.6171ms)
+✔ reviewed local tooling commit survives remote lag, next slot, and date rollover without push (5197.7392ms)
+✔ remote source advance refreshes when no stale local today branch exists (2325.7716ms)
+✔ stale local today branch cannot undo selected remote tip in downstream switch (2152.0397ms)
+✔ divergent local and remote auto branches fail closed (2304.5958ms)
+✔ fetch and status failure stop before checkout (1218.866ms)
+✔ target changing installed runtime stops before touching loaded code (1996.255ms)
+✔ ignored file collision is preserved and safe checkout fails (2388.3762ms)
+✔ runtime modification racing inspection is detected even when git ignores it (2258.6254ms)
+✔ run-night startup delegates dry-run and has no destructive git fallback (1.8869ms)
+✔ runtime pin boundary allows application descendants but rejects unreviewed tooling descendants (4057.3758ms)
+✔ tooling directory cannot be the worktree root or escape the worktree (1457.1107ms)
+✔ an empty auto chain starts from origin main without inventing a local branch (2127.8496ms)
+✔ a non-date unfinished auto branch is preserved and requires explicit reconciliation (1819.7206ms)
+✔ ahead HEAD preserves its older auto anchor and refuses continuation after losing that anchor (3021.1361ms)
+✔ a reviewed commit absent from the selected history cannot authorize refresh (1871.9149ms)
+✔ runtime replacement during checkout is detected and left intact for review (1822.3761ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 39679.0811
+ℹ start of coverage report
+ℹ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ file                   | line % | branch % | funcs % | uncovered lines
+ℹ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ _verification          |        |          |         |
+ℹ  capture-source.mjs    | 100.00 |   100.00 |  100.00 |
+ℹ batch-24-multiAG       |        |          |         |
+ℹ  engine                |        |          |         |
+ℹ   runner-rules.mjs     |  45.24 |    92.31 |   19.57 | 11-13 18-21 32-40 50-55 60-63 71-77 84-90 97-110 127-140 148-161 166-181 185-194 215-220 228-236 238-241 253-264 268-269 299-300 306-313 320-328 346-363 381-418 422-426 437-450 459-469 474-489 495-499 517-528 538-557 568-586 590-604 608-611 621-626 629-630
+ℹ   worktree-refresh.mjs | 100.00 |   100.00 |  100.00 |
+ℹ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ all files              |  54.55 |    98.91 |   38.33 |
+ℹ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ end of coverage report

@@ -60,4 +60,4 @@ node tools/auto/autofinish.mjs --diagnose-only
 여섯 모델 라우팅은 [모델 정책](batch-24-multiAG/references/MODEL-ROUTING.md),
 예약 및 복구는 [AUTOFINISH](batch-24-multiAG/AUTOFINISH.md)를 참조하세요.
 
-외부 npm 의존성 없이 Node.js로 실행합니다. Node 내장 coverage 회귀 픽스처는 Node 24에서 검증합니다.
+엔진 자체는 외부 npm 의존성 없이 Node.js로 실행합니다. 선택적인 Vitest adapter는 대상 프로젝트의 Vitest와 같은 버전의 `@vitest/coverage-v8`를 사용합니다. Node 내장 coverage 회귀 픽스처는 Node 24에서 검증합니다.

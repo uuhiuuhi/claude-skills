@@ -176,36 +176,36 @@
   "candidate": [
     {
       "exit": 0,
-      "wallClockMs": 26124,
+      "wallClockMs": 26466,
       "metrics": {
-        "batchId": "2026-09-06-1788677098848",
+        "batchId": "2026-09-06-1788676507177",
         "label": "라운드 1",
         "branch": "auto/2026-09-06",
         "planSource": "deterministic",
         "schema": "batch-24-multiag/metrics/1",
         "workers": 2,
-        "wallMs": 25691,
-        "serialMs": 20741,
-        "occupancyMs": 27119,
-        "idleMs": 24263,
-        "idleRatio": 0.4722,
-        "parallelEfficiency": 0.4037,
+        "wallMs": 26061,
+        "serialMs": 21134,
+        "occupancyMs": 27929,
+        "idleMs": 24193,
+        "idleRatio": 0.4642,
+        "parallelEfficiency": 0.4055,
         "stories": [
           {
             "story": "2-1-a",
-            "ms": 5997,
+            "ms": 6458,
             "stages": 3,
             "exit": 0
           },
           {
             "story": "2-2-b",
-            "ms": 21122,
+            "ms": 21471,
             "stages": 3,
             "exit": 0
           }
         ],
-        "p50Ms": 5997,
-        "p95Ms": 21122,
+        "p50Ms": 6458,
+        "p95Ms": 21471,
         "retries": {
           "repairRounds": 0,
           "providerSwitches": 2
@@ -233,93 +233,93 @@
     },
     {
       "exit": 0,
-      "wallClockMs": 11079,
+      "wallClockMs": 25843,
       "metrics": {
-        "batchId": "2026-09-06-1788677112401",
+        "batchId": "2026-09-06-1788676560381",
         "label": "라운드 1",
         "branch": "auto/2026-09-06",
         "planSource": "deterministic",
         "schema": "batch-24-multiag/metrics/1",
         "workers": 2,
-        "wallMs": 10637,
-        "serialMs": 6042,
-        "occupancyMs": 12565,
-        "idleMs": 8709,
-        "idleRatio": 0.4094,
-        "parallelEfficiency": 0.284,
-        "stories": [
-          {
-            "story": "2-1-a",
-            "ms": 6196,
-            "stages": 3,
-            "exit": 0
-          },
-          {
-            "story": "2-2-b",
-            "ms": 6369,
-            "stages": 3,
-            "exit": 0
-          }
-        ],
-        "p50Ms": 6196,
-        "p95Ms": 6369,
-        "retries": {
-          "repairRounds": 0,
-          "providerSwitches": 2
-        },
-        "modelCalls": [
-          {
-            "provider": "claude",
-            "model": "fable",
-            "calls": 2,
-            "tokens": 0
-          },
-          {
-            "provider": "codex",
-            "model": "codex:default",
-            "calls": 2,
-            "tokens": 3000
-          }
-        ],
-        "tokens": 3000,
-        "qualityGate": {
-          "passed": true,
-          "why": "qa GREEN · 리뷰 high 0 · 통합 pass"
-        }
-      }
-    },
-    {
-      "exit": 0,
-      "wallClockMs": 26271,
-      "metrics": {
-        "batchId": "2026-09-06-1788677140911",
-        "label": "라운드 1",
-        "branch": "auto/2026-09-06",
-        "planSource": "deterministic",
-        "schema": "batch-24-multiag/metrics/1",
-        "workers": 2,
-        "wallMs": 25861,
-        "serialMs": 21279,
-        "occupancyMs": 27843,
-        "idleMs": 23879,
-        "idleRatio": 0.4617,
+        "wallMs": 25429,
+        "serialMs": 20923,
+        "occupancyMs": 27390,
+        "idleMs": 23468,
+        "idleRatio": 0.4614,
         "parallelEfficiency": 0.4114,
         "stories": [
           {
             "story": "2-1-a",
-            "ms": 21513,
+            "ms": 6211,
             "stages": 3,
             "exit": 0
           },
           {
             "story": "2-2-b",
-            "ms": 6330,
+            "ms": 21179,
             "stages": 3,
             "exit": 0
           }
         ],
-        "p50Ms": 6330,
-        "p95Ms": 21513,
+        "p50Ms": 6211,
+        "p95Ms": 21179,
+        "retries": {
+          "repairRounds": 0,
+          "providerSwitches": 2
+        },
+        "modelCalls": [
+          {
+            "provider": "claude",
+            "model": "fable",
+            "calls": 2,
+            "tokens": 0
+          },
+          {
+            "provider": "codex",
+            "model": "codex:default",
+            "calls": 2,
+            "tokens": 3000
+          }
+        ],
+        "tokens": 3000,
+        "qualityGate": {
+          "passed": true,
+          "why": "qa GREEN · 리뷰 high 0 · 통합 pass"
+        }
+      }
+    },
+    {
+      "exit": 0,
+      "wallClockMs": 26211,
+      "metrics": {
+        "batchId": "2026-09-06-1788676614218",
+        "label": "라운드 1",
+        "branch": "auto/2026-09-06",
+        "planSource": "deterministic",
+        "schema": "batch-24-multiag/metrics/1",
+        "workers": 2,
+        "wallMs": 25779,
+        "serialMs": 20891,
+        "occupancyMs": 27268,
+        "idleMs": 24290,
+        "idleRatio": 0.4711,
+        "parallelEfficiency": 0.4052,
+        "stories": [
+          {
+            "story": "2-1-a",
+            "ms": 6082,
+            "stages": 3,
+            "exit": 0
+          },
+          {
+            "story": "2-2-b",
+            "ms": 21186,
+            "stages": 3,
+            "exit": 0
+          }
+        ],
+        "p50Ms": 6082,
+        "p95Ms": 21186,
         "retries": {
           "repairRounds": 0,
           "providerSwitches": 2
@@ -346,20 +346,10 @@
       }
     }
   ],
-  "baselineReuse": {
-    "source": "final-gate-benchmark.json",
-    "commit": "166e28cf4af31c3309f9f19a7b8ed0f0219f94c3",
-    "reason": "Same baseline code and command; candidate-only early tooling containment guard changed after paired run."
-  },
-  "environment": {
-    "node": "v24.18.0",
-    "nodeOptions": null,
-    "coverage": null
-  },
   "comparison": {
     "beforeMs": 21756,
-    "afterMs": 26124,
-    "increasePercent": 20.077220077220076,
+    "afterMs": 26211,
+    "increasePercent": 20.47710976282405,
     "thresholdPercent": 30,
     "result": "pass",
     "samples": {

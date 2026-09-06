@@ -1,0 +1,68 @@
+✔ publication uses gate-verified fingerprint and rejects post-gate source mutation (1.1287ms)
+✔ missing, stale, wrong-phase and non-ready reports cannot authorize publication (0.217ms)
+✔ legacy docs-only ready report still binds publication to verified code (0.1248ms)
+✔ actual runner integration gate rejects source mutation immediately after successful child and rolls back (92.9344ms)
+✔ required missing and malformed pins fail; optional absence remains backwards compatible (1.6583ms)
+✔ reviewed pin must remain an ancestor and tooling descendants or dirty edits fail (58882.1647ms)
+✔ application-only descendants and dirty app changes preserve the reviewed runtime (17858.0968ms)
+✔ incoming app change is allowed with older remote tooling; incoming tooling change is blocked (38539.8106ms)
+✔ git launch failures, invalid status and containment errors fail closed (1.0481ms)
+✔ run-night pre-merge wiring refuses incoming tooling before merge can execute (21088.4888ms)
+✔ run-night post-sync and sequential/parallel child boundaries stop changed tooling (9688.1724ms)
+✔ actual parallel pool rejects a guard failure and cleans only never-started worktrees (145.4789ms)
+✔ actual parallel pool drains running workers, stops rescheduling and preserves their output on rejection (184.8206ms)
+✔ surface normal discovers every static method and route, deduplicates registrations (2.1972ms)
+✔ surface failure rejects partial method coverage in API and authorization reports (0.6191ms)
+✔ surface boundary distinguishes routes of the same method and rejects malformed scope (0.1983ms)
+✔ surface ignores comments and quoted fake handlers (0.1652ms)
+✔ surface Next normal maps root and dynamic route exports (0.2921ms)
+✔ surface unknown or dynamic framework remains not-verified without inventory (0.218ms)
+✔ surface explicit reviewed inventory covers unsupported dispatch without stale acceptance (0.449ms)
+✔ surface inventory cannot omit a visible method even with a current source hash (0.4021ms)
+✔ surface HEAD OPTIONS and dynamic registration outside API directories still trigger the gate (2.7205ms)
+✔ surface mounted router requires explicit external route inventory (0.1928ms)
+✔ dry-run and absent marker never call git (5.3003ms)
+✔ dirty source, Korean story, logs, staged changes and stash remain byte-for-byte in place (43977.6901ms)
+✔ untracked marker alone permits safe detached refresh (45902.9784ms)
+✔ reviewed local tooling commit survives remote lag, next slot, and date rollover without push (59887.2506ms)
+✔ remote source advance refreshes when no stale local today branch exists (14056.7134ms)
+✔ stale local today branch cannot undo selected remote tip in downstream switch (7809.3091ms)
+✔ divergent local and remote auto branches fail closed (4219.3477ms)
+✔ fetch and status failure stop before checkout (2184.2193ms)
+✔ target changing installed runtime stops before touching loaded code (4859.396ms)
+✔ ignored file collision is preserved and safe checkout fails (5965.7299ms)
+✔ runtime modification racing inspection is detected even when git ignores it (6551.8091ms)
+✔ run-night startup delegates dry-run and has no destructive git fallback (2.5557ms)
+✔ runtime pin boundary allows application descendants but rejects unreviewed tooling descendants (19767.0106ms)
+ℹ tests 36
+ℹ suites 0
+ℹ pass 36
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 218628.0097
+ℹ start of coverage report
+ℹ ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ file                        | line % | branch % | funcs % | uncovered lines
+ℹ ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ _verification               |        |          |         |
+ℹ  capture-source.mjs         | 100.00 |   100.00 |  100.00 |
+ℹ batch-24-multiAG            |        |          |         |
+ℹ  engine                     |        |          |         |
+ℹ   landing-publication.mjs   | 100.00 |   100.00 |  100.00 |
+ℹ   runner-rules.mjs          |  46.03 |    76.47 |   21.74 | 11-13 18-21 32-40 50-55 60-63 71-77 84-90 97-110 127-140 148-161 166-181 185-194 215-220 228-236 238-241 253-264 268-269 299-300 306-313 320-328 346-363 381-418 422-426 437-450 459-469 474-489 517-528 538-557 568-586 590-604 608-611 621-626 629-630
+ℹ   runtime-pin.mjs           | 100.00 |    89.74 |  100.00 |
+ℹ   runtime                   |        |          |         |
+ℹ    api-surface.mjs          | 100.00 |   100.00 |  100.00 |
+ℹ    completion-rules.mjs     |  31.28 |   100.00 |    5.00 | 56-60 65-75 79-85 92-107 115-144 155-237 251-258 261-270 274-290 294-303 307-317 320-332 335-347 357-390
+ℹ    providers                |        |          |         |
+ℹ     redact.mjs              |  77.78 |   100.00 |    0.00 | 53-56 75-90
+ℹ    quality-gates.mjs        |  30.96 |    65.38 |   62.16 | 51-65 68-77 82-110 113-127 129-133 136-150 165-173 184-271 274-281
+ℹ    quality-rules.mjs        |  41.00 |    72.09 |   21.05 | 15-28 32-33 48-77 85-95 108-113 136-138 156-157 166-222 238-243 248-254 258-285 290-300
+ℹ    story-writes.mjs         |  34.00 |   100.00 |    0.00 | 12-23 27-32 39-45 51 56-82 85-91 95-100
+ℹ   worktree-refresh.mjs      |  88.39 |    87.50 |   92.31 | 42-43 71-72 84-88 94-95 108-109
+ℹ ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ all files                   |  47.21 |    84.08 |   40.34 |
+ℹ ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ end of coverage report

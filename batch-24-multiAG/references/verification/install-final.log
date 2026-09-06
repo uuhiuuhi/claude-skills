@@ -1,0 +1,24 @@
+✔ fresh CLI installation requires a reviewed runtime pin and copies the real adapter without registering tasks (203.9644ms)
+✔ forced CLI upgrade preserves legacy config and queue bytes while replacing adapter and runtime pin tooling (211.4752ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 517.4329
+ℹ start of coverage report
+ℹ -------------------------------------------------------------------------------------------------------------------------
+ℹ file                             | line % | branch % | funcs % | uncovered lines
+ℹ -------------------------------------------------------------------------------------------------------------------------
+ℹ ..                               |        |          |         |
+ℹ  claude-skills-quality-gates-9   |        |          |         |
+ℹ   _verification                  |        |          |         |
+ℹ    capture-source.mjs            | 100.00 |   100.00 |  100.00 |
+ℹ   batch-24-multiAG               |        |          |         |
+ℹ    install.mjs                   |  88.62 |    46.15 |   80.95 | 41-52 57-58 226-236 339 341-345 347-352 359-361 368-370
+ℹ -------------------------------------------------------------------------------------------------------------------------
+ℹ all files                        |  89.11 |    50.70 |   81.82 |
+ℹ -------------------------------------------------------------------------------------------------------------------------
+ℹ end of coverage report

@@ -1,0 +1,32 @@
+✔ cost CLI rejects missing baseline before fixture creation or model execution (132.7029ms)
+✔ cost CLI rejects too few samples before fixture creation or model execution (111.3481ms)
+✔ cost CLI rejects noninteger samples before fixture creation or model execution (107.9395ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 462.9197
+ℹ start of coverage report
+ℹ ----------------------------------------------------------------------------------------------------------------------------------------------
+ℹ file                               | line % | branch % | funcs % | uncovered lines
+ℹ ----------------------------------------------------------------------------------------------------------------------------------------------
+ℹ ..                                 |        |          |         |
+ℹ  claude-skills-quality-gates-9     |        |          |         |
+ℹ   _verification                    |        |          |         |
+ℹ    capture-source.mjs              | 100.00 |   100.00 |  100.00 |
+ℹ   batch-24-multiAG                 |        |          |         |
+ℹ    engine                          |        |          |         |
+ℹ     bench.mjs                      |  52.48 |    50.00 |    0.00 | 131-202 206-219 239-264 268-286 291-303
+ℹ     fixtures                       |        |          |         |
+ℹ      strict-quality-fixture.mjs    |  80.88 |   100.00 |    0.00 | 32-44
+ℹ     gate-benchmark.mjs             |  39.47 |    66.67 |   50.00 | 9-14 20-36
+ℹ     metrics.mjs                    |  29.72 |   100.00 |    0.00 | 25-27 50-86 90-106 111-115 126-228 236-253 270-291 295-305 310-314 318-323
+ℹ     runtime                        |        |          |         |
+ℹ      schema-migration.mjs          |  40.00 |   100.00 |    0.00 | 3-8
+ℹ ----------------------------------------------------------------------------------------------------------------------------------------------
+ℹ all files                          |  45.59 |    82.35 |    7.14 |
+ℹ ----------------------------------------------------------------------------------------------------------------------------------------------
+ℹ end of coverage report

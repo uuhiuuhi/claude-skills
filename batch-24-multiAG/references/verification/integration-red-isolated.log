@@ -1,0 +1,13 @@
+▶ [e2e][#7] 통합 RED — pushOnFail 이 켜져 있어도 원격에 아무것도 올라가지 않는다
+  ✔ 폐지 경고 · rollback · 원격 ref 0건 · 로컬 landing 0건 · exit 1 (152.0152ms)
+  ✔ [#16] 배치 매니페스트에 rollback 이 남고 push=false (50.7966ms)
+  ✔ [#16/N6] rollback 이 각 스토리 매니페스트에 남는다 — 증거 사본 + batchId 붙은 미추적 sidecar (44.8073ms)
+✔ [e2e][#7] 통합 RED — pushOnFail 이 켜져 있어도 원격에 아무것도 올라가지 않는다 (28180.8872ms)
+ℹ tests 3
+ℹ suites 1
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 28430.2028

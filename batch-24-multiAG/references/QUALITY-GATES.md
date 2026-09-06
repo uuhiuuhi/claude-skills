@@ -72,3 +72,26 @@ Measure real application workloads separately from deterministic stub benchmarks
 Claude reviews request `--output-format stream-json --verbose`. Only successful Read tool results for every requested story/diff/changed path establish review evidence; prose and failed reads do not. Codex review evidence continues to use its structured CLI events. Raw CLI output is redacted before storage.
 
 Legacy `integrationGate.retry` is read but ignored. The first landing RED immediately preserves evidence, rolls back and blocks publication; it is never retried into GREEN.
+
+## Complete API surfaces
+
+API reports are matched by `source + method + route`, not one row per source file. Static root
+`app.get/post/put/patch/delete/head/options` registrations and Next app-router exports are discovered.
+Mounted `router.*`, dynamic dispatch and unsupported frameworks remain `not-verified` until reviewed
+`quality.config.json` `apiEndpoints` entries bind the complete inventory to the current source SHA-256:
+`[{"source":"src/api/handler.ts","sourceSha256":"<sha256>","endpoints":[{"method":"POST","route":"/items"}]}]`.
+The inventory must include every statically discovered registration; stale hashes or omitted methods block.
+A test report cannot declare its own expected surface. Removed/dynamic/mounted routes that cannot be
+established by this contract remain unverified and require a project adapter/review, never a fabricated row.
+
+## Vitest adapter
+
+The installer pins `adapters/vitest-quality.mjs` under `tools/auto/adapters`. Configure explicit unit and
+integration scopes in project-root `quality-adapter.config.json`; their union must retain the project's
+existing regression scope. Install `@vitest/coverage-v8` at the exact installed Vitest version.
+Set both `test:affected` and `coverage` to `node tools/auto/adapters/vitest-quality.mjs affected`.
+Use modes `all` for the full unit scope and `integration` for the integration scope at landing.
+The adapter uses Vitest's dependency graph and produces real LCOV in the same affected run.
+No mapping, no tests, missing instrumentation, missing required environment, or skipped mandatory integration
+is a failure. Capability output only describes availability; it is not execution evidence. SQL/Deno coverage
+and actual API/auth/security/performance adapters must be supplied by the project when relevant.

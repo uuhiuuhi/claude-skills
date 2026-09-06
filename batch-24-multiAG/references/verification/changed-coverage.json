@@ -2,12 +2,12 @@
   "result": "pass",
   "mode": "changed-lines-and-branches",
   "minimum": 90,
-  "percent": 97.78911564625851,
-  "branchPercent": 90.50554870530209,
-  "total": 1176,
-  "covered": 1150,
-  "branches": 811,
-  "coveredBranches": 734,
+  "percent": 96.8213604577241,
+  "branchPercent": 90.21459227467811,
+  "total": 1573,
+  "covered": 1523,
+  "branches": 1165,
+  "coveredBranches": 1051,
   "unknown": [],
   "files": [
     {
@@ -46,6 +46,36 @@
       "covered": 3
     },
     {
+      "path": "batch-24-multiAG/engine/finish-stories.mjs",
+      "total": 35,
+      "covered": 35
+    },
+    {
+      "path": "batch-24-multiAG/engine/fixtures/fake-bmad-project.mjs",
+      "total": 293,
+      "covered": 293
+    },
+    {
+      "path": "batch-24-multiAG/engine/fixtures/strict-quality-fixture.mjs",
+      "total": 49,
+      "covered": 49
+    },
+    {
+      "path": "batch-24-multiAG/engine/fixtures/stub-claude.mjs",
+      "total": 123,
+      "covered": 120
+    },
+    {
+      "path": "batch-24-multiAG/engine/fixtures/stub-codex.mjs",
+      "total": 71,
+      "covered": 71
+    },
+    {
+      "path": "batch-24-multiAG/engine/gate-benchmark.mjs",
+      "total": 27,
+      "covered": 12
+    },
+    {
       "path": "batch-24-multiAG/engine/metrics.mjs",
       "total": 2,
       "covered": 2
@@ -77,8 +107,8 @@
     },
     {
       "path": "batch-24-multiAG/engine/run-night.mjs",
-      "total": 34,
-      "covered": 33
+      "total": 97,
+      "covered": 74
     },
     {
       "path": "batch-24-multiAG/engine/runner-rules.mjs",
@@ -86,9 +116,14 @@
       "covered": 6
     },
     {
+      "path": "batch-24-multiAG/engine/runtime/authorization-matrix.mjs",
+      "total": 17,
+      "covered": 17
+    },
+    {
       "path": "batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs",
-      "total": 122,
-      "covered": 119
+      "total": 126,
+      "covered": 122
     },
     {
       "path": "batch-24-multiAG/engine/runtime/completion-rules.mjs",
@@ -107,8 +142,8 @@
     },
     {
       "path": "batch-24-multiAG/engine/runtime/providers/codex.mjs",
-      "total": 1,
-      "covered": 1
+      "total": 5,
+      "covered": 5
     },
     {
       "path": "batch-24-multiAG/engine/runtime/providers/index.mjs",
@@ -116,9 +151,19 @@
       "covered": 3
     },
     {
+      "path": "batch-24-multiAG/engine/runtime/quality-gates.mjs",
+      "total": 218,
+      "covered": 218
+    },
+    {
       "path": "batch-24-multiAG/engine/runtime/quality-rules.mjs",
-      "total": 52,
-      "covered": 52
+      "total": 54,
+      "covered": 54
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/schema-migration.mjs",
+      "total": 7,
+      "covered": 7
     },
     {
       "path": "batch-24-multiAG/engine/telegram-commands.mjs",
@@ -127,53 +172,33 @@
     },
     {
       "path": "batch-24-multiAG/install.mjs",
-      "total": 9,
-      "covered": 9
+      "total": 18,
+      "covered": 17
     },
     {
-      "path": "batch-24-multiAG/engine/finish-stories.mjs",
+      "path": "batch-24-multiAG/adapters/vitest-quality.mjs",
+      "total": 149,
+      "covered": 145
+    },
+    {
+      "path": "batch-24-multiAG/engine/landing-publication.mjs",
+      "total": 11,
+      "covered": 11
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime-pin.mjs",
       "total": 35,
       "covered": 35
     },
     {
-      "path": "batch-24-multiAG/engine/fixtures/fake-bmad-project.mjs",
-      "total": 293,
-      "covered": 293
+      "path": "batch-24-multiAG/engine/runtime/api-surface.mjs",
+      "total": 36,
+      "covered": 36
     },
     {
-      "path": "batch-24-multiAG/engine/fixtures/strict-quality-fixture.mjs",
-      "total": 49,
-      "covered": 49
-    },
-    {
-      "path": "batch-24-multiAG/engine/fixtures/stub-claude.mjs",
-      "total": 123,
-      "covered": 120
-    },
-    {
-      "path": "batch-24-multiAG/engine/fixtures/stub-codex.mjs",
-      "total": 71,
-      "covered": 71
-    },
-    {
-      "path": "batch-24-multiAG/engine/gate-benchmark.mjs",
-      "total": 27,
-      "covered": 8
-    },
-    {
-      "path": "batch-24-multiAG/engine/runtime/authorization-matrix.mjs",
-      "total": 17,
-      "covered": 17
-    },
-    {
-      "path": "batch-24-multiAG/engine/runtime/quality-gates.mjs",
-      "total": 212,
-      "covered": 212
-    },
-    {
-      "path": "batch-24-multiAG/engine/runtime/schema-migration.mjs",
-      "total": 7,
-      "covered": 7
+      "path": "batch-24-multiAG/engine/worktree-refresh.mjs",
+      "total": 78,
+      "covered": 78
     }
   ]
 }

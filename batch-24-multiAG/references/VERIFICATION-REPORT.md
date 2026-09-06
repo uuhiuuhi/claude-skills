@@ -1,66 +1,87 @@
 # 통합 품질 검증 보고서 — 2026-09-06
 
-저장소 구현·통합 검증은 끝났으며 **운영 이전은 미완료**다. 검토 대상은 `codex/quality-gates-9-consolidation`, 기준은 `166e28c`다. 별도 worktree `C:/Projects/claude-skills-quality-gates-9`에서 작업했다. 운영 프로젝트 파일·스토리·로그·예약 설정은 변경하지 않았다.
+스킬 구현, Sol-high 독립 리뷰, 저장소 회귀와 격리 설치 검증을 완료했다. **운영 러너 전환과 기존 전역 스킬 삭제는 미완료**다. 엄격한 landing 계약을 충족하지 못하는 기존 앱 DB 통합 테스트를 먼저 정비해야 한다. 운영 프로젝트의 스토리·로그·예약 설정은 변경하지 않았다.
 
-## 구조와 중복 제거
+작업 위치는 `C:/Projects/claude-skills-quality-gates-9`, 브랜치는 `codex/quality-gates-9-consolidation`, 기준은 `166e28c`다. 검증된 구현 커밋은 `be8e77694c7f06e3dcee2eeb6d11dc6ceb0f5d3e`이며 [draft PR #1](https://github.com/uuhiuuhi/claude-skills/pull/1)에서 검토할 수 있다. 이후 문서 커밋은 실행 코드를 바꾸지 않는다.
 
-- 유일한 배치 정본: `batch-24-multiAG/`. `engine/`은 예약·lock·큐·워커·landing·복구, `engine/runtime/`은 create/dev/review·모델·품질·완료 근거를 담당한다.
-- `finish-stories.mjs`가 수동 범위·의존성·중복 sprint row를 처리한다. 설치기는 runtime을 프로젝트에 고정한다.
-- `quality-gates.mjs`, `authorization-matrix.mjs`, `schema-migration.mjs`를 추가했다. runner의 push guard는 runtime 정본을 재수출한다.
-- 구 두 폴더의 92개 파일(2,180,069 bytes)을 이관 대조 후 저장소에서 제거했다. 이 수치는 제거 폴더의 크기이며 순수 저장소 절감량은 아니다. 필요한 테스트·문서는 정본으로 옮겼다. 46개 이관 파일은 byte-identical이고 46개는 통합 계약에 맞게 수정됐다.
-- [이관 명세](consolidation-inventory.json), [이전 방법](MIGRATION.md), [품질 계약](QUALITY-GATES.md)에 원본/대상 해시와 사용법을 기록했다. 과거 복구·리뷰 문서는 역사 자료로 보존했다.
+## 변경 구조와 중복 제거
 
-## 품질 항목 평가
+- `batch-24-multiAG/`를 유일한 저장소 정본으로 구성했다. `engine/`은 예약·lock·큐·병렬 워커·landing·복구, `engine/runtime/`은 create→dev→review·자동 수리·모델 호출·검증 manifest를 담당한다.
+- `finish-stories.mjs`와 SKILL.md에 수동 스토리 범위 완료를 통합했다. 수동 실행과 예약 실행이 같은 runtime을 사용한다.
+- `quality-gates.mjs`, `quality-rules.mjs`, `api-surface.mjs`, `authorization-matrix.mjs`가 위험도·검사 선택·API 목록·권한 증거를 검증한다. `schema-migration.mjs`는 구 상태를 읽고 새 기록을 `batch-24-multiag/*`로 쓴다.
+- `landing-publication.mjs`, `runtime-pin.mjs`, `worktree-refresh.mjs`가 검토된 코드 지문과 발행·교체를 연결한다. dirty 작업을 보존하며, 검증 뒤 변경된 코드는 push할 수 없다.
+- `adapters/vitest-quality.mjs`는 실제 영향 테스트와 LCOV를 연결하고 unit/integration 범위를 분리한다. 설치기는 runtime과 adapter를 프로젝트에 고정한다.
+- 구 두 폴더의 **92개 파일, 2,180,069 bytes**를 대조 후 저장소에서 제거했다. **45개는 동일 바이트, 47개는 통합 계약에 맞게 수정**됐다. 제거 폴더 크기이며 순수 저장소 절감량은 아니다. 필요한 테스트·문서·복구 규칙은 정본으로 이관했다.
 
-아래 점수는 동일한 10점 척도를 사용한 구현자 평가다. 독립 평가나 보안 인증 점수가 아니다. 대상은 게이트 엔진이며, 미완료인 운영 이전을 완료로 평가하지 않는다.
+[이관 명세](consolidation-inventory.json), [마이그레이션](MIGRATION.md), [품질 계약](QUALITY-GATES.md), README에 새 명령과 이전 방법을 기록했다.
 
-| 항목 | 이전 | 이후 | 근거 |
+## 품질 항목별 이전·이후 평가
+
+점수는 게이트 엔진에 대한 구현자 평가이며 보안 인증이나 운영 앱 품질 점수가 아니다. Sol은 독립적으로 코드 결함을 검토했으며 이 숫자를 인증한 것은 아니다.
+
+| 항목 | 이전 | 이후 | 확인 근거 |
 |---|---:|---:|---|
 | 변경 분류·검사 선택 | 5 | 8.5 | docs/fast/standard/api/auth-db/performance, 주석·정적 리소스 제외 |
-| typecheck/lint/영향 unit 강제 | 6 | 9 | 프로젝트 필수 명령 부재·실패 차단, worker 전체 test 폴백 제거 |
-| 변경 코드 coverage | 3 | 9 | LCOV diff 교집합, 90%·계측 누락 차단 |
-| 정상·실패·경계 테스트 | 5 | 8.5 | 소스와 실제 통과 이름 모두 요구 |
-| API·권한·테넌트 격리 | 4 | 8.5 | 실제 HTTP 401/403/2xx/403 또는 404 helper·신선한 보고서 |
-| security/performance 조건 | 6 | 9 | 적용되는 필수 검사만 실행, required-missing 차단 |
-| landing·rollback | 8 | 9 | full/integration 한 번, 첫 RED 즉시 rollback·push 차단 |
-| 우회 방지 | 7 | 8.5 | only/skip/삭제/빈 테스트/단언·설정 완화/Node coverage 지시문 차단 |
-| manifest·완료·발행 | 7 | 9 | 코드 지문·실행 명령·사유·결과·시간, 미검증 완료 차단 |
-| 캐시·중복 제거·병렬 검사 | 4 | 8.5 | 동일 지문 결과 재사용, 15종 손상 캐시 재검사 |
-| 평균 | **5.5** | **8.75** | Sol-high 독립 검토 전 잠정 평가 |
+| typecheck/lint/영향 unit | 6 | 9 | 적용되는 필수 명령 부재·실패 차단, worker 전체 test 폴백 제거 |
+| 변경 코드 coverage | 3 | 9 | diff 라인·분기 각각 90%, 계측 누락 차단 |
+| 정상·실패·경계 테스트 | 5 | 8.5 | 소스와 실제 통과 기록 모두 요구 |
+| API·권한·테넌트 격리 | 4 | 8.5 | source+method+route 단위 증거, 401/403/2xx/테넌트 행 검사 |
+| security/performance 조건 | 6 | 9 | 해당 변경에만 실행, 필요한 검사 부재는 차단 |
+| landing·rollback | 8 | 9 | 전체 회귀 landing 1회, RED rollback·push 차단 |
+| 우회 방지 | 7 | 8.5 | only/skip/삭제/빈 테스트/단언·coverage·설정 완화 탐지 |
+| manifest·완료·발행 | 7 | 9 | 명령·사유·결과·시간·지문, 미검증 완료와 stale 발행 차단 |
+| 캐시·중복 제거·병렬 검사 | 4 | 8.5 | 동일 지문 재사용, 명령 공유, 독립 검사 병렬화 |
+| 평균 | **5.5** | **8.75** | 독립 리뷰의 남은 코드 출시 차단 결함 0개 |
 
-## 회귀와 coverage
+## 테스트와 coverage
 
-- 기준 회귀: **897/897**, 991.66초.
-- 최종 전체 실행: **966건 중 963 통과, 3 실패**, 2,416.79초. V8 계측과 소스 해시 수집을 포함했다.
-- 실패 3건은 구 retry 기대값 2건과 순차 worker 검사 2회를 landing 재실행으로 잘못 센 기대값 1건이었다. worker 계약 **31/31**, 순차 rollback **3/3** 재검증으로 해결했다. 실제 rollback·원격 차단은 전체 실행에서도 통과했다.
-- 이후 추가한 fixture 계약 6건, Telegram 구 offset/BOM 이전 1건, runtime 경로 1건도 통과했다. **현재 45개 테스트 파일, 중복을 제외한 974개 테스트의 미해결 실패 0건**이다. 이는 전체 실행과 영향 재검증을 합친 결과이며, 단일 실행 974/974라고 주장하지 않는다.
-- 최신 품질 정책 **51/51**, canonical-only 설치 **4/4**, 실제 Claude·Codex 전역 라우팅 각각 **17/17**.
-- JavaScript 구문 **87/87**, 이 중 동일 해시 **80개 재사용**. `git diff --check` 통과. 이 저장소에는 TypeScript/ESLint 프로젝트가 없으며 구문 검사를 의미적 타입 검사로 표기하지 않았다. 설치 대상 프로젝트의 typecheck/lint 명령 강제는 별도로 테스트했다.
-- **변경 라인 97.79% (1150/1176), 변경 분기 90.51% (734/811), 계측 누락 0개.** 전체 저장소 수치로 변경 코드 누락을 가리지 않았다.
-- [manifest](verification/manifest.json), [LCOV](verification/coverage.lcov), [변경 coverage](verification/changed-coverage.json)에 근거를 보관했다. 전체 실행·영향 재검증 출력 로그도 같은 폴더에 있다(행 끝 공백 정리, 원본은 로컬 보존).
+최종 검증된 테스트는 **51개 파일의 고유 1,033건, 미해결 실패 0건**이다. 전체 실행과 변경 영향 재검증을 합친 결과이며, 단일 실행 1,033/1,033이라고 주장하지 않는다.
 
-## 실행 시간
+- 전체 회귀 1회: **1,010건 중 1,006 통과, 4 실패, skip 0**, 2,895.389초. V8 계측·소스 해시 수집과 동시성 3을 사용했다.
+- 실패 4개 assertion은 두 child fixture가 계측 병렬 부하에서 300초 deadline에 도달한 결과였다. 코드·timeout·assertion을 완화하지 않고 동일 영향 범위만 별도 실행하여 benchmark **1/1**, integration RED **3/3** 통과를 확인했다.
+- 전체 실행 뒤 runtime pin 9, refresh 6, installer 2, benchmark 입력 3, pin 입력 3의 고유 테스트를 추가·통과했다. 수정된 파일의 영향 테스트도 재검증했다.
+- 마지막 핵심 경계 36/36, refresh 19/19, installer 2/2, benchmark 입력 3/3, pin 입력 3/3 통과. 이 숫자를 1,033건에 다시 더하지 않는다.
+- Fable→Opus, Sonnet→Terra·Opus→Sol·Fable→Astra, 동일 제공자 자체 리뷰 금지, 모델 건강 공유, 파일 충돌, 중복 row, QA RED/push, integration RED/rollback, authorization matrix, coverage 차단, 조건부 검사, 우회 탐지, 구 상태·원장·예약 마이그레이션을 fixture와 회귀로 검증했다.
+- **변경 라인 96.82% (1,523/1,573), 변경 분기 90.21% (1,051/1,165), 계측 누락 0개.** 현재 소스 SHA와 일치하는 계측 결과만 병합했다. 전체 저장소 coverage로 대체하지 않았다.
 
-기준 커밋의 완전한 `batch-24-multiAG/engine`과 최종 엔진을 같은 합성 CLI fixture에서 번갈아 3회씩 실행했다. 여섯 실행 모두 exit 0이다.
+[검증 manifest](verification/manifest.json), [LCOV](verification/coverage.lcov), [changed coverage](verification/changed-coverage.json), [전체 실행 증거](verification/full-regression-evidence.json)에 명령·지문·결과를 남겼다. 로그는 같은 폴더에 있으며 행 끝 공백만 정리하고 원본은 로컬에 보존했다.
 
-| 정상 배치 중앙값 | 이전 | 이후 | 증가 |
+## 격리 프로젝트 설치 결과
+
+`C:/Projects/jng-os-batch24-release`에 이전 로컬 tooling 커밋 `d77f61d`를 기반으로 설치했다. 실제 운영 프로젝트에 적용한 커밋이 아니며 아직 격리 준비 상태다.
+
+- 실제 앱 unit: **169개 파일, 4,600 통과 + 기존 skip 3**, 65.39초. 전체 217개 테스트 파일은 unit 169와 DB integration 48로 나뉜다.
+- 프로젝트 의미적 `npm run typecheck` 통과, `npm run lint` 오류 0·경고 0. 두 수동 명령의 정확한 시간은 보존되지 않아 수치를 만들지 않았다. 엔진 MJS 실행/구문 검증을 의미적 타입 검사로 표기하지 않는다.
+- 설치된 모델 라우팅·품질·권한 테스트 **71/71, skip 0**, 83.356초.
+- 정본과 설치된 실행 파일·필수 테스트 **53개 SHA 일치**, 기존 상태를 읽는 dry plan exit 0.
+- 실제 Vitest adapter fixture 9/9 통과. 실제 앱 DB·외부 모델 요청은 실행하지 않았다. 엔진 HTTP matrix fixture 성공을 운영 endpoint 검증으로 바꾸어 기록하지 않는다.
+
+## 성능과 오래 걸린 원인
+
+| 정상 합성 배치 중앙값 | 이전 | 이후 | 증가 |
 |---|---:|---:|---:|
-| 최종 성공 표본 | 22.240초 | 26.408초 | **18.74%** |
+| 성공 표본 각 3개 | 21.756초 | 26.124초 | **20.08%** |
 
-30% 조사 기준을 넘지 않았다. 실 LLM·운영 DB 지연은 측정하지 않았다. [원본 표본](verification/benchmark.json)을 참고한다. 구 night 엔진과 새 runtime을 혼합해 실패한 재측정 표본은 비교에서 제외했다. 계측 전체 회귀 40분은 정상 배치 성능 수치로 사용하지 않았다. 중복 커버리지 복사는 중단하고 원본 직접 읽기로 바꿨다.
+30% 조사 기준을 넘지 않았다. 기준 커밋의 완전한 엔진과 같은 합성 CLI fixture를 비교했다. 최초 교차 측정 뒤 마지막 경로 guard 수정에 대해서만 후보 3회를 재측정하고 변하지 않은 기준 3회를 재사용했다. [표본](verification/benchmark.json)을 보존했다. 표본 수가 작고 실 LLM·운영 DB 지연은 포함하지 않는다.
 
-## 전역·운영 상태
+작업 지연의 큰 원인은 전체 V8 계측 회귀가 48.26분 걸리고 병렬 child fixture가 deadline에 도달한 것이다. 이 시간을 정상 배치 비용으로 혼동하지 않는다. 이후 검증은 변경 파일별 검사와 기존 지문 증거를 재사용했으며, raw coverage 전체 복사·재처리를 반복하지 않고 증분 병합했다. 앞으로 전체 회귀는 비계측 실행, 변경 코드만 계측하고 시간 측정과 겹치지 않도록 한다. 품질 임계치·skip 허용을 완화하지 않았다.
 
-Claude와 Codex의 `~/.claude/skills/batch-24-multiAG`, `~/.codex/skills/batch-24-multiAG`를 백업 후 갱신했다. 각 전역의 core 120개 파일을 원본과 해시 대조했고 라우팅 테스트를 통과했다.
+## 전역 설치와 운영 상태
 
-**전역 단일화와 운영 반영은 아직 완료하지 않았다.** 실제 `jng-os`, `jng-os-auto`에는 `tools/auto/runtime/auto-story-pipeline.mjs`가 없으며 affected-unit/coverage/API/authorization/security/integration 스크립트도 없다. 구 전역을 지금 지우면 기존 실행을 깨뜨리므로 Claude의 구 두 스킬과 Codex의 구 auto-story-finish를 보존했다. 임시 설치 fixture의 pinned 실행 성공을 실제 기존 프로젝트 이전 성공으로 바꾸어 기록하지 않았다.
+Claude `C:/Users/user/.claude/skills/batch-24-multiAG`와 Codex `C:/Users/user/.codex/skills/batch-24-multiAG`는 백업 후 검증된 구현 `be8e776`으로 갱신했다. 최초 갱신 시 각 146개 파일을 해시 대조했고, 최종 문서·증거는 후속 동기화한다. 기존 실행 중인 운영 runner가 이 갱신만으로 교체되는 것은 아니다.
 
-운영 예약 작업은 비활성화하거나 변경하지 않았다. 13:47 KST 조회 기준 `BaroOS-auto-slots`는 Ready, 다음 실행은 **2026-09-06 14:05 KST**였다. 구 night 작업은 Disabled였다. 운영 원격/main push는 수행하지 않았다.
+**전역 단일화는 미완료다.** Claude의 `night-batch-ops`, `auto-story-finish`, Codex의 `auto-story-finish`를 보존했다. 구 전역 경로에 의존하는 실제 프로젝트가 남아 있기 때문이다. inspectier 두 프로젝트의 pinned runtime 이전은 빈 전역 환경에서 격리 smoke 6/6으로 검증했고 안전한 적용·rollback 스크립트를 준비했지만 실제 프로젝트에는 적용하지 않았다.
 
-다음 운영 단계는 프로젝트 검사 adapter 준비 → reviewed commit 확정 → no runner lock AND no matching PID → 예약 진입 중지·재확인 → 도구만 적용 → routing/quality/dry plan → 성공 시 예약 복원이다. 실제 프로젝트 pinned 실행을 검증한 뒤에만 구 전역을 제거한다.
+운영 `C:/Projects/jng-os-auto`는 `19cc0b85`이며 이번 작업에서 변경하지 않았다. 2026-09-06 **15:53 KST** 조회 당시 `BaroOS-auto-slots`는 Ready, 다음 실행은 **16:05 KST**였다. 예약 작업을 끄거나 켜지 않았으며 운영 원격/main push도 하지 않았다.
 
-## 한계와 독립 리뷰
+운영 전환의 차단 사유는 DB integration 준비 상태다. 실제 테스트는 존재하지만 48개 파일에 hardcoded `it.skip` 51개, `it.skipIf` 19개, `ctx.skip` 134개 사용 지점이 있다(실행 테스트 수가 아닌 소스 선언 수). 엄격한 zero-skip landing 검사는 일반 코드 배치도 차단할 수 있다. 외부 계정·이메일·DB 쓰기를 동반할 수 있는 probe를 임의로 켜거나 인증 정보를 복사하지 않았다. API/auth/security/performance 프로젝트 adapter 부재는 각각 해당 변경에만 차단 사유가 된다.
 
-분류·단언 검사는 완전한 AST 분석이 아니다. 테스트 이름과 coverage만으로 의미적 assertion 품질을 증명하지 않는다. API 보고서는 변경 source 파일의 계약이며 같은 파일 안 모든 endpoint/method와 middleware 위치는 독립 검토가 필요하다. 로컬 보고서·캐시는 엔진까지 수정할 수 있는 관리자에 대한 위조 방어 경계가 아니다. 운영 인증·테넌트 데이터는 이번 fixture 시험으로 검증됐다고 주장하지 않는다.
+운영 적용 순서는 앱 DB 통합 계약 정비 → 검토된 tooling 커밋 확정 → no runner lock AND no matching PID → 예약 진입 중지 후 재확인 → 도구만 적용 → routing/quality/dry plan → 성공 시 예약 복원이다. 실제 프로젝트 pinned 실행 검증이 끝난 뒤 구 전역을 제거한다. 앱 DB 테스트 보완까지 이번 작업에 포함할지 사용자 범위 선택이 남아 있다.
 
-[Sol-high 리뷰 체크리스트](SOL-HIGH-REVIEW.md)를 준비했다. 실제 독립 리뷰는 아직 수행하지 않았다. 기능 브랜치와 draft PR을 검토 대상으로 사용하며 운영 배포 승인을 대신하지 않는다.
+## Sol 독립 리뷰와 남은 한계
+
+**gpt-5.6-sol / high**가 독립 리뷰를 수행했다. 초기 API 일부 endpoint 누락, worktree 보존·runtime pin, 검증 이후 발행 변경 문제를 수정한 뒤 **남은 코드 출시 차단 결함 0개**로 확인했다. 검토된 구현 11개 파일 지문은 `02ff9429f77ad3c7b1ebd1988da8b3fa658e47e72e163044e1df7166676c5245`다. 구현자와 다른 모델이며 동일 OpenAI 제공자다. 엔진의 교차 제공자 리뷰 정책 검증과 구분한다.
+
+[Sol 리뷰 결과](SOL-HIGH-REVIEW-RESULT.md)와 [후속 리뷰 체크리스트](SOL-HIGH-REVIEW.md)를 함께 제공한다. 다음 검토는 실제 앱 DB/권한 adapter와 배치 경계 전환 증거에 집중하면 된다. 새 대화를 만들어 이미 끝난 엔진 리뷰를 반복할 필요는 없다.
+
+정적 분류·테스트 이름 검사는 assertion의 의미적 충분성을 완전히 증명하지 않는다. 동적·mounted route에는 소스 SHA에 묶인 명시적 inventory가 필요하다. 로컬 검증기까지 수정할 수 있는 관리자에 대한 위조 방어 인증은 아니다. 실제 앱 인증·RLS/테넌트 격리와 운영 DB 결과는 아직 검증되지 않았다. 따라서 저장소 gate verdict `ready`는 운영 스토리 완료나 운영 전환 승인을 의미하지 않는다.

@@ -34,3 +34,35 @@ Require BOTH no active runner lock and no matching PID, disable the scheduled ta
 Preserve existing story changes, untracked artifacts and logs. Apply only reviewed tooling changes; no reset/clean of the project.
 Run routing tests, quality tests and dry plan. Re-enable only after success; retain the paused task and report failure otherwise.
 No operational remote push is authorized by this migration procedure.
+
+## Reviewed local runtime pin (no operational remote push)
+
+Prepare tooling changes on a separate project worktree based on the latest local `auto/<date>` tip.
+Commit only reviewed tooling, project adapter configuration and dependency changes. Review that exact commit.
+At the idle boundary, pause every scheduled entry that can launch this project and recheck lock AND PID.
+If the operational workspace has unfinished story/log changes, preserve them in place and defer the switch.
+Do not stash, reset, clean or force-checkout to make the workspace look clean.
+
+Fast-forward the intended local `auto/<date>` branch to the reviewed tooling commit only when its old tip
+is an ancestor and that branch is not checked out by another task. Use ordinary `git switch` in the idle
+runner workspace. If the local branch diverges, reconcile in an isolated worktree and review the result first.
+A separate clone can fetch the reviewed commit from the local preparation repository; no GitHub push is needed.
+
+Write `<stateDir>/runtime-pin.json` after verifying the installed files against the commit:
+`{"schema":"batch-24-multiag/runtime-pin/1","commit":"<reviewed 40-character project commit>"}`.
+This is local deployment state, not a quality pass or a story completion record. Back it up with the prior
+runtime and task state. Startup requires the selected tip to contain the pin; local ahead commits survive
+remote lag and date rollover. A remote change to loaded tooling stops the runner for a reviewed update.
+Dirty files, divergent refs, stale local branches, failed fetches and malformed pins fail closed.
+
+Run installed routing/quality tests and `plan-queue.mjs --dry`. Restore only the prior enabled schedules
+on success. On failure, restore reviewed tooling/pin from the backup and report the failure; do not silently
+retry a failed application QA into green. Existing project test debt must be reported separately from
+engine installation checks. Missing applicable API/auth/security/performance evidence still blocks stories.
+
+For this migration set `auto.config.json` `runtimePin.required: true` before enabling a marker runner.
+New installation defaults require this pin; existing configs are preserved and must be migrated explicitly.
+Legacy unconfigured runners retain their historical compatibility until migration and are not described as
+verified deployments. Required pins cannot be omitted. Before main synchronization, the runner rejects
+incoming tooling changes; after synchronization and before worker launch it rechecks the installed pin.
+Application commits may advance after the pin, but any tooling change requires a new reviewed pin at an idle boundary.

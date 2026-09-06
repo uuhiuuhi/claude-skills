@@ -1,7 +1,7 @@
 # Sol-high 독립 리뷰 체크리스트
 
 대상: `codex/quality-gates-9-consolidation`, 기준 `origin/codex/batch-24-multiag` (166e28c).
-리뷰는 구현과 다른 제공자에서 수행한다. 이 문서는 리뷰 요청안이며 Sol의 실제 리뷰 완료 기록이 아니다.
+리뷰는 구현과 다른 모델인 gpt-5.6-sol/high에서 수행했다. 동일 OpenAI 제공자이며 엔진의 교차 제공자 리뷰 계약과는 구분한다. 실제 결과는 SOL-HIGH-REVIEW-RESULT.md, 현재 증거는 VERIFICATION-REPORT.md를 참고한다. 아래 항목은 후속 변경에도 적용한다.
 
 ## 출시를 막아야 하는 항목
 
