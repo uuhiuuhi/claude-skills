@@ -105,3 +105,11 @@ Claude `C:/Users/user/.claude/skills/batch-24-multiAG`와 Codex `C:/Users/user/.
 - **운영 데이터 복원(추측 없음)**: `state.json.workers` 11건은 run-summary `exit=0` dev 줄과 verification.json `workers.dev` 가 일치할 때만 복원(`restoredFrom` 동봉 · done 은 만들지 않음). 1-10 은 불일치로 `BLOCKED-ON-HUMAN` 보류(편성기가 사람 질문으로 분류하는 것을 `plan-queue` 로 실측). 필수 DB 검사 53건의 landing 차단은 그대로.
 - **러너 독립 clone**: 공유 `.git` 링크드 워크트리는 개발 저장소의 정상 커밋/fetch 를 워커 변경으로 오판한다(실측: 개발 저장소에 임시 브랜치+fetch+커밋 → 옛 폴더 지문 변경 / 독립 clone 지문 불변). `C:/Projects/jng-os-runner` = 로컬 저장소에서 clone(로컬 전용 커밋 승계) → origin 을 GitHub 로 재지정 · fetch → 무시 파일 335건(.env.local · 마커 · qa 로그) 복사 → `npm ci` → pin diff 0. 워커 자신의 브랜치 생성·commit→reset 탐지와 refs/codex 무시는 그대로. 옛 폴더 `C:/Projects/jng-os-auto` 는 복구용 보존(스케줄 작업만 새 경로로).
 - **남는 것**: 정상 완주 배치는 다음 슬롯 이후 확인 · 구 전역 스킬 보존 유지 · 운영 원격 push 는 사람 승인(`auto.config.json` `push: true`) 전까지 없음.
+
+
+## 후속 3 — 2026-09-06 밤: 슬롯 공회전(실행 보고 dirty) 수정 · 첫 정상 완주 · 같은 원인 반복 리뷰 차단
+
+- **첫 정상 완주(19:35 슬롯 · 독립 clone)**: 2-4 · 2-23 마감 재검수 done(T1~T8+Q9 pass · codex clean · landing 2 · 통합 게이트 GREEN · push 없음). 2-22 는 T8(완료 기록 실측 인용 부재)로 STOP.
+- **공회전 사고**: 20:05 · 20:35 · 21:05 슬롯이 refresh 거부(실행 보고 dirty 4~6건)로 무작업. 정본 수정 `preserveRunReport`(Sol-high 12~13차) — 종료 직전 로그 폴더만 러너 브랜치(auto/*)에서 커밋. 그때까지의 슬롯은 사람이 로그를 커밋해 이어 붙였다.
+- **같은 원인 반복 리뷰 차단**: 2-22 가 19:35 · 21:35 두 번 codex 리뷰(clean)를 받고도 T8 만으로 STOP 하는 것을 막기 위해 엔진 렌더러(`renderCompletionNotes`)로 현재 검증 매니페스트를 Completion Notes 에 인용(`completionNotesAudit` pass 확인 · 러너 clone `be6aa2ea`).
+- **DB 필수 검사 53건 실행 준비(별도 후속 · 작업 브랜치 `auto/2026-09-06-db-checks`)**: 계정 부족 0 · `[QA-DB]` 픽스처 빌더로 정적 it.skip 46건 실행 전환 · skip 67 → 17(필수 잔여 4: 2.17 service_role · 이관 시드 2 · outbox 시간 경과). 원장 `tools/auto/DB-SKIP-CLASSIFICATION-2026-09-06.md` 후속 절.

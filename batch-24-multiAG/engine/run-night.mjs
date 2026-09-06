@@ -38,7 +38,7 @@ import { readModelHealth, recordModelEvent } from './runtime/model-health.mjs'
 import { failureKind } from './runtime/model-policy.mjs'
 import { loadConfig } from './plan-queue.mjs'
 import { safeGitPush } from './push-guard.mjs'
-import { refreshWorktree } from './worktree-refresh.mjs'
+import { preserveRunReport, refreshWorktree } from './worktree-refresh.mjs'
 import { assertReviewedRuntime, assertIncomingToolingStable } from './runtime-pin.mjs'
 import { verifiedLandingFingerprint } from './landing-publication.mjs'
 // 2026-09-02 「9점대 하네스」 배선 — 판정은 전부 순수 모듈이 소유하고 러너는 부르기만 한다.
@@ -1853,6 +1853,17 @@ function roundCommitFileLists(baseSha) {
     .split('\n').map((l) => l.trim()).filter(Boolean))
 }
 
+
+// 실행 보고 보존 — 러너가 마지막 landing 커밋 뒤에 쓰는 보고서·게이트 로그·매니페스트는 트리를 dirty 로 남기고,
+// 다음 슬롯의 refreshWorktree() 는 dirty 를 「미완 작업」으로 보고 시작을 거부한다(2026-09-06 실사고: 슬롯 3연속 공회전).
+// 그래서 종료 직전에 로그 폴더만 커밋한다 — 스토리 작업 잔여물은 그대로 두어 refresh 의 보호가 유지된다.
+// ⚠️ 이 뒤로 SUMMARY(night-last-run.md)에 쓰면 다시 dirty 가 된다 — 결과는 콘솔(slots.log)에만 남긴다.
+const logPreserved = (r) => {
+  if (r?.committed) console.log(`- 실행 보고 보존 커밋: ${r.committed.slice(0, 12)} (${r.entries}건)`)
+  else if (r?.failed) console.log(`⚠ 실행 보고 보존 실패 — ${r.failed}. 다음 슬롯이 refresh 에서 멈추면 이 로그 폴더를 사람이 커밋할 것`)
+  else if (r?.skipped === 'not-on-runner-branch') console.log(`⚠ 실행 보고 보존 건너뜀 — 러너 브랜치(auto/*)가 아니다(${r.branch}). 보고가 dirty 로 남아 다음 refresh 가 멈춘다(의도된 보호)`)
+}
+
 const headSha = () => {
   const r = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' })
   return r.status === 0 ? (r.stdout ?? '').trim() : ''
@@ -1861,6 +1872,7 @@ const headSha = () => {
 // ⑥ 실행 — 수동은 단일 실행, 슬롯 모드는 큐가 마를 때까지 연속.
 if (!autoPlan) {
   const r = await runQueue(manualQueuePath, null, 1)
+  logPreserved(preserveRunReport({ logDir: LOG_DIR, label: `${START_DATE} 수동 실행`, dryRun }))
   console.log(`\n==== 야간 배치 종료 — ${SUMMARY} ====`)
   await shutdown(r.worstCode ?? 0)
 }
@@ -1903,5 +1915,6 @@ for (let round = 1; ; round++) {
   console.log(`\n──── 라운드 ${round} 완주 — 남은 일이 있는지 다시 편성한다(연속 실행) ────`)
 }
 
+logPreserved(preserveRunReport({ logDir: LOG_DIR, label: `${START_DATE} 슬롯 종료`, dryRun }))
 console.log(`\n==== 야간 배치 종료 — ${SUMMARY} ====`)
 await shutdown(lastWorst ?? 0) // fetch 알림 배출 — process.exit 이 전송을 잘라먹지 않게

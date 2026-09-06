@@ -826,3 +826,46 @@ pinned tooling `bef98b22` 의 첫 실슬롯(18:39 KST · 배치 「2-4·2-25 마
 
 - 운영 state.json `workers[<story>::dev]` 11건 복원(2-4 · 2-22 · 2-23 · 2-25 · 3-6 · 3-7 · 11-2 · 11-3 · 11-6 · 11-7 · 4-0) — run-summary.log 의 `dev (model=opus)` 시작줄과 뒤따르는 `exit=0` 줄 + `<story>-verification.json` `workers.dev=claude/opus` 두 기계 기록이 일치할 때만, `restoredFrom` 근거를 동봉해 기록. 완료 상태(done)는 만들지 않았다. 1-10 은 기록 불일치(로그 08-13 opus vs 문서 fable · verification 없음)로 `BLOCKED-ON-HUMAN` 보류.
 - 운영 러너는 공유 `.git` 링크드 워크트리(`C:/Projects/jng-os-auto`)에서 **독립 clone**(`C:/Projects/jng-os-runner` · 로컬 전용 커밋 7건 + 오늘 커밋 승계)으로 이전 — 개발 저장소의 브랜치/fetch/커밋이 워커 지문을 바꾸지 않고(실측 A) 워커 자신의 브랜치·commit→reset 은 계속 잡히며(실측 B·C) refs/codex 는 무시(D)한다.
+
+
+## 12차 · 13차 — 2026-09-06 밤: 슬롯 공회전 사고 — 실행 보고 보존 커밋(preserveRunReport)
+
+### 배경
+
+독립 clone 러너의 첫 배치(19:35)는 완주했지만 그 뒤 20:05 · 20:35 · 21:05 슬롯이 전부 「✖ 워크트리 새로고침 중단 — unfinished changes preserved in place (6 entries)」로 아무 일도 하지 않았다. `refreshWorktree()` 는 설계상 모든 dirty 항목을 「미완 작업」으로 보고 시작을 거부하는데, 러너 자신이 마지막 landing 커밋 **뒤에** 실행 보고(`night-last-run.md` · `integration-gate.log` · 배치/계측 매니페스트 · `landing-quality.json` · `quality-cache/*`)를 쓰므로 실배치마다 4~6 항목이 dirty 로 남았다. 사람이 손으로 커밋해야 다음 슬롯이 돌았다(21:35 는 그렇게 돌았다).
+
+### 수정(정본 · 3파일)
+
+- `engine/worktree-refresh.mjs` — `preserveRunReport({ cwd, logDir, label, dryRun, branchPrefix='auto/', runGit })`: dry-run · 마커 없음 · logDir 없음 · 저장소 아님 · logDir 이 워크트리 밖 · **러너 브랜치(auto/*)가 아니면**(main · detached HEAD) 건너뛴다. 그 외에는 로그 폴더만 `git status -- <logDir>` → 비었으면 `{skipped:'clean'}`(빈 커밋 없음) → `git add -A -- <logDir>` + `commit -- <logDir>`(경로 한정 · 다른 스테이징은 건드리지 않음). 예외는 `{failed}` 로 돌려주고 던지지 않는다.
+- `engine/run-night.mjs` — 두 종료 지점(수동 1회 · 슬롯 루프) 직전에 호출하고 결과는 콘솔(slots.log)에만 남긴다(SUMMARY 에 쓰면 다시 dirty).
+- 테스트 5건(실저장소): 로그 폴더만 커밋·무시 파일 제외·미완 작업은 그대로 남아 refresh 가 여전히 거부(1 entries) · 두 번째 호출 clean · dry-run/마커 없음/워크트리 밖 · main/detached 거부 · 실행기 예외 → failed · 스테이징된 외부 파일은 스테이징 유지·미커밋 · run-night 소스 계약(종료 지점 2 = 호출 2).
+
+### 12차 결과 (gpt-5.6-sol · high)
+
+**Release blocker: YES.** H1 — 수동 실행 경로에서 마커 clone 이 main/detached 면 그 위에 커밋해 다음 refresh 가 「anchored 아닌 ahead HEAD / divergent」로 선다 → 브랜치 가드 추가. M2 — 실행기 예외가 빠져나간다 → try/catch. L3 — dirty 트리 exit 4 경로는 보고를 쓰고 보존 없이 끝난다 → 그 경로는 미완 작업이 있어 다음 refresh 가 어차피 거부해야 하므로 유지(기록). 잔여: 경로 한정 커밋은 바깥 스테이징을 커밋도 폐기도 하지 않음(테스트 추가) · NTFS junction 물리 포함은 검사 안 함 · 동시 원격 전진 시 의도된 divergence 정지.
+
+### 13차 결과
+
+**Release blocker: No.** H1·M2 해소 · L3 는 기록으로 수용. Low 1건: rev-parse 실패가 조용한 skipped 로 접힌다 → status 검사 후 `{failed}` 로 표면화 + `logPreserved` 가 브랜치 거부도 출력(13차 이후 기계적 강화 · 테스트 1건 추가). 원문:
+
+> ## Decision
+>
+> **Release blocker: No.** Round-12 H1 and M2 are remediated; L3 is acceptable as documented.
+>
+> ## Findings
+>
+> - **Low — incomplete failure visibility:** exceptions become `failed`, but nonzero/error results from the two `rev-parse` calls can become silent `skipped` results because their statuses are unchecked (`batch-24-multiAG/engine/worktree-refresh.mjs:141-147`); `logPreserved` prints only `failed` (`batch-24-multiAG/engine/run-night.mjs:1861-1864`).
+>
+> ## Residual risks
+>
+> - Symbolic `auto/<date>` works; `main`, `codex/*`, and detached HEAD are refused before staging (`batch-24-multiAG/engine/worktree-refresh.mjs:146-154`). Auto mode also reattaches to `BRANCH` before running (`batch-24-multiAG/engine/run-night.mjs:615-620`).
+> - Any `auto/*`, including `auto/2026-09-06-tooling`, is accepted. This is acceptable but broader than “the runner’s own branch”; manual mode also invokes preservation (`batch-24-multiAG/engine/run-night.mjs:1872-1876`).
+> - The try/catch itself hides no necessary outcome, though it drops stack traces. The console receives thrown-error messages through `failed`.
+> - I agree on L3: exit 4 already has unfinished non-log work, so preserving its report would not allow the next refresh to proceed (`batch-24-multiAG/engine/run-night.mjs:1601-1606`).
+> - The staged-outside-path regression is correctly covered (`batch-24-multiAG/engine/worktree-refresh.test.mjs:336-346`).
+>
+> ## Commands you ran
+>
+> - `git status --short`; scoped `git diff`; `git diff --check`; three `node --check` commands.
+> - Focused `node --test` suite: 33/61 executed successfully; 28 fixture tests could not create temporary directories due sandbox `EPERM`, so the reported 61/61 could not be independently reproduced here.
+

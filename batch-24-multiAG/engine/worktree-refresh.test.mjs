@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { refreshWorktree } from './worktree-refresh.mjs'
+import { preserveRunReport, refreshWorktree } from './worktree-refresh.mjs'
 
 const branch = 'auto/2026-09-06'
 function fixture(t) {
@@ -279,4 +279,81 @@ test('runtime replacement during checkout is detected and left intact for review
   assert.equal(f.git('rev-parse', 'HEAD'), f.base)
   assert.equal(readFileSync(join(f.cwd, 'tools/auto/runtime/helper.mjs'), 'utf8'), 'export const helper = false // concurrent update\n')
   assert.equal(f.calls.some(args => ['reset', 'clean', 'stash'].includes(args[0])), false)
+})
+
+test('preserveRunReport commits only the engine log directory so the next refresh can start (2026-09-06 idle-slot incident)', (t) => {
+  const f = fixture(t)
+  const logDir = '_bmad-output/implementation-artifacts/auto-pipeline-logs'
+  f.write(`${logDir}/run-summary.log`, 'earlier\n')
+  const base = f.commit('tracked log baseline')
+  // off the runner branch (main) the report stays dirty on purpose — Sol-high round 12 H1
+  f.write(`${logDir}/night-last-run.md`, '# report on main\n')
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir }), { skipped: 'not-on-runner-branch', branch: 'main' })
+  assert.equal(f.git('rev-parse', 'HEAD'), base)
+  f.git('checkout', '-qb', branch)
+  // a real run leaves: modified tracked report + untracked manifests + an ignored qa log — and unfinished user work elsewhere
+  f.write(`${logDir}/run-summary.log`, 'earlier\nappended by run\n')
+  f.write(`${logDir}/night-last-run.md`, '# report\n')
+  f.write(`${logDir}/batch-x-manifest.json`, '{}\n')
+  f.write(`${logDir}/quality-cache/abc.json`, '{}\n')
+  f.write('ignored.log', 'ignored\n')
+  f.write('source.txt', 'unfinished story work\n')
+  const runGit = (file, args, opts) => { f.calls.push(args.slice(2)); return spawnSync(file, args, opts) }
+  const r = preserveRunReport({ cwd: f.cwd, logDir, label: '2026-09-06 라운드 1', runGit })
+  assert.equal(typeof r.committed, 'string', JSON.stringify(r))
+  assert.equal(r.entries, 4)
+  assert.notEqual(r.committed, base)
+  assert.equal(f.git('rev-parse', 'HEAD'), r.committed)
+  assert.match(f.git('log', '-1', '--format=%s'), /^chore\(batch\): 실행 보고·게이트 로그 보존 \(2026-09-06 라운드 1\)$/)
+  // only the log directory was committed — the story work is still unfinished and still blocks the refresh
+  assert.equal(f.git('status', '--porcelain=v1', '--untracked-files=all', '--', '_bmad-output'), '')
+  assert.equal(f.git('status', '--porcelain=v1', '--', 'source.txt').trim(), 'M source.txt')
+  assert.equal(f.git('ls-files', '--', 'ignored.log'), '')
+  assert.throws(() => f.run(), /unfinished changes preserved in place \(1 entries\)/)
+  // second call on a clean log directory is a no-op — no empty commit
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir, runGit }), { skipped: 'clean' })
+  assert.equal(f.git('rev-parse', 'HEAD'), r.committed)
+})
+
+test('preserveRunReport never commits in a dry run, without the execution marker, or outside the worktree', (t) => {
+  const f = fixture(t)
+  const logDir = '_bmad-output/implementation-artifacts/auto-pipeline-logs'
+  f.write(`${logDir}/night-last-run.md`, '# report\n')
+  const never = () => { throw new Error('git must not run') }
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir, dryRun: true, runGit: never }), { skipped: 'dry-run' })
+  assert.deepEqual(preserveRunReport({ cwd: join(tmpdir(), 'nonexistent-preserve-marker'), logDir, runGit: never }), { skipped: 'no-marker' })
+  f.git('checkout', '-qb', branch)
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir: join(f.cwd, '..'), runGit: (file, args, opts) => spawnSync(file, args, opts) }), { skipped: 'log-dir-outside-worktree' })
+  assert.equal(f.git('rev-parse', 'HEAD'), f.base)
+  // detached HEAD is not a runner branch either; an executor exception is reported, never thrown (round 12 M2)
+  f.git('checkout', '-q', '--detach')
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir }), { skipped: 'not-on-runner-branch', branch: 'HEAD' })
+  const boom = () => { throw new Error('boom') }
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir, runGit: boom }), { failed: 'exception: boom' })
+  // Sol-high round 13 L1 — a failing rev-parse is reported, not folded into a silent skip
+  const broken = () => ({ status: 128, stdout: '', stderr: 'fatal: not a git repository' })
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir, runGit: broken }), { failed: 'rev-parse --show-toplevel: fatal: not a git repository' })
+  assert.equal(f.git('rev-parse', 'HEAD'), f.base)
+})
+
+test('preserveRunReport leaves previously staged work outside the log directory staged and uncommitted', (t) => {
+  const f = fixture(t)
+  f.git('checkout', '-qb', branch)
+  const logDir = '_bmad-output/implementation-artifacts/auto-pipeline-logs'
+  f.write('source.txt', 'staged by a failed landing\n')
+  f.git('add', 'source.txt')
+  f.write(`${logDir}/night-last-run.md`, '# report\n')
+  const r = preserveRunReport({ cwd: f.cwd, logDir, label: 'x' })
+  assert.equal(typeof r.committed, 'string', JSON.stringify(r))
+  assert.equal(f.git('show', '--stat', '--format=', 'HEAD').includes('source.txt'), false)
+  assert.equal(f.git('status', '--porcelain=v1', '--', 'source.txt').trim(), 'M  source.txt')
+})
+
+test('run-night preserves the run report before every end-of-run exit', () => {
+  const runner = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'run-night.mjs'), 'utf8')
+  const ends = runner.split('==== 야간 배치 종료').length - 1
+  assert.equal(ends, 2)
+  const preserved = runner.split('preserveRunReport({').length - 1
+  assert.equal(preserved, ends, 'each end-of-run print must be preceded by a preserveRunReport call')
+  assert.match(runner, /import \{ preserveRunReport, refreshWorktree \} from '\.\/worktree-refresh\.mjs'/)
 })

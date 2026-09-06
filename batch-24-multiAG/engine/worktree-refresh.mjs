@@ -110,3 +110,56 @@ export function refreshWorktree({ cwd = process.cwd(), branch, date, dryRun = fa
   clean()
   return { ref, head: target, inheritance }
 }
+
+/**
+ * End-of-run housekeeping: commit the engine-owned run report (night-last-run.md, integration-gate.log, batch/metrics
+ * manifests, landing-quality, quality-cache) so the next slot's `refreshWorktree()` does not refuse to start.
+ *
+ * Why: `refreshWorktree()` deliberately treats *every* dirty entry as unfinished work and aborts. The runner itself writes
+ * its report after the last landing commit, so without this step each real run left 4~6 dirty entries and every following
+ * slot aborted with "unfinished changes preserved in place" (2026-09-06 operational incident: 3 consecutive idle slots).
+ *
+ * Scope is the log directory only (`-- <logDir>`): unfinished story work outside it stays exactly where it is and still
+ * blocks the next refresh, which is the intended protection. Ignored files stay ignored (`git add -A` honours .gitignore).
+ * Dry runs and checkouts without the execution marker never commit.
+ */
+export function preserveRunReport({ cwd = process.cwd(), logDir, label = '', dryRun = false, branchPrefix = 'auto/', runGit = spawnSync } = {}) {
+  if (dryRun) return { skipped: 'dry-run' }
+  if (!existsSync(join(cwd, '.auto-batch-worktree'))) return { skipped: 'no-marker' }
+  if (!logDir) return { skipped: 'no-log-dir' }
+  // Housekeeping must never throw — a finished run must not turn into a crash because git or the executor misbehaved
+  // (Sol-high round 12 M2). Git non-zero exits are reported as {failed}; so are executor exceptions.
+  try {
+    return preserveRunReportUnsafe({ cwd, logDir, label, branchPrefix, runGit })
+  } catch (error) {
+    return { failed: `exception: ${error?.message ?? String(error)}` }
+  }
+}
+
+function preserveRunReportUnsafe({ cwd, logDir, label, branchPrefix, runGit }) {
+  const git = (args) => runGit('git', ['-C', cwd, ...args], { encoding: 'utf8' })
+  const top = git(['rev-parse', '--show-toplevel'])
+  if (top.status !== 0) return { failed: `rev-parse --show-toplevel: ${(top.stderr ?? '').trim() || `exit ${top.status}`}` }
+  const root = (top.stdout ?? '').trim()
+  if (!root) return { skipped: 'not-a-repository' }
+  // Only the runner's own `auto/<date>` branch may receive the housekeeping commit (Sol-high round 12 H1): a manual run in
+  // a marker clone left on `main` or a detached HEAD would otherwise commit there and make the next slot's refresh stop on an
+  // unanchored ahead HEAD / divergent refs. Off-branch reports stay dirty on purpose — the operator sees the refusal.
+  const headRef = git(['rev-parse', '--abbrev-ref', 'HEAD'])
+  if (headRef.status !== 0) return { failed: `rev-parse --abbrev-ref HEAD: ${(headRef.stderr ?? '').trim() || `exit ${headRef.status}`}` }
+  const branch = (headRef.stdout ?? '').trim()
+  if (!branch || branch === 'HEAD' || !branch.startsWith(branchPrefix)) return { skipped: 'not-on-runner-branch', branch }
+  const rel = relative(root, resolve(cwd, logDir)).replaceAll('\\', '/')
+  if (!rel || rel === '..' || rel.startsWith('../') || isAbsolute(rel)) return { skipped: 'log-dir-outside-worktree' }
+  const status = git(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', rel])
+  if (status.status !== 0) return { failed: `status: ${(status.stderr ?? '').trim()}` }
+  const entries = (status.stdout ?? '').split('\0').filter(Boolean)
+  if (!entries.length) return { skipped: 'clean' }
+  const add = git(['add', '-A', '--', rel])
+  if (add.status !== 0) return { failed: `add: ${(add.stderr ?? '').trim()}`, entries: entries.length }
+  const message = `chore(batch): 실행 보고·게이트 로그 보존${label ? ` (${label})` : ''}`
+  const commit = git(['-c', 'core.editor=true', 'commit', '-q', '-m', message, '--', rel])
+  if (commit.status !== 0) return { failed: `commit: ${(commit.stderr ?? commit.stdout ?? '').trim()}`, entries: entries.length }
+  const head = (git(['rev-parse', 'HEAD']).stdout ?? '').trim()
+  return { committed: head, entries: entries.length, message }
+}
