@@ -71,9 +71,33 @@ describe('① 배치 매니페스트', () => {
     assert.equal(r.error.kind, 'schema')
     assert.match(r.error.why, /알 수 없는 형식/)
   })
+  test('엔진 계열 접두사만 다른 schema(batch-24-multiag/) — 같은 형식으로 읽는다 (2026-09-07 실사고)', () => {
+    const p = put('batch-B24-manifest.json', JSON.stringify({ ...MANIFEST, schema: 'batch-24-multiag/batch-manifest/1', batchId: 'B24' }))
+    const r = parseBatchManifest(p)
+    assert.equal(r.error, null)
+    assert.equal(r.value.batchId, 'B24')
+    assert.equal(r.value.integration.result, 'pass')
+  })
+  test('접두사가 같아도 종류·판이 다르면 여전히 kind=schema', () => {
+    const p = put('batch-kind-manifest.json', JSON.stringify({ schema: 'batch-24-multiag/metrics/1', batchId: 'X' }))
+    assert.equal(parseBatchManifest(p).error.kind, 'schema')
+    const q = put('batch-ver-manifest.json', JSON.stringify({ schema: 'night-batch-ops/batch-manifest/2', batchId: 'X' }))
+    assert.equal(parseBatchManifest(q).error.kind, 'schema')
+  })
 })
 
 describe('② 스토리 검증 매니페스트', () => {
+  test('batch-24-multiag/verification/1 — workers·completion 을 같은 형식으로 읽는다', () => {
+    const p = put('3-7-verification.json', JSON.stringify({
+      ...VERIFICATION, schema: 'batch-24-multiag/verification/1', story: '3-7',
+      completion: { schema: 'batch-24-multiag/completion/1', statusInFile: 'done' },
+    }))
+    const r = parseVerification(p)
+    assert.equal(r.error, null)
+    assert.equal(r.value.story, '3-7')
+    assert.equal(r.value.workers.review.provider, 'codex')
+    assert.notEqual(r.value.completion, null)
+  })
   test('정상 — workers 가 per-story LLM 정본', () => {
     const p = put('2-18-verification.json', JSON.stringify(VERIFICATION))
     const r = parseVerification(p)

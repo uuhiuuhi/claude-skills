@@ -14,6 +14,10 @@
 // 손상 내성이 이 파일의 본체다. 파서는 절대 throw 하지 않는다 — 실패는 값이 아니라
 // `error:{file,why,kind}` 로 돌려주고, 화면은 그 블록만 「읽지 못했습니다」로 적는다.
 // 예상 밖 schema 는 추측해서 그리지 않는다(kind:'schema' → 「알 수 없는 형식」 + 원문 경로).
+//
+// schema 접두사(엔진 계열)는 판정에 쓰지 않는다 — 2026-09-06 엔진 교체(batch-24-multiAG)가 같은 키 구조의
+// 산출물을 `batch-24-multiag/<종류>/<판>` 으로 내기 시작했고, 접두사까지 대조하던 계기판이 지난밤 8배치를
+// 통째로 「알 수 없는 형식」으로 버렸다(2026-09-07 아침 실사고). `<종류>/<판>` 만 같으면 같은 형식이다.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -38,10 +42,23 @@ export function parseJsonFile(file, { schema = null, text = undefined } = {}) {
   let v
   try { v = JSON.parse(raw) } catch (e) { return err(file, 'JSON 을 읽지 못했습니다 — ' + (e?.message ?? e), 'broken') }
   if (!v || typeof v !== 'object' || Array.isArray(v)) return err(file, '최상위가 객체가 아닙니다', 'schema')
-  if (schema && v.schema !== schema) {
+  if (schema && !schemaMatches(v.schema, schema)) {
     return err(file, '알 수 없는 형식 — schema 가 ' + (v.schema ? '"' + v.schema + '"' : '없음') + ' 입니다(기대: "' + schema + '")', 'schema')
   }
   return ok(v)
+}
+
+/** 엔진 계열 접두사(`night-batch-ops/`·`auto-story-finish/`·`batch-24-multiag/`)를 뗀 `<종류>/<판>`. */
+export const SCHEMA_FAMILIES = ['night-batch-ops/', 'auto-story-finish/', 'batch-24-multiag/']
+export function schemaKey(s) {
+  if (typeof s !== 'string') return null
+  const fam = SCHEMA_FAMILIES.find((p) => s.startsWith(p))
+  return fam ? s.slice(fam.length) : s
+}
+/** 종류·판이 같으면 같은 형식 — 접두사가 달라도 통과, 종류가 다르면 거절. */
+export function schemaMatches(actual, expected) {
+  const a = schemaKey(actual)
+  return a != null && a === schemaKey(expected)
 }
 
 export const BATCH_MANIFEST_SCHEMA = 'night-batch-ops/batch-manifest/1'
@@ -98,7 +115,7 @@ export function parseVerification(file, text) {
   const checks = v.checks && typeof v.checks === 'object' ? v.checks : {}
   const review = v.review && typeof v.review === 'object' ? v.review : null
   const counts = review && review.counts && typeof review.counts === 'object' ? review.counts : {}
-  const completion = v.completion && typeof v.completion === 'object' && v.completion.schema === COMPLETION_SCHEMA ? v.completion : null
+  const completion = v.completion && typeof v.completion === 'object' && schemaMatches(v.completion.schema, COMPLETION_SCHEMA) ? v.completion : null
   return ok({
     file,
     story: str(v.story),
