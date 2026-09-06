@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { inheritPlan } from './runner-rules.mjs'
+import { isDeniedPath, secretHits } from './runtime/push-guard.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -163,3 +164,75 @@ function preserveRunReportUnsafe({ cwd, logDir, label, branchPrefix, runGit }) {
   const head = (git(['rev-parse', 'HEAD']).stdout ?? '').trim()
   return { committed: head, entries: entries.length, message }
 }
+
+/**
+ * STOP housekeeping: a worker that ran **in the marker clone's main tree** (sequential batch) and stopped leaves its
+ * unfinished story edits in place. `refreshWorktree()` treats them as unfinished human work and refuses every following
+ * slot until a person commits them (2026-09-06/07: eight idle slots overnight over three replan files). In an
+ * execution-only clone every leftover is engine-produced, so the runner itself "finishes" them: evidence is archived by
+ * the caller first, then the leftovers are committed on the runner's `auto/*` branch with an explicit STOP marker so the
+ * next replan/dev round (and a human) can see them in history instead of in a blocked tree.
+ *
+ * Safety: denied paths (env/keys/secret-shaped files, non-engine logs) are never staged and are reported; if the staged
+ * diff contains a secret pattern nothing is committed (index reset) and the tree stays dirty on purpose — the refresh
+ * refusal is then the correct outcome. Dry runs, no marker, and non-`auto/*` branches never commit.
+ */
+export function preserveStopLeftovers({ cwd = process.cwd(), label = '', exitCode = null, dryRun = false, branchPrefix = 'auto/', runGit = spawnSync } = {}) {
+  if (dryRun) return { skipped: 'dry-run' }
+  if (!existsSync(join(cwd, '.auto-batch-worktree'))) return { skipped: 'no-marker' }
+  try {
+    return preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGit })
+  } catch (error) {
+    return { failed: `exception: ${error?.message ?? String(error)}` }
+  }
+}
+
+function preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGit }) {
+  const git = (args) => runGit('git', ['-C', cwd, '-c', 'core.quotePath=false', ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  const headRef = git(['rev-parse', '--abbrev-ref', 'HEAD'])
+  if (headRef.status !== 0) return { failed: `rev-parse --abbrev-ref HEAD: ${(headRef.stderr ?? '').trim() || `exit ${headRef.status}`}` }
+  const branch = (headRef.stdout ?? '').trim()
+  if (!branch || branch === 'HEAD' || !branch.startsWith(branchPrefix)) return { skipped: 'not-on-runner-branch', branch }
+  const status = git(['status', '--porcelain=v1', '-z', '--untracked-files=all'])
+  if (status.status !== 0) return { failed: `status: ${(status.stderr ?? '').trim()}` }
+  const entries = parsePorcelainZ(status.stdout ?? '').filter((p) => p && p !== '.auto-batch-worktree')
+  if (!entries.length) return { skipped: 'clean' }
+  const denied = entries.filter((p) => isDeniedPath(p.replaceAll('\\', '/')))
+  const paths = entries.filter((p) => !denied.includes(p))
+  if (!paths.length) return { skipped: 'only-denied-paths', denied }
+  // Sol-high round 14 H1: porcelain names go back to git as pathspecs — `:(literal)` disables glob/magic so a file named
+  // `[ab].txt` or `:(top)*` can never widen the selection past the filtered list (even after `--`).
+  const specs = paths.map(literalPathspec)
+  const add = git(['add', '-A', '--', ...specs])
+  if (add.status !== 0) return { failed: `add: ${(add.stderr ?? '').trim()}`, denied }
+  const staged = git(['diff', '--cached', '--unified=0', '--', ...specs])
+  const secrets = secretHits(staged.stdout ?? '')
+  if (secrets.length) {
+    git(['reset', '-q', '--', ...specs])
+    return { failed: `secret pattern in leftovers (${secrets.length}) — left uncommitted for a human`, secrets: secrets.length, denied }
+  }
+  const message = `chore(batch): STOP 잔여물 보존 — ${label || '(배치)'}${exitCode == null ? '' : ` (exit ${exitCode})`} · 워커가 본 트리에 남긴 미완 변경 ${paths.length}건 · 다음 라운드/사람 검토 대상`
+  const commit = git(['-c', 'core.editor=true', 'commit', '-q', '-m', message, '--', ...specs])
+  if (commit.status !== 0) return { failed: `commit: ${(commit.stderr ?? commit.stdout ?? '').trim()}`, denied }
+  const head = (git(['rev-parse', 'HEAD']).stdout ?? '').trim()
+  return { committed: head, entries: paths.length, denied, message }
+}
+
+/** `git status --porcelain=v1 -z` → 경로 목록. rename/copy 레코드(`R  new\0old\0` · 대상 → 원본 순 — git-status 문서)는
+ *  두 필드를 소비하고 **둘 다** 돌려준다(원본의 삭제도 같이 스테이징돼야 rename 이 절반만 실리지 않는다 — Sol-high 14차 M2). */
+export function parsePorcelainZ(stdout) {
+  const fields = String(stdout ?? '').split('\0')
+  const out = []
+  for (let i = 0; i < fields.length; i++) {
+    const rec = fields[i]
+    if (!rec) continue
+    const xy = rec.slice(0, 2)
+    const path = rec.slice(3)
+    if (path) out.push(path)
+    if (/[RC]/.test(xy)) { const src = fields[i + 1]; if (src) out.push(src); i++ }
+  }
+  return out
+}
+
+/** git 에 되돌려 주는 pathspec 은 항상 리터럴이다 — glob(`*`·`[]`)·매직(`:(top)` 등)이 든 파일 이름이 선택 범위를 넓히지 못한다. */
+export const literalPathspec = (p) => `:(literal)${p}`

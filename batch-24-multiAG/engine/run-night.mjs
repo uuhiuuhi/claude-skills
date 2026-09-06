@@ -38,7 +38,7 @@ import { readModelHealth, recordModelEvent } from './runtime/model-health.mjs'
 import { failureKind } from './runtime/model-policy.mjs'
 import { loadConfig } from './plan-queue.mjs'
 import { safeGitPush } from './push-guard.mjs'
-import { preserveRunReport, refreshWorktree } from './worktree-refresh.mjs'
+import { preserveRunReport, preserveStopLeftovers, refreshWorktree } from './worktree-refresh.mjs'
 import { assertReviewedRuntime, assertIncomingToolingStable } from './runtime-pin.mjs'
 import { verifiedLandingFingerprint } from './landing-publication.mjs'
 // 2026-09-02 「9점대 하네스」 배선 — 판정은 전부 순수 모듈이 소유하고 러너는 부르기만 한다.
@@ -306,7 +306,17 @@ function copyLogsRedacted(from, to) {
     else writeFileSync(dst, REDACT(buf.toString('utf8')), 'utf8')
   }
 }
-const RESTORE_MD = (story) => `# 복구 절차 — ${story}
+const RESTORE_MD = (story, mainTree = false) => mainTree ? `# 복구 절차 — ${story} (순차 · 본 트리)
+
+이 폴더는 **본 트리에서 돌던 순차 워커**가 STOP 한 시점의 증거다. 워크트리 제거는 없었다 — 잔여물은 러너가
+\`chore(batch): STOP 잔여물 보존\` 커밋으로 auto/* 브랜치에 그대로 남겼다(금지 경로·시크릿이 섞이면 커밋하지 않고
+트리에 dirty 로 둔다 — 그때는 \`summary.json\` 의 \`status\` 와 아래 \`code.diff\` 로 사람이 본다).
+
+1. 보존 커밋이 있으면 \`git log --oneline\` 에서 찾아 그 커밋을 다음 라운드의 출발점으로 쓴다(별도 복구 불필요).
+2. 보존 커밋이 없으면(시크릿·금지 경로 판정) **정본은 본 트리의 dirty 파일이다** — 먼저 \`git status\`·\`git diff\` 로 살아 있는
+   트리를 보고 사람이 정리해 커밋한다. 이 폴더의 \`code.diff\`·\`untracked/\` 는 **마스킹된 증거**라(시크릿 패턴이 \`***\` 로
+   바뀜) 복구 재료로 쓰면 값이 빠진다(Sol-high 15차).
+` : `# 복구 절차 — ${story}
 
 이 폴더는 **실패한 병렬 워크트리**의 증거다(워크트리 자체는 이미 제거됐다).
 
@@ -370,7 +380,7 @@ async function archiveEvidence(wt) {
       diffBytes: Buffer.byteLength(diff), redacted: diff !== rawDiff,
       untracked, skipped, notes,
     }, null, 2) + '\n', 'utf8')
-    writeFileSync(join(dst, 'RESTORE.md'), RESTORE_MD(wt.story), 'utf8')
+    writeFileSync(join(dst, 'RESTORE.md'), RESTORE_MD(wt.story, wt.mainTree === true), 'utf8')
     return dst
   } catch (e) {
     try { writeFileSync(join(dst, 'ARCHIVE-ERROR.txt'), String(e?.stack ?? e), 'utf8') } catch { /* 상태 폴더 자체가 막힌 경우 */ }
@@ -1724,6 +1734,19 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     results.push({ label, code, started, batchBase, stories: batch.stories ?? [], stages: batch.stages ?? [] })
     record(`- ${code === 0 ? '완주' : `**중단(exit ${code})**`}: ${label}`)
     if (code !== 0) {
+      // 순차 워커는 **본 트리**에서 돌았다 — STOP 이 남긴 미완 변경을 그대로 두면 다음 슬롯의 refresh 가
+      // 「미완 작업」으로 거부해 사람이 커밋할 때까지 러너가 선다(2026-09-06/07 밤 8슬롯 공회전). 증거를 먼저
+      // 보관하고(마스킹 · 병렬 경로와 같은 archiveEvidence) 잔여물을 auto/* 에 STOP 표식 커밋으로 남긴다.
+      // 금지 경로·시크릿이 섞이면 커밋하지 않고 dirty 로 둔다(그때의 refresh 거부는 의도된 보호).
+      if (!dryRun) {
+        const seqStory = (batch.stories ?? []).join('+') || label
+        const ev = await archiveEvidence({ dir: process.cwd(), story: seqStory, base: batchBase, mainTree: true })
+        if (ev) record(`- 증거 보관(순차 STOP): ${ev}`)
+        const kept = preserveStopLeftovers({ label, exitCode: code, dryRun })
+        if (kept?.committed) record(`- STOP 잔여물 보존 커밋: ${kept.committed.slice(0, 12)} (${kept.entries}건${kept.denied?.length ? ` · 금지 경로 ${kept.denied.length}건은 미커밋` : ''})`)
+        else if (kept?.failed) record(`⚠ STOP 잔여물 보존 실패 — ${kept.failed}. 다음 슬롯이 refresh 에서 멈추면 사람이 트리를 검토할 것`)
+        else if (kept?.skipped && kept.skipped !== 'clean') record(`⚠ STOP 잔여물 보존 건너뜀 — ${kept.skipped}${kept.branch ? `(${kept.branch})` : ''}`)
+      }
       // 앞 배치가 멈췄는데 뒤를 돌리면 원인이 섞인다.
       record(`- 남은 배치는 실행하지 않았다 — \`auto-pipeline-logs/run-summary.log\` 확인`)
       break

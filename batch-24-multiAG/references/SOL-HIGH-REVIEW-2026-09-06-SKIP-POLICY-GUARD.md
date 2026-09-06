@@ -869,3 +869,71 @@ pinned tooling `bef98b22` 의 첫 실슬롯(18:39 KST · 배치 「2-4·2-25 마
 > - `git status --short`; scoped `git diff`; `git diff --check`; three `node --check` commands.
 > - Focused `node --test` suite: 33/61 executed successfully; 28 fixture tests could not create temporary directories due sandbox `EPERM`, so the reported 61/61 could not be independently reproduced here.
 
+
+
+## 14차 — 2026-09-07 새벽: 완료 기록 문자열 치환 결함 · 순차 STOP 잔여물 보존 (👤 「둘 다 마무리 될 방향으로 고쳐줘」)
+
+### 배경
+
+① `promoteStory()` 가 완료 기록을 `text.replace('### Completion Notes List', …)`(부분 문자열)로 끼워 넣어, 2-22 처럼 finding 본문에 같은 문구가 있으면 그 줄 한가운데에 블록이 박혔다 — `[x] [Review][Patch]` 줄의 「✅ 해소」 꼬리가 잘려 원장 가드가 RED 가 되고 사람의 main 머지까지 막았다(손으로 복원 · ec87e559 · 6f01fc8f). ② 순차 배치의 워커는 본 트리에서 돌므로 STOP 잔여물(3-4 replan 산출물 3파일)이 트리에 남았고, `refreshWorktree()` 가 「미완 작업」으로 밤새 8슬롯을 거부했다(사람이 커밋해야 재개).
+
+### 수정(정본 · 6파일)
+
+- `runtime/story-writes.mjs` `appendCompletionNotes(md, notes)` — 헤딩 **줄**(trim 일치) 아래 삽입 · 없으면 EOF 에 헤딩 개설 · CRLF 보존. 파이프라인 `appendVerifiedNotes` 는 이를 위임.
+- `worktree-refresh.mjs` `preserveStopLeftovers({ cwd, label, exitCode, dryRun, branchPrefix, runGit })` — dry-run/마커 없음/auto/* 아님 skip · 금지 경로(`isDeniedPath`)는 스테이징 안 함 · 스테이징 diff 에 시크릿 패턴이 있으면 인덱스 되돌리고 커밋 0(트리 dirty 유지 = 의도) · 아니면 그 경로만 `chore(batch): STOP 잔여물 보존 — <라벨> (exit N)` 커밋 · 예외는 `{failed}`.
+- `run-night.mjs` 순차 루프 `code !== 0` — `archiveEvidence({ dir: cwd, story, base })`(마스킹 증거) → `preserveStopLeftovers` → 결과 기록.
+- 테스트 5건: 헤딩 문구가 든 finding 줄 보존·실제 헤딩 아래 삽입·CRLF/무헤딩 · 잔여물 커밋(금지 경로 제외 · 남은 1건에 refresh 여전히 거부) · 시크릿 → 커밋 0·인덱스 리셋 · main/dry-run 거부 · run-night 소스 계약(증거가 먼저). 초점 스위트 104/104.
+
+### 결과 (gpt-5.6-sol · high)
+
+**14차: Release blocker: YES.** H1 — porcelain 파일명을 pathspec 으로 되돌려 주면 `:(top)*`·glob 이름이 선택 범위를 넓힌다 → 전 경로 `:(literal)` 접두. M2 — rename 레코드(`R  new\0old\0`)를 두 필드로 못 읽음 → `parsePorcelainZ`(대상→원본 둘 다). L3 — 순차 증거의 RESTORE.md 가 병렬 워크트리 문구 → 본 트리 변형 추가.
+
+> ## Decision
+>
+> **Release blocker: YES.** Two path-handling defects undermine the STOP-leftover safety contract.
+>
+> ## Findings
+>
+> 1. **High — blocker: yes — `batch-24-multiAG/engine/worktree-refresh.mjs:204,206,213`.** Porcelain filenames are reused as pathspecs without literal mode. On POSIX, a dirty root filename such as `:(top)*` is interpreted as Git pathspec magic—even after `--`—and can stage/scan/commit filtered denied paths. Read-only reproduction: `git ls-files -- ':(top)*'` matched 173 files; literal form matched 0. `core.quotePath=false` and `-z` do not prevent this. [Git pathspec documentation](https://git-scm.com/docs/gitglossary#Documentation/gitglossary.txt-aiddefpathspecapathspec)
+>
+> 2. **Medium — blocker: yes — `batch-24-multiAG/engine/worktree-refresh.mjs:198-204`.** Rename/copy records have two NUL-delimited path fields, but `slice(3)` is applied to both. `R  새.txt\0old.txt\0` becomes `["새.txt",".txt"]`; `git add` normally fails, leaving the next slot blocked, or stages only half the rename. Git explicitly defines `-z` rename order as target then source. [Git status documentation](https://git-scm.com/docs/git-status#_porcelain_format_version_1)
+>
+> 3. **Low — blocker: no — `batch-24-multiAG/engine/run-night.mjs:311-317,1733`.** Sequential evidence always receives restoration instructions claiming a parallel worktree was removed. Reproduction: any sequential STOP produces misleading detach/apply/cherry-pick guidance even though the main tree remains and its leftovers may immediately be committed.
+>
+> ## Residual risks
+>
+> - Q1: Korean, whitespace, quotes, newlines, and leading `-` are safe with NUL framing, argv execution, and `--`; `-z` itself disables quoting. Rename pairs and leading-colon pathspec magic are not safe.
+> - Q2: Committing on `auto/*` is otherwise acceptable. Later automated pushes rescan the full `origin/main..HEAD` range and cannot target `main`; only an explicit human/external merge or cherry-pick can bypass that workflow.
+> - Q3: `wt.dir`, `wt.base`, diff exclusions, and redacted text-log copying work for the main tree. No new content leak found; pre-existing binary-log copying remains unredacted, and the restoration text needs a main-tree variant.
+> - Q4: `### Completion Notes List   ` matches after `trim()` and retains its trailing spaces. `#### Completion Notes List` does not match; a new canonical level-3 heading is appended at EOF.
+>
+> ## Commands you ran
+>
+> - `git status --short`; scoped `git diff`, `git diff --stat`, and `git diff --check`
+> - `rg`/`Get-Content` inspections of the six files and relevant guard/archive helpers
+> - Six focused suites: 74/104 passed; 30 were blocked solely by read-only-sandbox `mkdtemp` EPERM
+> - Read-only pathspec and synthetic porcelain-parser probes
+
+**15차: Release blocker: No.** H1·M2 해소 확인(리터럴 pathspec 은 `add -A`·삭제·디렉터리 rename 과 호환 · porcelain 은 Windows 에서도 `/` 경로). Low 1건: 시크릿 판정으로 커밋을 보류한 경우 RESTORE 가 마스킹된 증거를 복구 재료로 안내 → 「정본은 본 트리 dirty 파일 · 증거는 마스킹됨」 문구로 정정(15차 이후 기계적 강화).
+
+> ## Decision
+>
+> **Release blocker: No.** H1 and M2 are correctly remediated; L3 retains one low-severity wording issue.
+>
+> ## Findings
+>
+> 1. **Low; blocker: No — redacted evidence presented as recovery material.** After a secret hit, the main tree remains the authoritative dirty copy, while `code.diff` and text under `untracked/` are redacted. RESTORE instead directs the operator primarily to those archived artifacts without warning about redaction (`batch-24-multiAG/engine/run-night.mjs:315-316`, redaction at `:346-366`). It should explicitly say to inspect the live tree first and treat the archive as redacted evidence.
+>
+> ## Residual risks
+>
+> - H1 is fixed (`worktree-refresh.mjs:203-215`). Literal pathspecs work with `add -A`, including exact deletions and both file paths comprising directory renames; porcelain emits repository-relative `/` paths on Windows, not filesystem backslashes. [Git add/pathspec documentation](https://git-scm.com/docs/git-add)
+> - M2 is fixed (`worktree-refresh.mjs:221-233`). `RM` is a two-path rename; any valid R/C record has a source, and `-z` orders target then source. Testing either XY column is conservative and correct. [Git status documentation](https://git-scm.com/docs/git-status)
+> - The fixture suite could not be fully reproduced: 4/28 passed and 24 were sandbox-blocked by `mkdtemp` EPERM, not assertion failures.
+>
+> ## Commands you ran
+>
+> - Scoped `git status`, `git diff`, line inspection, and final status/stat.
+> - Direct parser probes for `R `, `RM`, ` C`, and ` R`; all returned target, source, and following record correctly.
+> - Three `node --check` commands and scoped `git diff --check`: passed; CRLF warnings only.
+> - `node --test batch-24-multiAG/engine/worktree-refresh.test.mjs`: 4/28 runnable; 24 EPERM-blocked.
+

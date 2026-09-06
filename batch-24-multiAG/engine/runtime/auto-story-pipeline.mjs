@@ -92,7 +92,7 @@ import { storyRisk, storyDifficulty } from '../assign.mjs';
 import { readEvidenceFor } from './providers/codex.mjs';
 import { deepRedact } from './providers/redact.mjs';
 import { parseFileList } from '../runner-rules.mjs';
-import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendDecisionsInbox, countOpenFindings } from "./story-writes.mjs";
+import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendDecisionsInbox, appendCompletionNotes, countOpenFindings } from "./story-writes.mjs";
 import { detectGates, parseQaChain, classifyQaFailure, repairDecision, buildVerificationManifest, escalationReport } from "./quality-rules.mjs";
 
 import { fingerprint as qualityFingerprint } from './quality-gates.mjs';
@@ -1544,10 +1544,9 @@ function setVerifiedStoryStatus(story, status) {
   }
 }
 function holdStory(story) { setVerifiedStoryStatus(story, 'review'); }
-function appendVerifiedNotes(text, notes) {
-  const heading = '### Completion Notes List';
-  return text.includes(heading) ? text.replace(heading, heading + '\n\n' + notes + '\n') : text + '\n' + heading + '\n' + notes + '\n';
-}
+// 완료 기록 삽입은 story-writes.appendCompletionNotes(줄 단위 헤딩 일치)가 소유한다 — 문자열 replace 는 finding 본문 속
+// 같은 문구에 걸려 줄을 두 동강 냈다(2026-09-06 2-22 실사고).
+const appendVerifiedNotes = (text, notes) => appendCompletionNotes(text, notes);
 function promoteStory(story, manifest) {
   if (manifest.completion.verdict !== 'ready') throw new Error('completion not ready');
   setVerifiedStoryStatus(story, 'done');

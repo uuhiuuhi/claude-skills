@@ -98,3 +98,19 @@ export function appendDeferredWork(text, heading, bullets) {
   const body = [`## ${heading}`, '', ...bullets.map((b) => `- ${b}`)].join(nl)
   return t.replace(/\s*$/, '') + nl + nl + body + nl
 }
+
+/** `### Completion Notes List` **줄** 바로 아래에 완료 기록 블록을 끼운다.
+ *  ⚠️ 문자열 `replace(heading, …)` 이 아니라 **줄 단위 일치**다 — 2026-09-06 실사고: 2-22 의 Patch finding 본문에
+ *  "### Completion Notes List" 라는 문구가 들어 있어 첫 문자열 일치가 그 줄 한가운데였고, 블록이 줄을 두 동강 내
+ *  「✅ 해소」 꼬리를 잘라 원장 가드(닫힘 표기)가 RED 가 됐다. 헤딩 줄이 없으면 파일 끝에 헤딩을 연다. */
+export function appendCompletionNotes(md, notes) {
+  const text = String(md ?? '')
+  const nl = eol(text)
+  const block = withEol(notes, nl)
+  const heading = '### Completion Notes List'
+  const lines = text.split(nl)
+  const at = lines.findIndex((l) => l.trim() === heading)
+  if (at < 0) return text.replace(/\s*$/, '') + nl + nl + heading + nl + nl + block + nl
+  lines.splice(at + 1, 0, '', block)
+  return lines.join(nl)
+}

@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { preserveRunReport, refreshWorktree } from './worktree-refresh.mjs'
+import { literalPathspec, parsePorcelainZ, preserveRunReport, preserveStopLeftovers, refreshWorktree } from './worktree-refresh.mjs'
 
 const branch = 'auto/2026-09-06'
 function fixture(t) {
@@ -355,5 +355,85 @@ test('run-night preserves the run report before every end-of-run exit', () => {
   assert.equal(ends, 2)
   const preserved = runner.split('preserveRunReport({').length - 1
   assert.equal(preserved, ends, 'each end-of-run print must be preceded by a preserveRunReport call')
-  assert.match(runner, /import \{ preserveRunReport, refreshWorktree \} from '\.\/worktree-refresh\.mjs'/)
+  assert.match(runner, /import \{ preserveRunReport, preserveStopLeftovers, refreshWorktree \} from '\.\/worktree-refresh\.mjs'/)
+})
+
+test('preserveStopLeftovers commits engine-produced leftovers on auto/*, skips denied paths, and unblocks the next refresh', (t) => {
+  const f = fixture(t)
+  f.git('checkout', '-qb', branch)
+  f.write('_bmad-output/implementation-artifacts/3-4-story.md', '# 3.4\n\nStatus: in-progress <!-- replan 3차 -->\n')
+  f.write('_bmad-output/implementation-artifacts/DECISIONS-INBOX.md', '## 🔵 사후 확인\n')
+  f.write('source.txt', 'replan touched source\n')
+  f.write('.env.production', 'VITE_X=1\n')            // denied path — must stay uncommitted
+  const r = preserveStopLeftovers({ cwd: f.cwd, label: 'AUTO-3: 3-4 (회수)', exitCode: 1 })
+  assert.equal(typeof r.committed, 'string', JSON.stringify(r))
+  assert.equal(r.entries, 3)
+  assert.deepEqual(r.denied, ['.env.production'])
+  assert.match(f.git('log', '-1', '--format=%s'), /^chore\(batch\): STOP 잔여물 보존 — AUTO-3: 3-4 \(회수\) \(exit 1\)/)
+  assert.equal(f.git('ls-files', '--', '.env.production'), '')
+  assert.equal(f.git('status', '--porcelain=v1', '--untracked-files=all').trim(), '?? .env.production')
+  // the denied file is the only thing left; it is not the engine's to commit, so the refresh still refuses on purpose
+  assert.throws(() => f.run(), /unfinished changes preserved in place \(1 entries\)/)
+})
+
+test('preserveStopLeftovers commits nothing when the leftovers contain a secret pattern, and refuses off auto/*', (t) => {
+  const f = fixture(t)
+  f.write('source.txt', 'leftover on main\n')
+  assert.deepEqual(preserveStopLeftovers({ cwd: f.cwd, label: 'x' }), { skipped: 'not-on-runner-branch', branch: 'main' })
+  f.git('checkout', '-qb', branch)
+  f.write('src/config.ts', 'export const token = "sk-abcdefghijklmnopqrstuvwxyz1234"\n')
+  const r = preserveStopLeftovers({ cwd: f.cwd, label: 'x', exitCode: 1 })
+  assert.match(r.failed, /secret pattern/)
+  assert.equal(f.git('rev-parse', 'HEAD'), f.base)
+  assert.equal(f.git('diff', '--cached', '--name-only'), '', 'index must be reset')
+  assert.match(f.git('status', '--porcelain=v1', '--untracked-files=all'), /src\/config\.ts/)
+  assert.deepEqual(preserveStopLeftovers({ cwd: f.cwd, label: 'x', dryRun: true, runGit: () => { throw new Error('git must not run') } }), { skipped: 'dry-run' })
+})
+
+test('run-night preserves sequential STOP leftovers after archiving evidence', () => {
+  const runner = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'run-night.mjs'), 'utf8')
+  const at = runner.indexOf('preserveStopLeftovers({ label, exitCode: code')
+  assert.ok(at > 0, 'sequential STOP must call preserveStopLeftovers')
+  const before = runner.slice(0, at)
+  assert.ok(before.lastIndexOf('archiveEvidence({ dir: process.cwd()') > before.lastIndexOf('==== ${label} ===='), 'evidence must be archived before the leftovers commit')
+  assert.match(runner, /import \{ preserveRunReport, preserveStopLeftovers, refreshWorktree \} from '\.\/worktree-refresh\.mjs'/)
+})
+
+test('preserveStopLeftovers feeds git literal pathspecs and keeps both halves of a rename (Sol-high round 14 H1/M2)', (t) => {
+  const f = fixture(t)
+  f.git('checkout', '-qb', branch)
+  // synthetic porcelain: a rename pair (target then source), a glob-looking name, a pathspec-magic-looking name, a denied path
+  const porcelain = ['R  새이름.md\0old.md', ' M [ab].txt', '?? :(top)*', '?? .env.production', 'M  src/x.ts'].join('\0') + '\0'
+  const calls = []
+  const runGit = (file, args) => {
+    const a = args.slice(2) // drop -C cwd
+    while (a[0] === '-c') a.splice(0, 2) // drop -c key=value pairs
+    calls.push(a)
+    if (a.includes('--abbrev-ref')) return { status: 0, stdout: branch + '\n', stderr: '' }
+    if (a.includes('status')) return { status: 0, stdout: porcelain, stderr: '' }
+    if (a.includes('--cached')) return { status: 0, stdout: '+++ b/src/x.ts\n+const ok = 1\n', stderr: '' }
+    if (a[0] === 'rev-parse') return { status: 0, stdout: 'abc123\n', stderr: '' }
+    return { status: 0, stdout: '', stderr: '' }
+  }
+  const r = preserveStopLeftovers({ cwd: f.cwd, label: 'x', exitCode: 1, runGit })
+  assert.equal(r.entries, 5, JSON.stringify(r))
+  assert.deepEqual(r.denied, ['.env.production'])
+  const add = calls.find((a) => a[0] === 'add')
+  assert.deepEqual(add, ['add', '-A', '--', ':(literal)새이름.md', ':(literal)old.md', ':(literal)[ab].txt', ':(literal):(top)*', ':(literal)src/x.ts'])
+  const commit = calls.find((a) => a.includes('commit'))
+  assert.ok(commit.every((x) => !x.startsWith('.env')), 'denied path must not reach git')
+  assert.deepEqual(parsePorcelainZ('R  b.txt\0a.txt\0?? c.txt\0'), ['b.txt', 'a.txt', 'c.txt'])
+  assert.equal(literalPathspec('[ab].txt'), ':(literal)[ab].txt')
+})
+
+test('literal pathspec really disables glob matching in git (a bracket-named leftover does not sweep in a sibling)', (t) => {
+  const f = fixture(t)
+  f.git('checkout', '-qb', branch)
+  f.write('a.txt', 'sibling\n')
+  f.commit('sibling baseline')
+  f.write('a.txt', 'sibling changed but is a denied-looking leftover for this test\n')
+  f.write('[ab].txt', 'glob-looking leftover\n')
+  // stage only the glob-looking name through the same literal form the function uses
+  f.git('add', '--', literalPathspec('[ab].txt'))
+  assert.equal(f.git('diff', '--cached', '--name-only').trim(), '[ab].txt')
 })

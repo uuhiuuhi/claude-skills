@@ -113,3 +113,11 @@ Claude `C:/Users/user/.claude/skills/batch-24-multiAG`와 Codex `C:/Users/user/.
 - **공회전 사고**: 20:05 · 20:35 · 21:05 슬롯이 refresh 거부(실행 보고 dirty 4~6건)로 무작업. 정본 수정 `preserveRunReport`(Sol-high 12~13차) — 종료 직전 로그 폴더만 러너 브랜치(auto/*)에서 커밋. 그때까지의 슬롯은 사람이 로그를 커밋해 이어 붙였다.
 - **같은 원인 반복 리뷰 차단**: 2-22 가 19:35 · 21:35 두 번 codex 리뷰(clean)를 받고도 T8 만으로 STOP 하는 것을 막기 위해 엔진 렌더러(`renderCompletionNotes`)로 현재 검증 매니페스트를 Completion Notes 에 인용(`completionNotesAudit` pass 확인 · 러너 clone `be6aa2ea`).
 - **DB 필수 검사 53건 실행 준비(별도 후속 · 작업 브랜치 `auto/2026-09-06-db-checks`)**: 계정 부족 0 · `[QA-DB]` 픽스처 빌더로 정적 it.skip 46건 실행 전환 · skip 67 → 17(필수 잔여 4: 2.17 service_role · 이관 시드 2 · outbox 시간 경과). 원장 `tools/auto/DB-SKIP-CLASSIFICATION-2026-09-06.md` 후속 절.
+
+
+## 후속 4 — 2026-09-07 새벽: main 머지·배포 · push 켬 · 엔진 결함 2건 수정
+
+- **👤 「머지해줘 · push켜줘」**: 러너 `push:true`(핀 c8544f8b) · `merge-main.mjs` — 첫 실행은 원장 가드 RED(아래 ①)로 중단, 원문 복원 뒤 재실행 GREEN → main ff dd40d3e→ec87e55(41커밋) · 운영 배포 Version bb45578f · RELEASE-LOG 기록.
+- **결함 ① 완료 기록 문자열 치환**(`promoteStory` → 부분 문자열 replace) — finding 본문의 같은 문구에 걸려 줄을 두 동강. `appendCompletionNotes`(줄 단위)로 교체. 2-22 는 잘린 꼬리 복원 + 오삽입 블록 14줄 제거.
+- **결함 ② 순차 STOP 잔여물** — 본 트리 워커의 미완 변경이 refresh 를 밤새 막음(8슬롯). `preserveStopLeftovers`(증거 보관 뒤 auto/* 에 STOP 표식 커밋 · 금지 경로/시크릿은 커밋 안 함)로 러너가 스스로 마무리.
+- Sol-high 14차 기록: `SOL-HIGH-REVIEW-2026-09-06-SKIP-POLICY-GUARD.md`.

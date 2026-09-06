@@ -1,7 +1,7 @@
 // 원장 쓰기 순수 변환 테스트 — CRLF 보존 · Tasks 절 안 삽입 · 상태 줄 치환.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { appendDecisionsInbox, appendDeferredWork, countOpenFindings, insertReviewFindings, setSprintStatus, setStoryStatus } from './story-writes.mjs'
+import { appendCompletionNotes, appendDecisionsInbox, appendDeferredWork, countOpenFindings, insertReviewFindings, setSprintStatus, setStoryStatus } from './story-writes.mjs'
 import { openFindings, readStorySignals } from '../story-ledger.mjs'
 
 const MD = '---\nbaseline_commit: abc\n---\n\n# Story 2.3: 제목\n\nStatus: review <!-- 주석 -->\n\n## Tasks / Subtasks\n\n- [x] Task 1\n- [ ] Task 2\n\n### Review Findings\n\n- [x] [Review][Patch] 옛것 — ✅ 해소\n\n## Dev Notes\n\n내용\n\n## Dev Agent Record\n'
@@ -85,5 +85,32 @@ describe('[story-writes] deferred-work 추가 — step-04 제목 형식', () => 
     const out = appendDeferredWork('# Deferred\n\n## 옛 절\n\n- a\n', 'Deferred from: Codex code review of 2-3 (2026-09-02)', ['x [a.ts:1] — d'])
     assert.ok(out.endsWith('## 옛 절\n\n- a\n\n## Deferred from: Codex code review of 2-3 (2026-09-02)\n\n- x [a.ts:1] — d\n'))
     assert.equal(appendDeferredWork('T\n', 'h', []), 'T\n')
+  })
+})
+
+describe('[story-writes] 완료 기록 삽입 — 헤딩 **줄** 아래(finding 본문 속 같은 문구에 걸리지 않는다 · 2026-09-06 2-22 실사고)', () => {
+  const STORY = [
+    '# Story 2.22', '', 'Status: review', '', '## Tasks / Subtasks', '',
+    '- [x] [Review][Patch] **낡은 기재 3곳** — ⓒ `### Completion Notes List` 의 "7 it"(실제 8 it) — **✅ 해소(2026-08-25 dev 4차)**: 정정 끝.',
+    '', '## Dev Agent Record', '', '### Completion Notes List', '', '- 기존 기록 1줄', '', '### File List', '', '- `a.ts`', '',
+  ].join('\n')
+  it('finding 본문의 "### Completion Notes List" 문구는 건드리지 않고 실제 헤딩 줄 아래에 끼운다', () => {
+    const out = appendCompletionNotes(STORY, '**✅ 라운드 1 완주**\n\n- 검사(qa): pass')
+    const lines = out.split('\n')
+    const finding = lines.find((l) => l.startsWith('- [x] [Review][Patch]'))
+    assert.ok(finding.endsWith('정정 끝.'), 'finding 줄이 두 동강 났다: ' + finding)
+    const at = lines.findIndex((l) => l === '### Completion Notes List')
+    assert.equal(lines[at + 1], '')
+    assert.equal(lines[at + 2], '**✅ 라운드 1 완주**')
+    assert.equal(lines[at + 4], '- 검사(qa): pass')
+    assert.ok(out.indexOf('- 기존 기록 1줄') > out.indexOf('- 검사(qa): pass'), '새 블록이 헤딩 바로 아래(기존 기록 위)여야 한다')
+    assert.equal(countOpenFindings(out, 'Patch'), 0)
+  })
+  it('헤딩 줄이 없으면 파일 끝에 헤딩을 열고 · CRLF 파일이면 CRLF 로 끼운다', () => {
+    const none = appendCompletionNotes('# S\n\n## Dev Notes\n\nx\n', 'NOTES')
+    assert.ok(none.endsWith('## Dev Notes\n\nx\n\n### Completion Notes List\n\nNOTES\n'))
+    const crlf = appendCompletionNotes(STORY.replace(/\n/g, '\r\n'), 'A\nB')
+    assert.ok(crlf.includes('### Completion Notes List\r\n\r\nA\r\nB\r\n'))
+    assert.ok(!/[^\r]\n/.test(crlf), 'LF 단독 개행이 섞이면 안 된다')
   })
 })
