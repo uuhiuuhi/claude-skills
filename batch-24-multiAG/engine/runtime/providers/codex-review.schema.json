@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "summary": { "type": "string", "description": "한두 문장 총평 — 무엇을 봤고 결론이 무엇인가" },
+    "verdict": { "type": "string", "enum": ["clean", "findings"] },
+    "acVerdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ac": { "type": "string", "description": "AC 식별자(예: AC-3)" },
+          "status": { "type": "string", "enum": ["pass", "fail", "unknown"] },
+          "evidence": { "type": "string", "description": "판정 근거 — 파일:줄 또는 테스트 이름" }
+        },
+        "required": ["ac", "status", "evidence"]
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "lens": { "type": "string", "enum": ["blind", "edge", "acceptance"] },
+          "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+          "kind": { "type": "string", "enum": ["patch", "decision", "defer", "optional"] },
+          "title": { "type": "string", "description": "한 줄 제목" },
+          "file": { "type": "string", "description": "저장소 루트 기준 경로(모르면 빈 문자열)" },
+          "line": { "type": "integer", "description": "줄 번호(모르면 0)" },
+          "detail": { "type": "string", "description": "무엇이 왜 문제인지 — 재현 조건과 결과" },
+          "evidence": { "type": "string", "description": "코드 인용 또는 diff 인용(짧게)" },
+          "preExisting": { "type": "boolean", "description": "이번 diff 가 만든 회귀가 아니라 원래 있던 문제면 true" }
+        },
+        "required": ["lens", "severity", "kind", "title", "file", "line", "detail", "evidence", "preExisting"]
+      }
+    }
+  },
+  "required": ["summary", "verdict", "acVerdicts", "findings"]
+}
