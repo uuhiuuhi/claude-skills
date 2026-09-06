@@ -137,3 +137,12 @@ describe('[assign] 편성기 어댑터(assignBatchModels)', () => {
     assert.notEqual(out.review, out.dev)
   })
 })
+
+// 2026-09-06 운영 리허설 실사고: File List 절이 없는 새 backlog 스토리(3-8)에서 parseFileList() 의 null 이 그대로 들어와
+// storyRisk 가 for-of 에서 죽었다(auto-story-pipeline routedProfile · run-night metaFor). null 은 「파일 목록 미상」= 빈 목록이다.
+it('storyRisk/storyDifficulty 는 files=null 을 빈 목록으로 받는다(새 backlog 스토리 · File List 절 없음)', () => {
+  assert.deepEqual(storyRisk({ files: null, text: '' }), { score: 0, flags: [] })
+  assert.equal(storyRisk({ files: null, text: '보안 · RLS' }).score, 4)
+  assert.equal(storyDifficulty({ files: null, text: '' }).score, 0)
+  assert.equal(storyDifficulty({ files: undefined, text: 'x'.repeat(9000) }).score, 1)
+})

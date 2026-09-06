@@ -44,7 +44,8 @@ export const RISK_KEYWORDS = Object.freeze([
 export function storyRisk({ files = [], text = '' } = {}) {
   const flags = []
   const add = (f, n) => { if (!flags.some((x) => x.flag === f)) flags.push({ flag: f, weight: n }) }
-  for (const raw of files) {
+  // parseFileList() 는 File List 절이 없으면 null 을 준다(새 backlog 스토리) — 기본값은 undefined 에만 걸리므로 여기서 받아 준다.
+  for (const raw of Array.isArray(files) ? files : []) {
     const p = norm(raw)
     if (/(^|\/)supabase\/migrations\//.test(p)) add('migration', 3)
     if (/(^|\/)(src\/)?(auth|security)\//.test(p) || /auth/i.test(p.split('/').pop() ?? '')) add('auth-path', 3)
@@ -59,7 +60,7 @@ export function storyRisk({ files = [], text = '' } = {}) {
 
 /** 난이도 0~10 — File List 크기 · 마이그레이션 · 테스트 파일 수 · 스토리 md 길이 */
 export function storyDifficulty({ files = [], text = '' } = {}) {
-  const list = files.map(norm).filter(Boolean)
+  const list = (Array.isArray(files) ? files : []).map(norm).filter(Boolean)
   const tests = list.filter((p) => /(^|\/)tests?\//.test(p) || /\.(test|spec)\.[a-z]+$/.test(p)).length
   const migrations = list.filter((p) => /(^|\/)supabase\/migrations\//.test(p)).length
   const len = String(text ?? '').length

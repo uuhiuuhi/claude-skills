@@ -742,3 +742,52 @@ Markdown under 50 lines: `## Decision` (release blocker yes/no), `## Findings` (
 - `runner-rules.test.mjs` + `orchestrate.test.mjs` — 44/51 passed; 7 blocked at `mkdtemp`
 - Retried with workspace `TEMP`/`TMP`; same sandbox denial
 - Escalated retry was unavailable because approval policy is `Never`
+
+---
+
+## 9차 (별건 · 두 번째 null 가드: storyRisk/storyDifficulty · routedProfile) — 출시 차단 없음
+
+### 요청
+
+You are the same independent release reviewer (OpenAI Codex, gpt-5.6-sol, reasoning high). **Ninth round — the second small null-guard change** found in the operational rehearsal after your round-8 decision (`985cad2` committed). Review ONLY the current uncommitted diff (`git status`, `git diff`): `batch-24-multiAG/engine/assign.mjs`, `batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs`, `batch-24-multiAG/engine/assign.test.mjs`. Do not modify files; no git write commands. Cite file:line.
+
+## What happened
+
+With the round-8 fix installed, `run-night.mjs --auto-plan --dry-run` got past the orchestrator but crashed in the first batch that contained a brand-new backlog story (`3-8`, no story file / no `## File List`):
+```
+assign.mjs:47  for (const raw of files) {   TypeError: files is not iterable
+  at storyRisk ← routedProfile (auto-story-pipeline.mjs:1337) ← runRoutedStage ← runStage
+```
+`routedProfile()` passed `parseFileList(text)` (null) straight into `storyRisk`/`storyDifficulty`, whose `files = []` default only applies to `undefined`; it also evaluated `!files.length` on null.
+
+## Remediation (author's statement — verify)
+
+- `engine/assign.mjs`: `storyRisk` iterates `Array.isArray(files) ? files : []`; `storyDifficulty` maps `(Array.isArray(files) ? files : [])`. Scores for real lists unchanged.
+- `engine/runtime/auto-story-pipeline.mjs` `routedProfile()`: `const files = parseFileList(text) ?? []` (unknown file set still yields max risk 4 / difficulty 8 through the existing `unknown` branch).
+- `engine/assign.test.mjs`: new case — `storyRisk({files:null,text:''})` → `{score:0,flags:[]}`, keyword risk still counted with null files, `storyDifficulty` with null/undefined files.
+- Focused runs: assign + runner-rules + orchestrate + engine-guards 95/95. Operational rehearsal in `C:/Projects/jng-os-auto` (pinned `bef98b22`, content SHA-identical to this canonical tree): `--auto-plan --dry-run` exit 0, 30 batches walked, no TypeError.
+
+## Required output
+
+Markdown under 40 lines: `## Decision` (release blocker yes/no), `## Findings` (only if within this diff; numbered; severity; blocker yes/no; file:line; reproduction), `## Residual risks`, `## Commands you ran`. Do not re-review earlier rounds. Print the markdown to stdout as your final message.
+
+### 결과
+
+## Decision
+
+**Release blocker: No.** The null guards are correct, preserve array behavior, and retain the unknown-story maximums ([assign.mjs:48](C:/Projects/claude-skills-quality-gates-9/batch-24-multiAG/engine/assign.mjs:48), [assign.mjs:63](C:/Projects/claude-skills-quality-gates-9/batch-24-multiAG/engine/assign.mjs:63), [auto-story-pipeline.mjs:1335](C:/Projects/claude-skills-quality-gates-9/batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs:1335)). No findings within this diff.
+
+## Residual risks
+
+- The new test directly verifies scorer null handling ([assign.test.mjs:143](C:/Projects/claude-skills-quality-gates-9/batch-24-multiAG/engine/assign.test.mjs:143)), but not `routedProfile()` returning `{risk:4,difficulty:8}`. The simple existing `unknown` branch and reported operational rehearsal make this non-blocking.
+- The sandbox prevented 7 of 95 tests from creating temporary directories (`EPERM`); 88 passed with no assertion failures. The independently rerun assign suite passed 14/14.
+
+## Commands you ran
+
+- `git status --short`
+- `git diff -- <three reviewed files>`
+- `rg -n -C 20 ...` and `rg -n "parseFileList\\(" batch-24-multiAG/engine`
+- `node --test` for assign, runner-rules, orchestrate, and engine-guards: 88/95; 7 sandbox-blocked
+- `node --test batch-24-multiAG/engine/assign.test.mjs`: 14/14 passed
+- `node --check` on all three changed files: passed
+- `git diff --check -- <three reviewed files>`: passed; CRLF conversion warning only

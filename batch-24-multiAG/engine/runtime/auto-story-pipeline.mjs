@@ -1332,7 +1332,7 @@ let lastRoutingFailure = {};
 function routedProfile(story) {
   const file = findStoryFile(story);
   const text = file ? readFileSync(file, 'utf8') : '';
-  const files = parseFileList(text);
+  const files = parseFileList(text) ?? []; // null = File List 절 없음(새 backlog 스토리) → 미상으로 최대 위험/난도
   const unknown = !text.trim() || !files.length;
   return { risk: Math.max(unknown ? 4 : 0, storyRisk({ text, files }).score),
     difficulty: Math.max(unknown ? 8 : 0, storyDifficulty({ text, files }).score) };
