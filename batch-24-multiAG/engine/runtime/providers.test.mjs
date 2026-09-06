@@ -69,7 +69,7 @@ describe('[providers] 능력 감지 — 요청된 프로바이더만 찌르고, 
   })
   it('CLAUDE_BIN/CODEX_BIN env 를 존중한다(테스트 스텁 오버라이드 종전 규약)', () => {
     const calls = []
-    const exec = (bin, args) => { calls.push(bin); return { status: 0, stdout: 'Logged in using ChatGPT', stderr: '' } }
+    const exec = (bin) => { calls.push(bin); return { status: 0, stdout: 'Logged in using ChatGPT', stderr: '' } }
     detectProviders({ want: ['claude', 'codex'], exec, env: { CLAUDE_BIN: 'C:/stub/claude.cmd', CODEX_BIN: 'C:/stub/codex.cmd' } })
     assert.deepEqual(calls, ['C:/stub/claude.cmd', 'C:/stub/codex.cmd', 'C:/stub/codex.cmd'])
   })

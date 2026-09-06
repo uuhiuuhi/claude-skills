@@ -745,7 +745,7 @@ describe('[git-guard] 워커의 git 상태 변경을 실행 단계에서 막는�
     assert.ok(which(SH).includes('git-guard-'), '진짜 sh 는 PATH 순서를 지켜 shim 을 타야 한다')
   })
 
-  it('cleanup() 은 shim 디렉터리를 지운다 · env 는 원본 PATH 를 보존한 채 shim 을 맨 앞에 둔다', (t) => {
+  it('cleanup() 은 shim 디렉터리를 지운다 · env 는 원본 PATH 를 보존한 채 shim 을 맨 앞에 둔다', () => {
     const guard = createGitGuard({ tmpRoot: tmpdir(), baseEnv: { Path: 'C:/existing', OTHER: '1' }, realGit: 'C:/git.exe' })
     assert.equal(guard.env.OTHER, '1')
     assert.ok(guard.env.Path.startsWith(guard.dir))

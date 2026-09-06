@@ -8,6 +8,8 @@ import { newTestsFromDiff, testKindsVerdict } from './completion-rules.mjs';
 import { integrationGateInvocation } from '../runner-rules.mjs';
 import { deepRedact } from './providers/redact.mjs';
 
+import { discoverApiSurface, missingEndpoints } from './api-surface.mjs';
+
 export const QUALITY_SCHEMA = 'batch-24-multiag/quality/1';
 export const MIN_COVERAGE = 90;
 const SOURCE = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|cs|rb|php|sql|vue|svelte)$/i;
@@ -31,7 +33,7 @@ export function classifyRisk({ files = [], diff = '', sensitivePaths = {} } = {}
   const apiFiles = source.filter(p => /(?:^|\/)(?:api|routes?|controllers?|endpoints?|functions)(?:\/|\.)|(?:route|controller)\.[^.]+$/i.test(p));
   const scoped = key => source.filter(p => (sensitivePaths[key] ?? []).some(prefix => p.startsWith(prefix)));
   apiFiles.push(...scoped('api').filter(p => !apiFiles.includes(p)));
-  const handler = /\b(?:app|router)\.(?:get|post|put|patch|delete)\s*\(|export\s+(?:(?:async\s+)?function|const|let)\s+(?:GET|POST|PUT|PATCH|DELETE)\b/;
+  const handler = /\b(?:app|router)\.(?:get|post|put|patch|delete|head|options|all|use|route)\s*\(|export\s+(?:(?:async\s+)?function|const|let)\s+(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/;
   apiFiles.push(...source.filter(p => !apiFiles.includes(p) && handler.test([...(byFile[p]?.added ?? []), ...(byFile[p]?.removed ?? [])].map(l => l.text).join('\n'))));
   const api = apiFiles.length > 0;
   const security = securityTriggers({ files: source, diff });
@@ -151,7 +153,9 @@ export async function executeGate(gate, { root, env = {}, timeoutMs = 20 * 60 * 
 // results are accepted only from this run (unique nonce + code fingerprint).
 export function authorizationVerdict(report, { nonce, codeFingerprint, endpoints = [] }) {
   if (!report || report.nonce !== nonce || report.codeFingerprint !== codeFingerprint || !Array.isArray(report.endpoints) || !report.endpoints.length) return { result: 'not-verified', why: 'missing/freshness-invalid authorization report' };
-  const missing = endpoints.filter(file => !report.endpoints.some(e => e.source === file));
+  const scope = missingEndpoints(endpoints, report.endpoints);
+  if (scope.invalidScope) return { result: 'not-verified', why: 'endpoint scope requires source, method and route' };
+  const missing = scope.missing;
   const invalid = report.endpoints.filter(e => !e.method || !e.route || e.authorizationApplied !== true ||
     e.cases?.anonymous !== 401 || e.cases?.forbidden !== 403 || !(e.cases?.allowed >= 200 && e.cases?.allowed < 300) || ![403, 404].includes(e.cases?.crossTenant));
   return { result: missing.length || invalid.length ? 'fail' : 'pass', missing, invalid: invalid.map(e => `${e.method} ${e.route}`), endpoints: report.endpoints };
@@ -170,8 +174,10 @@ export function executedTestVerdict(diff, output = '') {
 
 export function apiAuthorizationVerdict(report, { nonce, codeFingerprint, endpoints = [] }) {
   if (!report || report.nonce !== nonce || report.codeFingerprint !== codeFingerprint || !Array.isArray(report.endpoints)) return { result: 'not-verified' };
-  const missing = endpoints.filter(p => !report.endpoints.some(e => e.source === p && e.method && e.route && (e.authorizationApplied === true || (e.public === true && typeof e.publicReason === 'string' && e.publicReason.trim().length > 10))));
-  return { result: missing.length || !report.endpoints.length ? 'fail' : 'pass', missing, endpoints: report.endpoints };
+  const accepted = report.endpoints.filter(e => e.authorizationApplied === true || (e.public === true && typeof e.publicReason === 'string' && e.publicReason.trim().length > 10));
+  const scope = missingEndpoints(endpoints, accepted);
+  if (scope.invalidScope) return { result: 'not-verified', why: 'endpoint scope requires source, method and route' };
+  return { result: scope.missing.length || !report.endpoints.length ? 'fail' : 'pass', missing: scope.missing, endpoints: report.endpoints };
 }
 
 export async function runQuality({ root = process.cwd(), base = 'HEAD', phase = 'worker', execute = executeGate } = {}) {
@@ -180,15 +186,16 @@ export async function runQuality({ root = process.cwd(), base = 'HEAD', phase = 
   const cfgPath = resolve(root, 'tools/auto/quality.config.json');
   const config = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, 'utf8')) : {};
   const risk = classifyRisk({ ...changes, sensitivePaths: config.sensitivePaths });
+  const surface = risk.api ? discoverApiSurface({ sources: Object.fromEntries(risk.apiFiles.map(path => [path, existsSync(resolve(root, path)) ? readFileSync(resolve(root, path), 'utf8') : ''])), inventory: config.apiEndpoints ?? [] }) : { result: 'pass', endpoints: [], unresolved: [] };
   const auditDiff = changes.diff.split(/(?=^diff --git )/m).filter(part => { const path = /^diff --git a\/(.+?) b\/(.+)/.exec(part)?.[2]; return path && (SOURCE.test(path) || /config|package\.json/.test(path)); }).join('');
   const integrity = testIntegrityFindings({ ...changes, diff: auditDiff });
   const tests = newTestsFromDiff(changes.diff), hasCode = risk.source.length > 0;
   const [testResult, why] = hasCode && phase !== 'landing' ? testKindsVerdict(tests) : ['pass', 'no worker test-kind requirement in this scope'];
   const nonce = createHash('sha256').update(before + started + Math.random()).digest('hex');
-  const result = { schema: QUALITY_SCHEMA, generatedAt: new Date().toISOString(), phase, base: changes.base, codeFingerprint: before, risk, integrity, testEvidence: { ...tests, result: testResult, why }, gates: [], verdict: 'not-verified' };
+  const result = { schema: QUALITY_SCHEMA, generatedAt: new Date().toISOString(), phase, base: changes.base, codeFingerprint: before, risk, apiSurface: surface, integrity, testEvidence: { ...tests, result: testResult, why }, gates: [], verdict: 'not-verified' };
   const commit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', windowsHide: true }).stdout?.trim();
   result.commit = commit;
-  const version = ['./quality-gates.mjs', './quality-rules.mjs', './completion-rules.mjs', '../runner-rules.mjs'].map(p => readFileSync(new URL(p, import.meta.url), 'utf8')).join('\n');
+  const version = ['./quality-gates.mjs', './quality-rules.mjs', './completion-rules.mjs', './api-surface.mjs', '../runner-rules.mjs'].map(p => readFileSync(new URL(p, import.meta.url), 'utf8')).join('\n');
   const cacheKey = createHash('sha256').update(JSON.stringify({ version, environment: { node: process.version, platform: process.platform, arch: process.arch }, commit, before, base: changes.base, diff: changes.diff, scripts: pkg.scripts, config, phase })).digest('hex');
   const cachePath = resolve(root, '_bmad-output/implementation-artifacts/auto-pipeline-logs/quality-cache', `${cacheKey}.json`);
   const finish = () => {
@@ -198,6 +205,7 @@ export async function runQuality({ root = process.cwd(), base = 'HEAD', phase = 
     return clean;
   };
   if (integrity.some(f => f.level === 'block') || testResult !== 'pass') { result.verdict = 'not-ready'; return finish(); }
+  if (surface.result !== 'pass' && phase !== 'landing') return finish();
   const validCache = cached => {
     if (cached.schema !== QUALITY_SCHEMA || cached.verdict !== 'ready' || cached.codeFingerprint !== before || cached.base !== changes.base || cached.commit !== commit || cached.phase !== phase) return false;
     if (risk.category === 'docs') return cached.risk?.category === 'docs' && cached.gates?.length === 0 && cached.coverage?.result === 'not-required';
@@ -246,12 +254,12 @@ export async function runQuality({ root = process.cwd(), base = 'HEAD', phase = 
       }
       if (gate.name === 'authorization') {
         let report; try { report = JSON.parse(readFileSync(authPath, 'utf8')); } catch { report = null; }
-        result.authorization = authorizationVerdict(report, { nonce, codeFingerprint: before, endpoints: risk.apiFiles });
+        result.authorization = authorizationVerdict(report, { nonce, codeFingerprint: before, endpoints: surface.endpoints });
         if (result.authorization.result !== 'pass') break;
       }
       if (gate.name === 'api') {
         let report; try { report = JSON.parse(readFileSync(apiPath, 'utf8')); } catch { report = null; }
-        result.api = apiAuthorizationVerdict(report, { nonce, codeFingerprint: before, endpoints: risk.apiFiles });
+        result.api = apiAuthorizationVerdict(report, { nonce, codeFingerprint: before, endpoints: surface.endpoints });
         if (result.api.result !== 'pass') break;
       }
     }

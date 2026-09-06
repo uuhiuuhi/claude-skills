@@ -915,7 +915,7 @@ describe('[engine-e2e][push-guard] `--push --branch main` 은 시작조차 못 �
     const mainBefore = git(fx.proj, ['ls-remote', 'origin', 'main']).stdout.trim()
     const r = runEngine(fx, { args: ['--stages', 'dev,review', '--commit', '--branch', 'main', '--push'] })
     assert.notEqual(r.status, 0, r.out.slice(-2000))
-    assert.match(r.out, /auto\//, '거부 사유에 auto\/ 규칙이 보여야 한다')
+    assert.match(r.out, /auto\//, '거부 사유에 auto/ 규칙이 보여야 한다')
     assert.deepEqual(originHeads(fx.proj), before, '원격 ref 가 움직였다')
     assert.equal(git(fx.proj, ['ls-remote', 'origin', 'main']).stdout.trim(), mainBefore)
     assert.equal(commitsAhead(fx.proj).length, 0, '로컬 커밋도 생기면 안 된다')

@@ -244,7 +244,7 @@ export function collectSensitiveFiles(cwd, { skipDirs = ENV_SCAN_SKIP_DIRS, sens
   const found = new Set()
   const errors = []
   const walk = (absDir, relDir) => {
-    let entries = []
+    let entries
     try { entries = readdir(absDir, { withFileTypes: true }) } catch (e) { errors.push(`${relDir || '.'}: ${e?.code ?? e?.message}`); return }
     for (const e of entries) {
       const rel = relDir ? `${relDir}/${e.name}` : e.name
@@ -365,7 +365,7 @@ export function acquireCodexSlot({ dir = defaultCodexLockDir(), max = 1, staleMs
   for (let i = 0; i < max; i++) {
     const path = slotPath(dir, i)
     for (let attempt = 0; attempt < 2; attempt++) {
-      let fd = null
+      let fd
       try { fd = openSync(path, 'wx') } catch (e) {
         if (e?.code !== 'EEXIST') break
         // 이미 누가 쥐고 있다 — 죽은 슬롯이면 치우고 이 인덱스를 한 번만 재시도한다.
@@ -436,7 +436,7 @@ export function withCodexSlot({ dir = defaultCodexLockDir(), max = 1, waitMs = 6
   staleMs ??= slotStaleMsFor(waitMs) // waitMs = stage 타임아웃 — 심박 없이 그보다 오래 조용하면 죽은 것이다
   const deadline = Date.now() + waitMs
   let waited = false
-  let slot = null
+  let slot
   for (;;) {
     slot = acquireCodexSlot({ dir, max, staleMs })
     if (slot) break
@@ -665,7 +665,7 @@ export const NO_DEFER_RE = /(보안|권한|인가|인증|RLS|policy|정책 우�
 const oneLine = (s) => String(s ?? '').replace(/\s*\r?\n\s*/g, ' ').replace(/\s{2,}/g, ' ').trim()
 const loc = (f) => (f.file ? ` [${oneLine(f.file)}${f.line > 0 ? ':' + f.line : ''}]` : '')
 
-export function renderReviewFindings({ story, model = '', date, result, targetRef = '', round = 0 }) {
+export function renderReviewFindings({ model = '', date, result, targetRef = '', round = 0 }) {
   const all = Array.isArray(result?.findings) ? result.findings : []
   const norm = (f) => {
     let kind = f.preExisting && f.kind !== 'decision' ? 'defer' : f.kind

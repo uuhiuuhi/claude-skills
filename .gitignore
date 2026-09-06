@@ -5,3 +5,4 @@
 /benchmark-comparison*.json
 
 /benchmark-*.json
+/batch-24-multiAG/adapters/_verification/

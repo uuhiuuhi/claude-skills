@@ -45,6 +45,9 @@ test('installation normal: pinned runtime works after legacy globals disappear; 
   }
   const imported = run(['--input-type=module', '-e', "const r=await import('./tools/auto/asf-resolve.mjs'); const q=await import(r.resolveAsf('quality-gates.mjs')); console.log(q.QUALITY_SCHEMA)"]);
   assert.equal(imported.status, 0, imported.stderr); assert.match(imported.stdout, /batch-24-multiag\/quality\/1/);
+  assert.ok(existsSync(join(project, 'tools/auto/adapters/vitest-quality.mjs')));
+  assert.equal(readFileSync(join(project, 'tools/auto/adapters/vitest-quality.mjs'), 'utf8'), readFileSync(join(HERE, '../adapters/vitest-quality.mjs'), 'utf8'));
+  assert.equal(existsSync(join(project, 'quality-adapter.config.json')), false, 'installer must not invent project test scope');
   assert.ok(existsSync(join(project, 'tools/auto/model-routing.test.mjs')));
   assert.ok(existsSync(join(project, 'tools/auto/runtime/quality-gates.test.mjs')));
   const routing = run(['--test', 'tools/auto/model-routing.test.mjs']); assert.equal(routing.status, 0, routing.stdout + routing.stderr);

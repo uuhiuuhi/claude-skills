@@ -87,13 +87,13 @@ import { assertSafeModel, assertSafePath, normalizeCommand, spawnSafe } from "./
 import { safeGitPush } from "./push-guard.mjs";
 import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes } from "./completion-rules.mjs";
 import { StageRouter, preferredDevProvider } from './stage-router.mjs';
-import { MODEL_CATALOG, canonicalModel, failureKind, providerOf } from './model-policy.mjs';
+import { MODEL_CATALOG, failureKind, providerOf } from './model-policy.mjs';
 import { storyRisk, storyDifficulty } from '../assign.mjs';
 import { readEvidenceFor } from './providers/codex.mjs';
 import { deepRedact } from './providers/redact.mjs';
 import { parseFileList } from '../runner-rules.mjs';
 import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendDecisionsInbox, countOpenFindings } from "./story-writes.mjs";
-import { detectGates, parseQaChain, classifyQaFailure, repairDecision, testIntegrityFindings, escalateRepairIntroduced, securityTriggers, performanceTriggers, buildVerificationManifest, escalationReport } from "./quality-rules.mjs";
+import { detectGates, parseQaChain, classifyQaFailure, repairDecision, buildVerificationManifest, escalationReport } from "./quality-rules.mjs";
 
 import { fingerprint as qualityFingerprint } from './quality-gates.mjs';
 import { readRecord } from './schema-migration.mjs';
@@ -204,7 +204,6 @@ const repairSameCause = Math.max(1, Number(opt("repair-same-cause", "3")) || 3);
 // 아무 검사도 받지 않았다. `--integrity off` 는 남긴다(명시 옵트아웃) · `auto` = 종전 조건부 동작.
 const integrityMode = opt("integrity", "on"); // on(기본) · auto(autoRepair>0 일 때만) · off
 const integrityEnabled = integrityMode === "on" || (integrityMode === "auto" && autoRepair > 0);
-const writeManifest = !flag("no-manifest");
 const noCodex = flag("no-codex");
 const providersOpt = (opt("providers", "") || "").split(",").map((s) => s.trim()).filter(Boolean);
 const codexRoles = (opt("codex-roles", "review") || "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -387,7 +386,7 @@ function postconditionOk(stage, story, beforeMaxMtime) {
 let stageSnapshot = null; // 단계 실행 직전 스냅샷(replan/mockup 사후조건 재료) — runClaude 가 채운다
 function replanSignals(story) {
   const file = findStoryFile(story);
-  let text = "";
+  let text;
   try { text = file ? readFileSync(file, "utf8") : ""; } catch { text = ""; }
   const tasks = /## Tasks[^\n]*\n([\s\S]*?)(?=\n## |$)/.exec(text)?.[1] ?? "";
   return {
@@ -637,7 +636,7 @@ const DENY_LOG_RE = /\.log$/i;
 const SECRET_RES = [
   /sb_secret_[A-Za-z0-9_-]{8,}/,
   // sb_publishable_ 는 공개 키(VITE_ 공개값)라 시크릿이 아니다 — 2026-08-17 밤샘 배치에서 스토리 문서의 뮤테이션 예시값에 오탐 STOP(1.5h 손실) → 제외
-  /(CLOUDFLARE_API_TOKEN|CF_API_TOKEN|OPENAI_API_KEY|SUPABASE_ACCESS_TOKEN|SUPABASE_SERVICE_ROLE_KEY|OUTBOX_DISPATCH_SECRET|AWS_SECRET_ACCESS_KEY)\s*[=:]\s*['"]?[A-Za-z0-9_\-\/+.]{16,}/,
+  /(CLOUDFLARE_API_TOKEN|CF_API_TOKEN|OPENAI_API_KEY|SUPABASE_ACCESS_TOKEN|SUPABASE_SERVICE_ROLE_KEY|OUTBOX_DISPATCH_SECRET|AWS_SECRET_ACCESS_KEY)\s*[=:]\s*['"]?[A-Za-z0-9_\-/+.]{16,}/,
   /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/,
   /sk-[A-Za-z0-9]{24,}/,
   /AKIA[0-9A-Z]{16}/,
@@ -744,7 +743,7 @@ function commitStory(story, stagesDone) {
   for (const line of added) for (const re of SECRET_RES) if (re.test(line)) { hits.push(line.slice(0, 80)); break; }
   if (hits.length) {
     git(["reset", "-q"]);
-    note(`✖ SECRET STOP — [${story}] 스테이징 diff 에 시크릿 패턴 ${hits.length}건(첫 줄: ${hits[0].replace(/[A-Za-z0-9_\-]{12,}/g, "***")}). 커밋·푸시 취소. 사람이 값 제거·키 폐기 여부 판단.`);
+    note(`✖ SECRET STOP — [${story}] 스테이징 diff 에 시크릿 패턴 ${hits.length}건(첫 줄: ${hits[0].replace(/[A-Za-z0-9_-]{12,}/g, "***")}). 커밋·푸시 취소. 사람이 값 제거·키 폐기 여부 판단.`);
     push("SECRET STOP", `[${story}] 스테이징에 시크릿 패턴 — 커밋 취소, 사람 확인 필요`);
     process.exit(6);
   }
@@ -1459,7 +1458,7 @@ function runQualityLoop(story) {
 
     }
     let blocks = integ.filter((f) => f.level === "block");
-    let failure = null;
+    let failure;
     if (blocks.length === 0) {
       const policyFile = resolve(logDir, `${story}-quality.json`);
       note(`→ [${story}] qa-gate: batch-24-multiag scoped quality`);

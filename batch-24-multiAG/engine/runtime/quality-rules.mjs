@@ -7,6 +7,8 @@
 //   · 테스트 통과를 위한 꼼수(.only · 테스트 삭제 · 단언 약화 · skip 남발 · ts-ignore · 규칙 비활성화)는 탐지한다.
 //   · mock 통과를 운영 통합 성공으로 간주하지 않는다 — 매니페스트가 integration 을 'unknown' 으로 둔다.
 
+import { stripVTControlCharacters } from 'node:util'
+
 // ── 게이트 탐지 ───────────────────────────────────────────────────────────────────────
 const pick = (scripts, names) => names.find((n) => typeof scripts?.[n] === 'string' && scripts[n].trim() !== '') ?? null
 export function detectGates(scripts = {}) {
@@ -37,7 +39,7 @@ const KIND_MARKERS = [
   ['test', /\bFAIL\b|Test Files\s+\d+\s+failed|Tests\s+\d+\s+failed|AssertionError|Error: expect\(/],
   ['build', /vite build|Rollup failed|build failed|error during build|Build failed/i],
 ]
-const norm = (s) => String(s).replace(/\r/g, '').replace(/\[[0-9;]*m/g, '')
+const norm = (s) => stripVTControlCharacters(String(s)).replace(/\r/g, '')
 const chainToKind = { typecheck: 'typecheck', lint: 'lint', test: 'test', build: 'build' }
 
 /** 로그에서 실패 종류 + 안정적인 「원인 서명」 + 발췌를 뽑는다. 서명은 같은 원인의 반복을 세는 열쇠라
@@ -58,7 +60,7 @@ export function classifyQaFailure(logText) {
   } else if (kind === 'lint') {
     const file = lines.find((l) => /^[^\s].*\.(?:[cm]?[jt]sx?)$/.test(l.trim()) && !/^\s*\d/.test(l)) ?? ''
     const rule = /\berror\s+.*?\s{2,}([@\w-]+\/[\w-]+|[\w-]+)\s*$/m.exec(text)?.[1] ?? ''
-    signature += `${file.trim()}:${rule}` || (lines.find((l) => /error/i.test(l)) ?? '').slice(0, 120)
+    signature += `${file.trim()}:${rule}`
   } else if (kind === 'test') {
     // FAIL 줄(파일 > 케이스)을 우선한다 — 그 앞의 `× 케이스` 요약 줄에는 파일이 없다
     const m = /^\s*FAIL\s+(.+?)(?:\s+\d+ms)?\s*$/m.exec(text) || /^\s*(?:×|✗)\s+(.+?)(?:\s+\d+ms)?\s*$/m.exec(text)
@@ -197,7 +199,7 @@ export function testIntegrityFindings({ changes = [], diff = '', storyText = '' 
     if (isTest && /\b(?:only|skip)\s*:\s*true/.test(scan.code)) push('block', 'test-skip', path, 0, 'test options disable/focus tests');
     if (/istanbul ignore|c8 ignore|v8 ignore|coverage ignore|node:coverage\s+(?:disable|ignore)/i.test(scan.comments)) push('block', 'coverage-exclude', path, 0, 'coverage ignore directive added');
     if (/(?:eslint|tsconfig|vitest|jest|package).*?(?:json|[cm]?[jt]s)$/.test(path) && /(?:strict|noImplicitAny|strictNullChecks|checkJs)"?\s*:\s*false|(?:skipLibCheck|passWithNoTests)"?\s*:\s*true|--(?:no-check|passWithNoTests)|\|\|\s*(?:true|exit 0)|"(?:lint|typecheck|test(?::[^" ]+)?)"\s*:\s*"(?:echo|true|exit 0)/.test(addedText)) push('block', 'gate-config-weakened', path, 0, 'quality configuration weakened');
-    if (/(?:eslint|tsconfig|vitest|jest|nyc|c8|package).*?(?:json|[cm]?[jt]s)$/.test(path) && /(?:\"[^\"]+\"|'[^']+')\s*:\s*['\"]off['\"]|noCheck\s*:\s*true|coveragePathIgnorePatterns|testPathIgnorePatterns|--coverage[= ]false/.test(addedText)) push('block', 'gate-config-weakened', path, 0, 'disabled rule/test/coverage setting');
+    if (/(?:eslint|tsconfig|vitest|jest|nyc|c8|package).*?(?:json|[cm]?[jt]s)$/.test(path) && /(?:"[^"]+"|'[^']+')\s*:\s*['"]off['"]|noCheck\s*:\s*true|coveragePathIgnorePatterns|testPathIgnorePatterns|--coverage[= ]false/.test(addedText)) push('block', 'gate-config-weakened', path, 0, 'disabled rule/test/coverage setting');
     if (GATE_CONFIG_RE.test(path)) {
       for (const key of ['lines', 'branches', 'functions', 'statements']) {
         const re = new RegExp(`${key}["']?\\s*:\\s*(\\d+(?:\\.\\d+)?)`);

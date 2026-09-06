@@ -124,6 +124,12 @@ else {
 mkdirSync(join(dst, 'fixtures'), { recursive: true });
 copyFileSync(join(SELF, 'engine/fixtures/strict-quality-fixture.mjs'), join(dst, 'fixtures/strict-quality-fixture.mjs'));
 for (const guide of ['QUALITY-GATES.md', 'MIGRATION.md']) copyFileSync(join(SELF, 'references', guide), join(dst, guide));
+// Optional project test adapters are pinned with the engine; project scripts/config stay explicit.
+const adapterSource = join(SELF, 'adapters')
+if (existsSync(adapterSource)) {
+  cpSync(adapterSource, join(dst, 'adapters'), { recursive: true, force: has('force'), filter: src => src === adapterSource || (src.endsWith('.mjs') && !src.endsWith('.test.mjs')) })
+  console.log('✔ tools/auto/adapters (project quality adapters)')
+}
 const routingGuide = join(dst, 'MODEL-ROUTING.md')
 if (existsSync(routingGuide) && !has('force')) notes.push('· MODEL-ROUTING.md 이미 있음 — 건너뜀(덮어쓰려면 --force)')
 else {
@@ -185,6 +191,7 @@ if (!existsSync(cfgPath)) {
     },
     workers: { max: 3, batchSize: 3 },
     modelPolicy: { enabled: true, version: 1 },
+    runtimePin: { required: true },
     providers: {
       claude: { enabled: true, max: 3 },
       codex: { enabled: true, max: 1, roles: ['review'], reviewKinds: ['new', 'closeout'], split: false, network: false, fallback: true },
@@ -230,11 +237,9 @@ if (clonePath) {
 
 // ── 4. 예약 작업 = 무정지 1개(기본 = 명령 출력 · --register-tasks 로만 실제 등록) ─────
 const runDir = clonePath || ROOT
-// 실행 폴더에 엔진이 실제로 있는지 본다. 방금 만든 클론에는 **없다** — 엔진은 ROOT 에 복사됐을 뿐
-// 아직 커밋·푸시되지 않았기 때문이다. 여기서 파일을 클론에 직접 복사해 넣는 우회는 쓰지 않는다:
-// 러너는 marker 클론을 라운드마다 `git clean -fdq` + `checkout -f` 로 새로고침하므로 복사본이
-// 첫 라운드에 그대로 지워진다(= 며칠 뒤 조용히 실패). 그래서 「커밋·푸시 → 클론 pull」이
-// 유일하게 안 깨지는 경로이고, 그 전에는 **예약을 등록하지 않는다**(등록 즉시 실패 방지).
+// 실행 폴더에 검토된 도구가 없으면 예약을 등록하지 않는다.
+// 운영 원격 push는 필요조건이 아니다. MIGRATION.md의 로컬 auto 브랜치 pin을 사용한다.
+// dirty 파일은 그대로 보존하고, 러너가 자신의 코드를 다른 ref로 바꾸려 하면 중단한다.
 // 목록을 손으로 적지 않는다 — engine/ 에 새 모듈(plan-dag·orchestrate·assign·conflicts·metrics·bench…)이
 // 생겼는데 여기만 구판이면 클론은 「동기 완료」로 보이고 러너는 첫 라운드에 ERR_MODULE_NOT_FOUND 로 죽는다.
 // 설치 복사와 **같은 규칙**(engine/*.mjs 에서 테스트 제외)으로 세고, 설정 파일 하나를 더한다.
@@ -247,8 +252,9 @@ const engineFiles = [
 ]
 const missingInRunDir = engineFiles.filter((f) => !existsSync(join(runDir, 'tools', 'auto', f)))
 const syncSteps = [
-  `cd ${ROOT} && git add tools/auto && git commit -m "chore(auto): batch-24-multiAG 엔진·설정" && git push`,
-  `cd ${runDir} && git pull`,
+  `cd ${ROOT} && git add tools/auto && git commit -m "chore(auto): reviewed batch runtime"`,
+  `Read tools/auto/MIGRATION.md: apply the reviewed tooling commit to the intended local auto/<date> branch at an idle boundary; preserve existing changes.`,
+  `Record that commit in <stateDir>/runtime-pin.json, then run routing/quality tests and dry plan before restoring the existing schedule. No operational remote push is required or authorized.`,
 ]
 const nodeExe = process.execPath
 // C3 3단계 — 러너·편성기와 같은 순서. 이 폴더가 어긋나면 로그·lock·원장이 갈라진다.
@@ -359,7 +365,7 @@ if (existingTasks.includes(taskName)) notes.push(`· ${taskName} 이 이미 있�
 console.log('\n── 다음 단계(사람 확인 필요) ──')
 console.log(`1. tools/auto/auto.config.json 의 epicOrder 를 채운다(예: [1,2,3] — 에픽 번호를 우선순위 순으로) · mockupGate 는 프로젝트 관례에 맞게`)
 if (clonePath) {
-  console.log(`1-b. **클론 실행 전 필수** — 엔진이 git 을 타고 클론에 들어가야 한다(직접 복사는 러너 새로고침에 지워진다):`)
+  console.log(`1-b. **클론 실행 전 필수** — 검토된 도구 커밋을 실행 폴더의 로컬 auto 브랜치에 적용하고 pin을 기록한다:`)
   for (const s of syncSteps) console.log(`     ${s}`)
 }
 console.log(`2. 프로젝트 .claude/settings.json 에 npm·node·git 읽기/빌드 allow 규칙 추가 후 대화형에서 1회 신뢰`)

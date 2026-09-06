@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -58,7 +58,7 @@ test('coverage uses diff lines instead of unrelated whole repository misses', ()
 });
 const authReport = () => ({ nonce: 'fresh', codeFingerprint: 'fp', endpoints: [{ source: 'src/api/items.ts', method: 'GET', route: '/items', authorizationApplied: true, cases: { anonymous: 401, forbidden: 403, allowed: 200, crossTenant: 404 } }] });
 test('authorization normal 401/403/2xx/tenant isolation contract passes', () => {
-  assert.equal(authorizationVerdict(authReport(), { nonce: 'fresh', codeFingerprint: 'fp', endpoints: ['src/api/items.ts'] }).result, 'pass');
+  assert.equal(authorizationVerdict(authReport(), { nonce: 'fresh', codeFingerprint: 'fp', endpoints: [{ source: 'src/api/items.ts', method: 'GET', route: '/items' }] }).result, 'pass');
 });
 for (const kind of ['anonymous', 'forbidden', 'allowed', 'crossTenant']) test(`authorization failure blocks wrong ${kind}`, () => {
   const r = authReport(); r.endpoints[0].cases[kind] = 500;
@@ -66,7 +66,7 @@ for (const kind of ['anonymous', 'forbidden', 'allowed', 'crossTenant']) test(`a
 });
 test('authorization boundary rejects missing, stale, incomplete, no-middleware reports', () => {
   for (const report of [null, {}, { ...authReport(), nonce: 'old' }, { ...authReport(), endpoints: [] }]) assert.equal(authorizationVerdict(report, { nonce: 'fresh', codeFingerprint: 'fp' }).result, 'not-verified');
-  assert.equal(authorizationVerdict(authReport(), { nonce: 'fresh', codeFingerprint: 'fp', endpoints: ['src/api/missing.ts'] }).result, 'fail');
+  assert.equal(authorizationVerdict(authReport(), { nonce: 'fresh', codeFingerprint: 'fp', endpoints: [{ source: 'src/api/missing.ts', method: 'GET', route: '/missing' }] }).result, 'fail');
   const r = authReport(); r.endpoints[0].authorizationApplied = false;
   assert.equal(authorizationVerdict(r, { nonce: 'fresh', codeFingerprint: 'fp' }).result, 'fail');
 });
@@ -104,7 +104,7 @@ function fixture(t, { docs = false, scripts = {} } = {}) {
   }
   return { root, put, git };
 }
-const fake = (fx, calls, options = {}) => async (gate, context) => {
+const fake = (fx, calls, options = {}) => async (gate) => {
   calls.push(gate.name);
   if (gate.name === 'coverage') fx.put('coverage/lcov.info', `SF:src/math.ts\nDA:1,${options.miss ? 0 : 1}\nend_of_record\n`);
   return { ...gate, command: `npm run ${gate.script}`, result: options.fail === gate.name ? 'fail' : 'pass', exit: options.fail === gate.name ? 1 : 0, durationMs: 1, output: 'ok 1 - normal value\nok 2 - rejects invalid\nok 3 - boundary empty' };
@@ -177,7 +177,7 @@ test('executed tests failure: exit zero without passing cases and quoted fake ca
   assert.equal(executedTestVerdict(diff('tests/x.test.ts',[`const quoted = "test('fake', () => assert.ok(x))";`]),'ok 1 - fake').result,'not-verified');
 });
 test('API report boundary: explicit public reason, stale nonce, missing endpoint and missing authorization', () => {
-  const context={nonce:'n',codeFingerprint:'f',endpoints:['src/api/x.ts']};
+  const context={nonce:'n',codeFingerprint:'f',endpoints:[{source:'src/api/x.ts',method:'GET',route:'/x'}]};
   const report={nonce:'n',codeFingerprint:'f',endpoints:[{source:'src/api/x.ts',method:'GET',route:'/x',public:true,publicReason:'Public health endpoint with no tenant data'}]};
   assert.equal(apiAuthorizationVerdict(report,context).result,'pass');
   assert.equal(apiAuthorizationVerdict({...report,nonce:'old'},context).result,'not-verified');
@@ -187,7 +187,7 @@ test('API report boundary: explicit public reason, stale nonce, missing endpoint
 test('run normal: commands shared by unit and coverage execute once; independent checks overlap', async t => {
   const fx=fixture(t,{scripts:{'test:affected':'node both.mjs',coverage:'node both.mjs'}}),calls=[];
   let active=0,peak=0;
-  const result=await runQuality({root:fx.root,execute:async (g,c)=>{
+  const result=await runQuality({root:fx.root,execute:async (g)=>{
     calls.push(g.name);active++;peak=Math.max(peak,active);await new Promise(r=>setTimeout(r,15));
     if(g.name==='unit') fx.put('coverage/lcov.info','SF:src/math.ts\nDA:1,1\nend_of_record\n');
     active--;return {...g,result:'pass',exit:0,durationMs:15,output:'ok 1 - normal value\nok 2 - rejects invalid\nok 3 - boundary empty'};
@@ -196,7 +196,7 @@ test('run normal: commands shared by unit and coverage execute once; independent
 });
 test('run failure: API/security/performance required-missing, irrelevant optional commands absent', async t => {
   for(const [path,gate] of [['src/api/x.ts','api'],['src/auth/session.ts','security'],['src/cache/x.ts','performance']]){
-    const fx=fixture(t);fx.put(path,'export const value = 1\n');const r=await runQuality({root:fx.root,execute:fake(fx,[])});
+    const fx=fixture(t);fx.put(path,gate==='api'?"app.get('/x', handler)\n":'export const value = 1\n');const r=await runQuality({root:fx.root,execute:fake(fx,[])});
     assert.equal(r.verdict,'not-verified');assert.equal(r.gates.find(g=>g.name===gate).result,'required-missing');
   }
 });
@@ -209,7 +209,7 @@ test('run landing normal/full failure: one full and integration; no worker cover
 });
 test('run auth/API normal and failure: fresh complete reports plus changed coverage are mandatory', async t => {
   const fx=fixture(t,{scripts:{'test:api':'node api.mjs','test:security':'node security.mjs','test:authorization':'node authorization.mjs'}});
-  fx.put('src/api/auth.ts','export const authorize = true\n');
+  fx.put('src/api/auth.ts',"app.get('/auth', authorize)\n");
   const run=async (g,c)=>{
     if(g.name==='coverage') fx.put('coverage/lcov.info','SF:src/math.ts\nDA:1,1\nend_of_record\nSF:src/api/auth.ts\nDA:1,1\nend_of_record\n');
     const report={nonce:c.env.BATCH_VERIFICATION_NONCE,codeFingerprint:c.env.BATCH_CODE_FINGERPRINT,endpoints:[{source:'src/api/auth.ts',method:'GET',route:'/auth',authorizationApplied:true,cases:{anonymous:401,forbidden:403,allowed:204,crossTenant:404}}]};

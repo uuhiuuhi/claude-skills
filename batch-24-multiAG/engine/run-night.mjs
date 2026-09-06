@@ -38,6 +38,9 @@ import { readModelHealth, recordModelEvent } from './runtime/model-health.mjs'
 import { failureKind } from './runtime/model-policy.mjs'
 import { loadConfig } from './plan-queue.mjs'
 import { safeGitPush } from './push-guard.mjs'
+import { refreshWorktree } from './worktree-refresh.mjs'
+import { assertReviewedRuntime, assertIncomingToolingStable } from './runtime-pin.mjs'
+import { verifiedLandingFingerprint } from './landing-publication.mjs'
 // 2026-09-02 「9점대 하네스」 배선 — 판정은 전부 순수 모듈이 소유하고 러너는 부르기만 한다.
 import { assignHistoryPath, assignWorkers, parseHistory, recordAssignResult, serializeHistory, specProvider, storyDifficulty, storyRisk } from './assign.mjs'
 import { parallelHazardsCompat } from './conflicts.mjs'
@@ -105,6 +108,20 @@ if (!PIPELINE_SETTINGS) {
 const CFG = loadConfig(process.cwd())
 const PROJECT = CFG.project || basename(resolve('.'))
 const STATE_DIR = process.env.AUTO_BATCH_STATE_DIR || CFG.stateDir || join(homedir(), '.claude-auto', PROJECT)
+
+/** A reviewed pin is opt-in for legacy callers, but every configured pin is enforced.
+ * Re-read at each boundary so a deleted or replaced pin cannot survive in memory. */
+function assertOperationalRuntime() {
+  if (dryRun) return undefined
+  const pinFile = join(STATE_DIR, 'runtime-pin.json')
+  const present = existsSync(pinFile)
+  const pin = present ? readRecord(readFileSync(pinFile, 'utf8')) : null
+  if (present && (!pin || pin.schema !== 'batch-24-multiag/runtime-pin/1' || !/^[a-f0-9]{40}$/.test(pin.commit ?? ''))) throw new Error('invalid reviewed runtime pin; reinstall at a stopped batch boundary')
+  const required = CFG.runtimePin?.required === true && existsSync(resolve('.auto-batch-worktree'))
+  const checked = assertReviewedRuntime({ cwd: process.cwd(), toolingDir: import.meta.dirname, commit: pin?.commit, required })
+  return checked.checked ? checked.commit : undefined
+}
+
 const routingFlags = () => CFG.modelPolicy?.enabled ? ['--routing-config', resolve('tools/auto/auto.config.json'), '--model-state-dir', STATE_DIR] : []
 
 // ── 다중 프로바이더(2026-09-02) — 설정이 없으면 configured=false 로 종전 동작(Claude 전용 · 엔진 명령줄 무변경) ──
@@ -528,89 +545,29 @@ function touchLock() { // 심박 — 라운드 시작·배치 경계마다. 자�
 }
 
 if (autoPlan) {
-  // ② 전용 워크트리 새로고침(marker 있을 때만) — 본 트리(대화 세션)의 발밑을 절대 바꾸지 않는다.
-  //    기준 ref = 오늘 auto 브랜치가 원격에 있으면 그것(같은 날 앞 슬롯의 연속), 없으면 origin/main.
-  if (existsSync(resolve('.auto-batch-worktree'))) {
-    // 미커밋 로그(run-summary.log 등)는 checkout -f 에 쓸리므로 먼저 보관한다(정직 기록 보존)
-    const st = spawnSync('git', ['status', '--porcelain'], { encoding: 'utf8' })
-    const floating = (st.stdout ?? '').split('\n').map((l) => l.slice(3).trim()).filter((f) => f.includes('auto-pipeline-logs/'))
-    if (floating.length > 0) {
-      const arc = join(STATE_DIR, 'archive', today() + '-' + Date.now())
-      mkdirSync(arc, { recursive: true })
-      for (const f of floating) { try { cpSync(resolve(f), join(arc, basename(f))) } catch { /* 삭제분 */ } }
-    }
-    // 미커밋 작업 보존 — checkout -f/clean 은 앞 배치가 STOP 으로 커밋 못 한 소스·테스트
-    // 수정을 지운다(실사고: dev 산출물이 리셋에 유실돼 원인 분석 물증까지 소실). 로그·marker·
-    // 잔재 로그를 뺀 변경이 있으면 stash 로 보관한다.
-    const valuable = (st.stdout ?? '').split('\n').filter((l) => l.trim() !== '')
-      .filter((l) => !l.includes('auto-pipeline-logs/'))
-      .filter((l) => !l.includes('.auto-batch-worktree'))
-      .filter((l) => !/_qa-[^/]*\.log/.test(l))
-    if (valuable.length > 0) {
-      const stashed = spawnSync('git', ['stash', 'push', '-u', '-m', `slot-preserve ${new Date().toISOString()}`,
-        '--', '.', ':(exclude).auto-batch-worktree', ':(exclude)_bmad-output/implementation-artifacts/auto-pipeline-logs'], { encoding: 'utf8' })
-      if (stashed.status === 0) {
-        console.log(`미커밋 변경 ${valuable.length}건 stash 보관(slot-preserve) — 아침에 사람이 확인 후 pop/drop`)
-        notify('미커밋 작업 stash 보관', `앞 배치가 커밋 못 한 변경 ${valuable.length}건을 stash 에 보관했다.\n${valuable.slice(0, 10).join('\n')}`,
-          `미커밋 변경 ${valuable.length}건 보관. ${NTFY_BRIEF}`)
-      } else {
-        console.log(`⚠ stash 보관 실패(${(stashed.stderr ?? '').trim().split('\n')[0]}) — 종전대로 리셋 진행(유실 가능)`)
-      }
-    }
-    // 엔진이 저장소 루트에 남기는 _qa-*.log 류 미추적 잔재를 치운다 — 안 치우면 다음 슬롯의
-    // dirty 검사가 exit 4 로 멈춘다. ⚠️ 이 아래 checkout -f 는 이 파일 자신의 미커밋 수정도
-    // 지운다 — 러너 수정은 반드시 커밋을 먼저 하고 실행한다(실측).
-    spawnSync('git', ['clean', '-fdq', '-e', '.auto-batch-worktree'])
-    spawnSync('git', ['fetch', 'origin'], { stdio: 'inherit' })
-    const hasToday = spawnSync('git', ['ls-remote', '--exit-code', 'origin', BRANCH], { encoding: 'utf8' }).status === 0
-    let ref = `origin/${BRANCH}`
-    if (!hasToday) {
-      // 오늘 몫 브랜치가 없다 — 미머지 auto/* 를 먼저 실측한다. 원격만 보면 안 된다:
-      // 같은 PC 의 대화 세션이 **푸시 전** 로컬 브랜치에서 작업 중일 수 있다(실측). 로컬+원격을 다 본다.
-      const list = spawnSync('git', ['for-each-ref', 'refs/heads/auto', 'refs/remotes/origin/auto', '--format=%(refname:short)'], { encoding: 'utf8' })
-      const unmerged = [...new Set((list.stdout ?? '').split('\n').filter(Boolean))].filter((b) => {
-        const n = spawnSync('git', ['rev-list', '--count', `origin/main..${b}`], { encoding: 'utf8' })
-        return Number((n.stdout ?? '0').trim()) > 0
-      })
-      if (unmerged.length > 0) {
-        // ── 선형 승계 — 종전 「휴면」의 대체 ──
-        // 미머지 브랜치가 남았다고 쉬면 밤이 통째로 빈다(실측: 하룻밤 9.5시간 유휴). 최신 미머지
-        // auto/<날짜> tip 위에서 오늘 브랜치를 시작한다 — main 은 무접촉(사람 머지 원칙 불변)이고,
-        // 아침 머지는 최신 브랜치 1개만 합치면 체인 전체가 포함된다(선형). 자정 롤오버 중복 실행
-        // 사고는 「안 보이는 베이스(main)로 재시작」이 원인이었으므로, 승계는 그 반대 방향이다.
-        // 체인이 길어지는 위험은 편성기의 체인 게이트(신규 착수 보류)가 본다.
-        const inh = inheritPlan(unmerged, START_DATE)
-        if (inh) {
-          ref = inh.ref
-          const { day, save } = loadState()
-          day.notified ??= {}
-          console.log(`선형 승계 — ${inh.ref} 위에서 ${BRANCH} 시작(체인 ${inh.chainAgeDays}일 · 미머지 ${inh.branches.length}브랜치)`)
-          if (!day.notified.inherit && !dryRun) {
-            notify('선형 승계로 밤 계속', `미머지 ${inh.branches.join(', ')} 위에서 ${BRANCH} 시작.\n체인 ${inh.chainAgeDays}일차${CFG.autonomy?.mode === 'full' ? ' — 자율운전은 계속 진행(머지는 사람 몫 · 「머지해줘」)' : (inh.chainAgeDays >= 2 ? ' — 신규 착수는 보류(회수·재검수만). /merge 로 체인을 비우면 전부 재개' : '')}.\n아침 /merge 는 최신 브랜치 1개면 된다(선형)`,
-              `미머지 ${inh.branches.length}건 위에서 계속(체인 ${inh.chainAgeDays}일차). ${NTFY_BRIEF}`)
-            day.notified.inherit = true
-          }
-          save()
-        } else {
-          // 날짜형 이름이 하나도 없다(비정형 브랜치) — 승계 기준을 정할 수 없으니 종전대로 휴면
-          const { day, save } = loadState()
-          day.notified ??= {}
-          console.log(`미머지 비정형 auto 브랜치(${unmerged.join(', ')}) — 승계 기준 불명, 슬롯 휴면`)
-          if (!day.notified.unmerged && !dryRun) {
-            notify('슬롯 휴면 — 비정형 브랜치', `미머지: ${unmerged.join(', ')} — 사람 확인 필요`,
-              `미머지 ${unmerged.length}건 — 사람 확인 필요. ${NTFY_BRIEF}`)
-            day.notified.unmerged = true
-          }
-          save()
-          await shutdown(0)
+  // ② Marker worktrees preserve unfinished work and local tooling commits in place.
+  // Dry runs never inspect/fetch/checkout git through startup refresh.
+  try {
+    const toolingCommit = assertOperationalRuntime()
+    const refreshed = refreshWorktree({ branch: BRANCH, date: START_DATE, dryRun, toolingCommit })
+    assertOperationalRuntime()
+    if (!refreshed.skipped) {
+      console.log(`워크트리 기준: ${refreshed.ref}`)
+      const inh = refreshed.inheritance
+      if (inh) {
+        const { day, save } = loadState()
+        day.notified ??= {}
+        console.log(`선형 승계 — ${inh.ref} 위에서 ${BRANCH} 시작(체인 ${inh.chainAgeDays}일 · 미머지 ${inh.branches.length}브랜치)`)
+        if (!day.notified.inherit) {
+          notify('선형 승계로 밤 계속', `미머지 ${inh.branches.join(', ')} 위에서 ${BRANCH} 시작.\n체인 ${inh.chainAgeDays}일차.\n아침 /merge 는 최신 브랜치 1개면 된다(선형)`,
+            `미머지 ${inh.branches.length}건 위에서 계속(체인 ${inh.chainAgeDays}일차). ${NTFY_BRIEF}`)
+          day.notified.inherit = true
         }
-      } else {
-        ref = 'origin/main'
+        save()
       }
     }
-    const co = spawnSync('git', ['checkout', '-f', '--detach', ref], { stdio: 'inherit' })
-    if (co.status !== 0) fail(`워크트리 새로고침 실패(${ref}) — 이 슬롯 중단`, 3)
-    console.log(`워크트리 기준: ${ref}`)
+  } catch (error) {
+    fail(`워크트리 새로고침 중단 — ${error.message}`, 3)
   }
 
   // ③ 연속 중단 차단기 v2 — 「원인 서명」(exit 코드 + 배치 라벨) 2회만 차단하고 **다른 원인은
@@ -666,6 +623,8 @@ function doDownSync() {
   if (behind === 0) return { ok: true, note: null }
   const { day, save } = loadState()
   if (day.d2halt) return { ok: true, note: '하향 동기 중단 상태(오늘 반복 충돌) — pre-merge 베이스로 계속' }
+  const reviewedCommit = assertOperationalRuntime()
+  if (reviewedCommit) assertIncomingToolingStable({ cwd: process.cwd(), ref: 'origin/main', toolingDir: import.meta.dirname })
   const mg = spawnSync('git', ['-c', 'core.editor=true', 'merge', '--no-edit', '-m', `sync: main→${BRANCH} 하향 동기(낮 확정·큐 반영)`, 'origin/main'], { encoding: 'utf8' })
   if (mg.status === 0) return { ok: true, note: `하향 동기 — origin/main ${behind}커밋 반영` }
   // core.quotePath=false — 기본값이면 한글 경로가 8진 이스케이프 + 따옴표로 나와 `_bmad-output/` 접두
@@ -1064,6 +1023,7 @@ let landingPublicationReady = false;
 let landingPublicationFingerprint = null;
 function runIntegrationGate({ landedStories, landingBase, batchId, timeoutMin, record }) {
   landingPublicationReady = false;
+  landingPublicationFingerprint = null;
   if (!dryRun && landedStories.some(l => {
     try { const m = readRecord(readFileSync(join(LOG_DIR, `${l.story}-verification.json`), 'utf8')); return m.completion?.verdict !== 'ready' || m.quality?.verdict !== 'ready'; } catch { return true; }
   })) return { integration: { result: 'fail', ran: false, why: 'worker completion not ready' }, skipPush: true, worst: 1 };
@@ -1097,7 +1057,12 @@ function runIntegrationGate({ landedStories, landingBase, batchId, timeoutMin, r
     }
     inv = { file: process.execPath, argv: [join(dirname(fileURLToPath(import.meta.url)), 'runtime', 'quality-gates.mjs'), '--phase', 'landing', '--base', landingBase, '--out', join(LOG_DIR, 'landing-quality.json')], verbatim: false, display: 'batch-24-multiag landing: full unit + integration (deduplicated)' };
     record(`[INTEGRATION][RUN] landing ${landedStories.length}건 뒤 통합 게이트: ${inv.display}`)
-    const runGate = () => spawnSync(inv.file, inv.argv, { shell: false, windowsVerbatimArguments: inv.verbatim, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: timeoutMin * 60 * 1000, windowsHide: true })
+    const runGate = () => {
+      // A successful child must write this run's report, never leave an older ready report in place.
+      try { if (existsSync(join(LOG_DIR, 'landing-quality.json'))) unlinkSync(join(LOG_DIR, 'landing-quality.json')) }
+      catch (error) { return { status: 1, stderr: `cannot replace stale landing report: ${error.message}` } }
+      return spawnSync(inv.file, inv.argv, { shell: false, windowsVerbatimArguments: inv.verbatim, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: timeoutMin * 60 * 1000, windowsHide: true })
+    }
     mkdirSync(LOG_DIR, { recursive: true })
     // (N3/정책 2) 통합 로그도 마스킹해서 적는다 — 종전엔 qa stdout/stderr 원문이 그대로 남았다.
     const writeGateLog = (g) => {
@@ -1108,15 +1073,27 @@ function runIntegrationGate({ landedStories, landingBase, batchId, timeoutMin, r
     let g = runGate()
     writeGateLog(g)
     let qaExit = g.status ?? 1
+    let verifiedFingerprint = null
+    if (qaExit === 0) {
+      try {
+        const report = readRecord(readFileSync(join(LOG_DIR, 'landing-quality.json'), 'utf8'))
+        verifiedFingerprint = verifiedLandingFingerprint(report, {
+          landingBase, head: headSha(), currentFingerprint: qualityFingerprint(process.cwd()),
+        })
+      } catch (error) {
+        qaExit = 1
+        record(`[INTEGRATION][REJECT] ${error.message}`)
+      }
+    }
     // First RED is final for this landing: preserve evidence, rollback and block push.
     const gate = integrationGateDecision({ enabled: true, landedCount: landedStories.length, qaExit })
     if (gate.action === 'push') {
       record(`[INTEGRATION][PASS] ${gate.why} (log=auto-pipeline-logs/integration-gate.log)`)
       integration = { result: 'pass', qaExit, landingBase, at: new Date().toISOString(), ran: true, batchId }
-      integration.codeFingerprint = qualityFingerprint(process.cwd())
+      integration.codeFingerprint = verifiedFingerprint
       const touched = applyStoryManifests(integration)
       landingPublicationReady = !skipPush
-      landingPublicationFingerprint = qualityFingerprint(process.cwd())
+      landingPublicationFingerprint = verifiedFingerprint
       // 매니페스트 갱신분은 **커밋해 둔다** — 남겨 두면 작업 트리가 dirty 로 남아 다음 라운드의 cherry-pick 이
       // 같은 파일에서 거부된다(landing 실패로 둔갑). ignore 대상이면 add 가 아무것도 안 하고 commit 이 조용히 실패한다.
       if (touched.length) {
@@ -1297,8 +1274,8 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   const wtBase = resolve('..')
   const myName = basename(process.cwd())
   const wts = []
-  const cleanup = () => {
-    for (const w of wts) {
+  const cleanup = (targets = wts) => {
+    for (const w of targets) {
       spawnSync('git', ['worktree', 'remove', '--force', w.dir])
       // node_modules junction(대상 부재 시)·잠긴 파일로 git 이 폴더를 못 지우면 직접 지운다 — 남은 폴더는 다음 라운드의
       // `worktree add` 를 막지는 않지만(remove --force 선행) 디스크와 혼란을 남긴다(2026-09-02 e2e 실측).
@@ -1402,7 +1379,9 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
       wt.metrics = { kind: 'story', story: wt.story, provider: wt.devProvider, model: wt.dev ?? '', start: started, end: new Date().toISOString(), exit: c }
       done({ story: wt.story, code: c })
     }
+    assertOperationalRuntime()
     const child = spawn(process.execPath, engineArgsFor(wt), { cwd: wt.dir, stdio: 'inherit', env: WORKTREE_ENV })
+    wt.spawned = true
     child.on('close', (c) => finishOne(c ?? 1))
     child.on('error', () => finishOne(1))
   })
@@ -1410,13 +1389,19 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   const pending = [...wts]
   const running = new Map()
   const outs = []
-  await new Promise((finish) => {
+  const workerRuns = []
+  let poolStopped = false
+  try {
+    await new Promise((finish, reject) => {
     const tick = () => {
+      if (poolStopped) return
       for (const wt of pickRunnable(pending, [...running.values()], caps)) {
         pending.splice(pending.indexOf(wt), 1)
         running.set(wt.story, wt)
         console.log(`[${wt.story}][${wt.devProvider.toUpperCase()}][${laneLabel}] spawn wt=${wt.dir} · 동시 ${running.size}/${caps.total}${wt.review ? ` · review=${wt.review}` : ''}`)
-        runOne(wt).then((o) => {
+        const attempt = runOne(wt)
+        workerRuns.push(attempt)
+        attempt.then((o) => {
           running.delete(wt.story)
           outs.push(o)
           // 워크트리 로그는 **제거 전에** 읽는다(cleanup 뒤엔 없다) — 단계 타임라인·Codex 토큰의 유일한 원본.
@@ -1430,12 +1415,19 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
             record(`- ⚠ ${bp} 레인 ${info.kind}(${info.why ?? ''}) — 남은 병렬 스토리 ${pending.length}건은 ${pending.map((p) => p.devProvider).join('/')} 레인으로 재배정`)
           }
           tick()
-        })
+        }).catch(reject)
       }
       if (pending.length === 0 && running.size === 0) finish()
     }
     tick()
   })
+  } catch (error) {
+    poolStopped = true
+    await Promise.allSettled(workerRuns)
+    // Existing workers keep their outputs for recovery; only never-started worktrees are disposable.
+    cleanup(wts.filter((wt) => !wt.spawned))
+    throw error
+  }
 
   // landing — 원래 배치 순서 그대로 직렬(같은 브랜치 커밋 경합 방지). 실패 스토리는 건너뛰되
   // 나머지는 마저 반영한다(성공분을 버리지 않는다), 끝에 배치 STOP 으로 보고.
@@ -1697,6 +1689,7 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     if (autoPlan) touchLock() // 심박 — 라운드가 아니라 **배치 경계**여야 6h 판정 창과 정합한다
     const batchBase = headSha() // exit 5 환불 판정 재료(이 배치가 실제로 무엇을 커밋했나)
     const started = new Date().toISOString()
+    assertOperationalRuntime()
     const run = spawnSync(process.execPath, args, { stdio: 'inherit', cwd: process.cwd() })
     let code = run.status ?? 1
     let seqIntegration = 'pass'
@@ -1873,6 +1866,7 @@ for (let round = 1; ; round++) {
   touchLock() // 심박 — 라운드 경계
   writeChainInfo() // 체인 게이트 재료 — 편성 전에 최신 실측
   const ds = doDownSync() // 하향 동기 — 낮의 결정·큐·목업 승인이 밤에 보인다
+  assertOperationalRuntime()
   if (ds.note) console.log(`· ${ds.note}`)
   if (!ds.ok) break // 코드 충돌 — 이 라운드 휴면(다음 슬롯이 재판정 · 같은 지문 2회면 오늘 동기 중단)
   const sel = await selectQueue()
