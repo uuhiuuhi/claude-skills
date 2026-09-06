@@ -85,3 +85,14 @@ Claude `C:/Users/user/.claude/skills/batch-24-multiAG`와 Codex `C:/Users/user/.
 [Sol 리뷰 결과](SOL-HIGH-REVIEW-RESULT.md)와 [후속 리뷰 체크리스트](SOL-HIGH-REVIEW.md)를 함께 제공한다. 다음 검토는 실제 앱 DB/권한 adapter와 배치 경계 전환 증거에 집중하면 된다. 새 대화를 만들어 이미 끝난 엔진 리뷰를 반복할 필요는 없다.
 
 정적 분류·테스트 이름 검사는 assertion의 의미적 충분성을 완전히 증명하지 않는다. 동적·mounted route에는 소스 SHA에 묶인 명시적 inventory가 필요하다. 로컬 검증기까지 수정할 수 있는 관리자에 대한 위조 방어 인증은 아니다. 실제 앱 인증·RLS/테넌트 격리와 운영 DB 결과는 아직 검증되지 않았다. 따라서 저장소 gate verdict `ready`는 운영 스토리 완료나 운영 전환 승인을 의미하지 않는다.
+
+## 후속 — 2026-09-06 저녁: 운영 전환 차단 2건 해소 (integration skip policy · COMMIT GUARD refs/codex)
+
+운영 전환을 막던 「DB integration 준비 상태」와 운영 러너의 실제 STOP 원인을 같은 날 해소했다. 상세 리뷰 기록은 [SOL-HIGH-REVIEW-2026-09-06-SKIP-POLICY-GUARD.md](SOL-HIGH-REVIEW-2026-09-06-SKIP-POLICY-GUARD.md), 계약은 [QUALITY-GATES.md](QUALITY-GATES.md) 「Reviewed integration skip policy」.
+
+- **integration skip policy** (`adapters/vitest-quality.mjs`): 프로젝트가 `quality-adapter.config.json` `integration.skipPolicy` 에 integration 범위의 **모든** skip 을 항목별로 분류한다 — `required-missing`(실행되지 않은 필수 검사 · 항상 차단 · 정확한 항목이 stderr/랜딩 매니페스트에 열거) / `optional-not-applicable`(승인된 선택 검사 · 기계 검증 근거가 살아 있고 랜딩 변경이 그 모듈에 닿지 않을 때만 인정 · 별도 보고 · 실행 증거로 세지 않음). 근거 = `coveredBy`(같은 실행에서 통과한 커버 테스트) · `envMissing` · `envNotArmed`(프로젝트 프로브와 같은 무장 규칙 · `process.env.X || 파일` 우선순위)이며, env 근거는 TypeScript AST 로 「테스트가 import 하는 모듈의 실제 `process.env`/`env`/`fromFile` 조회」에 결박된다. 변경 범위는 unit ∪ integration 전체 테스트 그래프로 매핑하고, 어떤 테스트도 의존하지 않는 파일·SQL·설정·데이터 픽스처(csv/jsonl/json)·정책 파일 자체는 선택 skip 전부를 차단한다(문서·이미지 확장자만 제외). 미등재 skip = `unclassified` 차단. 테스트 삭제·제외·수정 0.
+- **jng-os 분류 실측**(배포될 트리 = `codex/batch24-runtime-release`): tests/db skip **67건 = 53 required-missing / 14 optional**(무장 프로브 8 · 픽스처 env 1 · anon-baseline 중복 4 · 정적 가드 결박 1). 실DB 랜딩 실행(변경 범위 `src/lib/roles.ts`): 1,884 통과 · 67 skip → 어댑터 exit 1 · **차단 53 / 승인 14 / 미분류 0**. 즉 운영 전환 뒤에도 **랜딩은 53건이 실행될 때까지 차단**되며(대부분 QA 계정·프로브 티켓 사람 게이트로 잠긴 정적 `it.skip`), 정확한 목록은 프로젝트 `tools/auto/DB-SKIP-CLASSIFICATION-2026-09-06.md`.
+- **COMMIT GUARD 오탐**(`engine/runtime/providers/git-guard.mjs` `localGitFingerprintFor` · `filterGuardRefs`): Codex Desktop 이 공유 `.git` 에 남기는 `refs/codex/turn-diffs/…` 체크포인트 ref 가 워커 실행 중 지문을 바꿔 운영 러너를 3회 STOP 시켰다(08:07·09:37·10:27). `refs/codex/` 네임스페이스만 제외하고 HEAD reflog·브랜치·태그·stash·remote 는 그대로 본다. 실저장소 재현 테스트 `providers/git-guard-refs.test.mjs`.
+- **어댑터 env 파일**: 프로젝트 테스트처럼 `.env.local` 을 읽어 `requiredEnv` 존재를 판정(값 출력 0). 러너는 `.env.local` 을 프로세스 env 로 내보내지 않으므로 이것이 없으면 운영에서 integration 게이트가 항상 「env 없음」으로 실패했을 것이다.
+- **준비본 정리**: `d77f61dc` 가 옛 엔진째 복사해 둔 `tools/auto/runtime/*.test.mjs` 9개(가짜 시크릿 픽스처)가 프로젝트 `deploy-guard` ② 를 RED 로 만들어 제거했다(설치기가 배포하지 않는 파일 · main 에 없음 · Sol 승인).
+- Sol-high 독립 리뷰 7라운드(1차 3건 → … → 7차 「Release blocker: No」). 리뷰어 샌드박스는 임시 폴더 쓰기가 막혀 픽스처 테스트는 작성자 환경에서만 완주(54/54).

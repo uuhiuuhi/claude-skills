@@ -82,7 +82,7 @@ import { fileURLToPath } from "node:url";
 import { parseModelSpec, formatModelSpec, shownSpec, detectProviders, providersLine, resolveWorkerSpec, nextWorkerDown, enforceCrossSpec } from "./providers/index.mjs";
 import { buildClaudeCommand, runClaudeWorker } from "./providers/claude.mjs";
 import { buildCodexCommand, runCodexWorker, classifyCodexFailure, codexFailureText, inspectCwdForCodex, codexReviewPrompt, codexDevPrompt, codexRepairPrompt, renderReviewFindings, parseReviewJson, validateReviewRun, redactSecrets, isSensitivePath, stripSensitiveFileSections, hideSensitiveFiles, restoreEnvFiles, withCodexSlot, slotStaleMsFor } from "./providers/codex.mjs";
-import { createGitGuard, findCredentialRemotes, stripRemoteCredentials } from "./providers/git-guard.mjs";
+import { createGitGuard, findCredentialRemotes, stripRemoteCredentials, localGitFingerprintFor } from "./providers/git-guard.mjs";
 import { assertSafeModel, assertSafePath, normalizeCommand, spawnSafe } from "./providers/spawn-safe.mjs";
 import { safeGitPush } from "./push-guard.mjs";
 import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes } from "./completion-rules.mjs";
@@ -593,10 +593,8 @@ function remoteHeads() {
  *  절대경로 git 우회로 `commit → reset` 을 해도 **reflog 는 자란다**(HEAD 값은 원상복구돼도 기록은 남는다).
  *  shim 을 지나친 조작을 사후에 반드시 알아채기 위한 두 번째 눈이다. 저장소가 아니면 빈 문자열. */
 function localGitFingerprint() {
-  const reflog = git(["reflog", "show", "--format=%H", "HEAD"]);
-  const refs = git(["show-ref"]);
-  const n = reflog.code === 0 ? reflog.out.split("\n").filter((l) => l.trim()).length : -1;
-  return `reflog=${n}\n${refs.code === 0 ? refs.out.trim() : ""}`;
+  // (2026-09-06) 정본은 providers/git-guard.mjs — 도구 네임스페이스(refs/codex/*)만 빼고 HEAD reflog·heads·tags·remotes·stash 는 그대로 본다.
+  return localGitFingerprintFor(process.cwd());
 }
 /** git-guard 의 shim PATH 에 Windows 셸 고정을 더한 워커 env.
  *  Git for Windows 의 `Git\bin\bash.exe` 래퍼는 시작할 때 `/mingw64/bin:/usr/bin` 을 PATH 앞에 끼워 넣어 shim 을

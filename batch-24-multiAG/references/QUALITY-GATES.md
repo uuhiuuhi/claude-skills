@@ -95,3 +95,42 @@ The adapter uses Vitest's dependency graph and produces real LCOV in the same af
 No mapping, no tests, missing instrumentation, missing required environment, or skipped mandatory integration
 is a failure. Capability output only describes availability; it is not execution evidence. SQL/Deno coverage
 and actual API/auth/security/performance adapters must be supplied by the project when relevant.
+
+Declared `integration.requiredEnv` names are resolved from the process environment first and then from the project
+root env file (`integration.envFile`, default `.env.local`, parsed like the project's own tests: optional `export`,
+matching quotes stripped, unquoted inline `#` comments cut). Only presence is checked; values are never printed.
+
+### Reviewed integration skip policy
+
+`integration.skipPolicy` in `quality-adapter.config.json` classifies **every** skipped test of the integration scope
+(`schema: batch-24-multiag/skip-policy/1`, `reviewedOn`, `reviewedBy`, `entries[]`). Each entry names one test
+(`file` + exact full name), a `category`, a `kind`, a `rationale`, and for optional entries the `evidence`:
+
+| category | effect at landing |
+|---|---|
+| `required-missing` | a check that must run and did not — **always blocks** completion and push; the exact item is reported |
+| `optional-not-applicable` | an approved optional check with evidence that it does not apply here — tolerated and **reported separately** |
+
+Unlisted skips block as `unclassified`. Only mechanically checked evidence can authorize tolerance:
+`coveredBy` (a named covering test in a test file must pass in the same run — its own name or the full
+`suite > … > name`), `envMissing` (the listed variables must be absent) and `envNotArmed` (the arming flag must be off —
+same rule as the project's probes: any non-empty value except `0`/`false` is armed; declared names resolve exactly like
+`process.env.X || fromFile.X`). Environment evidence must be bound to the test's gating code: every named variable must be
+actually looked up (`process.env.NAME`, `env.NAME`, `fromFile.NAME` or `['NAME']`) in the skipped test's own file or in
+the declared `envSource` — a JavaScript/TypeScript module that the test file imports (for example a shared
+`tests/db/client.ts` helper). Both files are parsed with the TypeScript compiler API (the project's `typescript` package;
+its absence, or a file that does not parse, fails closed), so comments, strings, regular-expression literals,
+configuration/JSON files and unrelated modules never qualify. `documented` is an annotation only and never sufficient
+by itself; optional `note` additionally requires the runtime `ctx.skip(note)` text to match. Under a policy a module whose
+tests are all skipped is classified test by test like any other skip; a failed module still ends the run.
+
+Tolerance is also denied when the change scope is missing (manual runs fail closed) or cannot be mapped: the landing
+change (`BATCH_BASE`/`BATCH_CHANGED_FILES`) is mapped through Vitest's dependency graph over the whole project scope
+(unit ∪ integration) — a changed test file affects itself, a changed JavaScript/TypeScript file affects the modules
+Vitest maps to it (a file covered only by unit tests is mapped and affects no integration module), and a file no test
+anywhere depends on or any
+non-JavaScript executable/configuration change (SQL migrations, `supabase/**`, package/lock files, the policy file
+itself, tool configuration, data fixtures such as `.csv`/`.jsonl`/`.json`) denies **all** optional tolerance because its
+integration impact cannot be established. Only documents and images by extension (`.md`, `.txt`, `.rst`, `.png`, `.svg`,
+`.pdf`, …) are ignored — a data file is data wherever it lives (`docs/…/rows.csv` still denies). The policy never deletes, excludes or rewrites a test; the full list stays in
+the suite and approved skips are never counted as executed evidence.
