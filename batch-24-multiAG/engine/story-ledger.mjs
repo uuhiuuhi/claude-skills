@@ -60,7 +60,31 @@ export function readStorySignals(text) {
   // File List 절의 백틱 경로(규칙 5 재료) — 경로형(슬래시 포함)만
   const fileSection = /### File List\n([\s\S]*?)(?=\n#{2,3} )/.exec(text)?.[1] ?? ''
   const files = [...fileSection.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]).filter((p) => p.includes('/'))
-  return { openDecision, openDecisions, openPatches, banPresent, unfinishedTasks, files, humanGateTasks, humanGateLines, blockedOnHuman }
+  // 리뷰 상한(👤 2026-09-07 「2 예」) 재료 — 엔진이 남기는 Codex 교차리뷰 헤딩을 센다.
+  //   codexReviewsSinceReplan = **마지막 replan 표식 뒤**(`### Replan <날짜>` · `### 회수 라운드 <날짜>` — replan 프롬프트가 남기고
+  //     사람이 연 회수 라운드도 같은 표식) — 한 번 replan 이 돌면 다시 상한만큼 리뷰할 수 있다.
+  //   codexReviewsTotal = 마지막 `REVIEW-CAP-RESET:`(0열 · 사람이 풀 때 적는 줄) 뒤의 전체 — 편성기의 「자율 한계」 재료(Sol-high 16차 H2:
+  //     replan 이 표식을 남기며 카운터를 되돌리므로 since 만 보면 replan→dev→review 가 사람 게이트 없이 무한히 돈다).
+  // 펜스(```/~~~) 안의 줄은 무시한다(Sol-high 16차 M3 — 인용 예시가 카운터를 되돌리지 않게). 인용(> )은 0열이 아니라 원래 안 잡힌다.
+  const { codexReviewsSinceReplan, codexReviewsTotal } = countCodexReviews(text)
+  return { openDecision, openDecisions, openPatches, banPresent, unfinishedTasks, files, humanGateTasks, humanGateLines, blockedOnHuman, codexReviewsSinceReplan, codexReviewsTotal }
+}
+
+/** Codex 교차리뷰 헤딩 계수 — 줄 단위 · 펜스 인식 · CRLF 무관. */
+export function countCodexReviews(text) {
+  let inFence = false, lastReplan = -1, lastReset = -1
+  const codex = []
+  String(text ?? '').split(/\r?\n/).forEach((line, i) => {
+    if (/^ {0,3}(```|~~~)/.test(line)) { inFence = !inFence; return }
+    if (inFence) return
+    if (/^### (Replan|회수 라운드)(?=\s|$)/.test(line)) lastReplan = i
+    else if (/^REVIEW-CAP-RESET:/.test(line)) lastReset = i
+    else if (/^### Review Findings — Codex 교차리뷰/.test(line)) codex.push(i)
+  })
+  return {
+    codexReviewsSinceReplan: codex.filter((i) => i > lastReplan && i > lastReset).length,
+    codexReviewsTotal: codex.filter((i) => i > lastReset).length,
+  }
 }
 
 /** sprint-status.yaml → [{key, status, epic}] (스토리 키 행만 — 주석·벌크 무시) */

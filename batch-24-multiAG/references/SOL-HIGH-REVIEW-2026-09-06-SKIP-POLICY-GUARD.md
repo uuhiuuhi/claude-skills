@@ -937,3 +937,69 @@ pinned tooling `bef98b22` 의 첫 실슬롯(18:39 KST · 배치 「2-4·2-25 마
 > - Three `node --check` commands and scoped `git diff --check`: passed; CRLF warnings only.
 > - `node --test batch-24-multiAG/engine/worktree-refresh.test.mjs`: 4/28 runnable; 24 EPERM-blocked.
 
+
+
+## 16차 · 17차 — 2026-09-07 아침: 한도 강등 정책 · 스토리당 codex 리뷰 상한 (👤 「1 추천대로 · 2 예」)
+
+### 배경
+
+지난밤 슬롯 3건이 exit 5 `routing-blocked: no eligible model`(fable·opus 동시 한도)로 섰고, 2-22 는 같은 코드에 codex 리뷰가 두 번(회당 25~30만 토큰) 들어갔다. 👤 결정 = ① 사용량 한도 때 자동 강등은 **회수 dev 만**(opus→sonnet) 허용, 마감 재검수(review)는 강등 금지 ② 스토리당 codex 리뷰 2회 상한 · 3회째는 replan 이 먼저 원인을 바꾼다.
+
+### 수정(정본 · 9파일)
+
+- `runtime/model-policy.mjs` — `limitRelief`(dev 후보에 sonnet 추가 · 하한 1 · review 하한 불변) · `limitDowngradeMode({stage, batchKind, policy})` → `block|relax|floor`(기본 `{ review:false, dev:{ recovery:true, new:false } }` · 설정 키 `modelPolicy.limitDowngrade`).
+- `runtime/stage-router.mjs` — `choose({…, limitRelief})` 전달.
+- `runtime/auto-story-pipeline.mjs` — `--batch-kind` argv · 라우팅 경로: `limit` 기록 뒤 `block` 이면 `exit-info{code:5,kind:limit}` + exit 5(날씨) · `relax` 면 이후 choose 하한 완화 · 레거시 경로: `block` 은 사다리 생략, `floor` 는 sonnet 제외, dev 한도 전환은 claude 안에서만 · 경계 프로브도 같은 모드.
+- `run-night.mjs` — `batchKindOf(batch)`(batch.kind 우선 · 라벨 회수/마감) · 병렬·순차 argv 둘 다 `--batch-kind`.
+- `story-ledger.mjs` — `countCodexReviews(text)`: 줄 단위 · 펜스 인식 · `codexReviewsSinceReplan`(마지막 `### Replan`/`### 회수 라운드` 뒤) · `codexReviewsTotal`(마지막 `REVIEW-CAP-RESET:` 뒤).
+- `plan-queue.mjs` — `autonomy.maxReviewRoundsPerStory`(기본 2): review 편성인데 since ≥ 상한이면 replan 선행(마감 재검수는 replan→dev→review) · 총량 ≥ 상한×(maxReplansPerStory+1)(기본 6)이면 「자율 한계」 사람 질문(해제 = `REVIEW-CAP-RESET:` 줄).
+- 테스트 11건(model-routing 4 · autonomy 7) · 초점 스위트 172/172 · `references/MODEL-ROUTING.md` 두 절 추가.
+
+### 결과 (gpt-5.6-sol · high)
+
+**16차: Release blocker: YES.** H1 — 레거시 경로·경계 프로브가 모드를 무시하고 `fable,opus,sonnet` 전체 사다리(+dev 의 Codex 교차)를 탔다 → `nextWorkerSpec(…, limitMode)`: dev 한도 전환은 claude 만 · `floor` 는 sonnet 제외 · 프로브 동일. H2 — replan 표식이 since-카운터를 되돌리고 스토리 커밋이 진전으로 잡혀 replan→dev→review 가 사람 게이트 없이 무한 → 총량 상한(2×3=6 · dev-status 게이트와 같은 잣대) 사람 질문 + `REVIEW-CAP-RESET:` 해제. M3 — 펜스 안 헤딩 오인식 → 줄 단위 펜스 인식 계수.
+
+> ## Decision
+>
+> **Release blocker: yes.**
+>
+> ## Findings
+>
+> - **[HIGH] Legacy routing does not enforce `floor`.** Every non-`block` limit—including new/closeout dev and planning stages—still calls the unrestricted `fable,opus,sonnet` ladder; recovery dev can additionally cross to Codex when that role is enabled. The startup probe also downgrades without consulting `batchKind`. This violates both “only recovery dev may reach Sonnet” and the Claude implementation boundary. `batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs:1256`, `:1299-1302`, `:1718-1725`.
+> - **[HIGH] Review-cap replans can evade `maxReplansPerStory` indefinitely.** The injected replan writes a marker that immediately rearms the review counter, while any story-file commit counts as progress and makes `replansOf` return zero. Thus repeated replan→dev→review cycles can continue across days without reaching the human “자율 한계” gate even when no code-level approach improves. `batch-24-multiAG/engine/plan-queue.mjs:199`, `:249-250`; `batch-24-multiAG/engine/story-ledger.mjs:66-67`.
+> - **[MEDIUM] Raw-text heading matching is fence-blind.** A column-zero `### Replan` inside a fenced block falsely resets the count, and a fenced Codex heading falsely consumes it. Blockquoted headings are correctly ignored; CRLF works because `\r` satisfies `\s`; `bmad-code-review` headings are intentionally excluded. `batch-24-multiAG/engine/story-ledger.mjs:66-67`.
+>
+> ## Residual risks
+>
+> - Routed review-limit exit is otherwise safe: health is recorded before exit, failed review state is not marked done, worktrees are archived/cleaned, and untouched exit-5 work is refunded. The 15-minute shared cooldown may defer intervening slots but does not permanently exclude the story. `batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs:1410-1419`.
+> - `limitRelief` is local to one `runRoutedStage(stage, story)` call and cannot leak to reviews or another story; routed dev candidates remain Claude-only. `batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs:1365-1377`; `batch-24-multiAG/engine/runtime/model-policy.mjs:20`.
+> - Closeout `replan,dev,review`, kind propagation, and closeout-dev→new policy mapping are runner-compatible. Spend/auth behavior is unchanged; the legacy defect concerns limit handling.
+>
+> ## Commands you ran
+>
+> - `git status --short`, `git diff --stat`, `git diff`, and `git diff --check` scoped to `batch-24-multiAG/`.
+> - Targeted `rg`/line-numbered source inspection; `node --check` on changed runtime modules.
+> - Focused tests were attempted: 24/51 passed and 27 were blocked solely by sandbox `EPERM` on temporary-directory creation, so the claimed 170/170 could not be independently reproduced here.
+
+**17차: Release blocker: No.** H1·H2·M3 해소 확인. 잔여 = 닫히지 않은 펜스는 이후 카운터를 전부 삼킨다(마크다운 의미와 일치 · 경고는 후속) · Claude 한도→Codex dev 폴백 상실은 「구현은 Claude」 규칙상 의도된 것.
+
+> ## Decision
+>
+> **Release blocker: No.** Round-16 findings are remediated.
+>
+> ## Findings
+>
+> - H1 verified: limited dev retries are Claude-only; `floor` excludes Sonnet, while auth crossover remains unchanged. Subsequent review separation is enforced in legacy and routed paths (`engine/runtime/auto-story-pipeline.mjs:1268`, `:1284`, `:1303`, `:1316`; `engine/runtime/model-policy.mjs:42`). Losing Claude-limit→Codex-dev fallback is intentional and acceptable under the operator rule; exhaustion now waits/exits 5.
+> - H2 verified: the total gate exits before cap prepend/streak handling without mutating replan state, so neither mechanism can bypass it (`engine/plan-queue.mjs:252`, `:254`, `:257`, `:265`). Legacy `bmad-code-review` headings remain intentionally uncounted because only the Codex heading matches (`engine/story-ledger.mjs:82`).
+> - M3 verified. No additional defect found in this diff.
+>
+> ## Residual risks
+>
+> - An unclosed fence suppresses all later counters (`engine/story-ledger.mjs:78`). This matches Markdown semantics and is preferable to resetting at H2/H3, which would count headings genuinely inside fences. A separate malformed-fence warning could harden this later.
+> - If review-total and unproductive/replan limits are both exhausted, resetting the review cap may reveal the independent streak gate next; this is conservative, not a bypass.
+>
+> ## Commands you ran
+>
+> - `git status --short -- batch-24-multiAG`; `git diff --stat`; scoped `git diff`
+> - `node --test .../autonomy.test.mjs .../model-routing.test.mjs` — 25 passed; 28 could not run because sandbox denied `mkdtemp` with `EPERM`; judged remaining behavior from source.
+> - `node --check` on all changed `.mjs` sources; `git diff --check -- batch-24-multiAG` — passed.

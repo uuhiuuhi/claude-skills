@@ -87,7 +87,7 @@ import { assertSafeModel, assertSafePath, normalizeCommand, spawnSafe } from "./
 import { safeGitPush } from "./push-guard.mjs";
 import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes } from "./completion-rules.mjs";
 import { StageRouter, preferredDevProvider } from './stage-router.mjs';
-import { MODEL_CATALOG, failureKind, providerOf } from './model-policy.mjs';
+import { MODEL_CATALOG, failureKind, providerOf, limitDowngradeMode } from './model-policy.mjs';
 import { storyRisk, storyDifficulty } from '../assign.mjs';
 import { readEvidenceFor } from './providers/codex.mjs';
 import { deepRedact } from './providers/redact.mjs';
@@ -142,6 +142,8 @@ const models = {
 };
 const probeModel = opt("probe-model", process.env.PROBE_MODEL || "");
 const routingPath = opt('routing-config', '');
+// 러너가 넘기는 배치 종류(new|recovery|closeout) — 한도 강등 정책의 재료(👤 2026-09-07). 없으면 new(가장 보수적).
+const batchKind = ['new', 'recovery', 'closeout'].includes(opt('batch-kind', '')) ? opt('batch-kind', '') : 'new';
 const routingConfig = routingPath ? JSON.parse(readFileSync(routingPath, 'utf8')) : {};
 const routingEnabled = routingConfig.modelPolicy?.enabled === true;
 const modelStateDir = opt('model-state-dir', process.env.AUTO_BATCH_STATE_DIR || '');
@@ -1255,15 +1257,19 @@ const MODEL_LADDER = (process.env.AUTO_MODEL_LADDER || "fable,opus,sonnet")
   .split(",").map((s) => s.trim()).filter(Boolean);
 // avoid = 교차검증 회피 대상(리뷰가 dev 와 같은 모델로 떨어지지 않게 건너뛴다 — 👤 2026-08-28:
 // 같은 모델의 자기 검증은 같은 맹점을 공유한다).
-function nextModelDown(model, avoid) {
-  const r = nextWorkerDown({ current: model, avoid, ladder: MODEL_LADDER, availability: {}, allowedProviders: ["claude"] });
+function nextModelDown(model, avoid, ladder = MODEL_LADDER) {
+  const r = nextWorkerDown({ current: model, avoid, ladder, availability: {}, allowedProviders: ["claude"] });
   return r ? formatModelSpec(r.next) : null;
 }
 /** v3 — 프로바이더까지 포함한 사다리. 반환 { spec, switched } 또는 null. 전환 횟수는 **스토리당** 1회(F33). */
-function nextWorkerSpec(stage, story, avoid) {
-  const allowed = allowedProvidersFor(stage);
+// limitMode(👤 2026-09-07 · Sol-high 16차 H1): 한도 사다리는 정책 모드를 따른다 — 'floor' 는 sonnet 을 빼고(fable→opus 만),
+// 'relax'(회수 dev)만 sonnet 까지. dev 의 한도 전환은 어떤 모드든 claude 안에서만이다(구현은 Claude 경계 · 라우팅 경로와 같은 불변식).
+// null(한도가 아닌 사유 · 예: codex 인증 불가)이면 종전 그대로.
+function nextWorkerSpec(stage, story, avoid, limitMode = null) {
+  const allowed = limitMode && stage === "dev" ? ["claude"] : allowedProvidersFor(stage);
+  const ladder = limitMode === "floor" ? MODEL_LADDER.filter((m) => m !== "sonnet") : MODEL_LADDER;
   const availability = allowed.includes("codex") ? providerAvailability() : {};
-  const r = nextWorkerDown({ current: models[stage], avoid, ladder: MODEL_LADDER, availability, allowedProviders: allowed, switchesUsed: switchesUsed[story] ?? 0, maxSwitches: 1 });
+  const r = nextWorkerDown({ current: models[stage], avoid, ladder, availability, allowedProviders: allowed, switchesUsed: switchesUsed[story] ?? 0, maxSwitches: 1 });
   if (!r) return null;
   if (r.switched) switchesUsed[story] = (switchesUsed[story] ?? 0) + 1;
   return { spec: formatModelSpec(r.next), switched: r.switched };
@@ -1294,7 +1300,10 @@ function runStage(stage, story, variant = null) {
     const avoid = stage === "review" && stages.includes("dev") ? models.dev : null;
     // (U8-b) spend 는 사다리를 타지 않는다 — 계정 전체 지갑이라 어떤 모델로 바꿔도 같다.
     if (r === "limit") {
-      const down = nextWorkerSpec(stage, story, avoid);
+      // 👤 2026-09-07 「1 추천대로」: 한도 강등은 정책이 정한다 — review 는 block(사다리 없이 리셋 대기), 회수 dev 만 relax.
+      const limitMode = limitDowngradeMode({ stage, batchKind, policy: routingConfig.modelPolicy?.limitDowngrade });
+      if (limitMode === "block") note(`⏸ [${story}] ${stage}: ${shownModel(models[stage])} 한도 — 강등 금지 정책(${stage}·${batchKind}) · 사다리 없이 리셋 대기`);
+      const down = limitMode === "block" ? null : nextWorkerSpec(stage, story, avoid, limitMode);
       if (down) {
         note(`↘ [${story}] ${stage}: ${shownModel(models[stage])} 한도 — ${shownModel(down.spec)} 로 자동 전환(${down.switched ? "프로바이더 전환 · 스토리당 1회" : "품질 사다리 차순위"} · 대기 없음)`);
         push("MODEL FALLBACK", `[${story}] ${stage} — ${shownModel(models[stage])} 한도로 ${shownModel(down.spec)} 전환(자동)`);
@@ -1358,6 +1367,7 @@ function runRoutedStage(stage, story, variant) {
   const router = new StageRouter({ stateDir: modelStateDir, providers, exhausted: routingConfig.exhaustedModels ?? [],
     claudeLadder: process.env.AUTO_MODEL_LADDER ? MODEL_LADDER : null });
   const attempted = [];
+  let limitRelief = false; // 회수 dev 가 한도를 만나면 true — choose 의 품질 하한이 sonnet 까지 내려간다
   const avoid = stage === 'review' ? (knownDevModel(story) || (stages.includes('dev') ? models.dev : '')) : '';
   if (stage === 'review' && !avoid && !dryRun) {
     note(`⏸ [${story}] review: 실제 구현자 모델 기록이 없어 교차 제공자 리뷰를 증명할 수 없다`);
@@ -1368,7 +1378,7 @@ function runRoutedStage(stage, story, variant) {
   let preferred = flag('policy-assigned') ? models[stage] :
     stage === 'dev' && profile.risk >= 4 ? 'fable' : ['create', 'mockup', 'replan'].includes(stage) ? (models[stage] || 'fable') : '';
   for (;;) {
-    const selected = router.choose({ role: stage, ...profile, preferred, preferProvider, avoid, attempted });
+    const selected = router.choose({ role: stage, ...profile, preferred, preferProvider, avoid, attempted, limitRelief });
     if (!selected) {
       note(`⏸ [${story}] ${stage}: 품질·교차검증 기준을 만족하는 가용 모델 없음 — 대기 점유 없이 이 작업 보류`);
       writeExitInfo({ code: 5, kind: 'routing-blocked', story, stage, models: attempted, why: 'no eligible model; shared cooldown applies' });
@@ -1403,6 +1413,20 @@ function runRoutedStage(stage, story, variant) {
     }
     router.record(selected.model, result, { role: stage, story, ...lastRoutingFailure });
     attempted.push(selected.model);
+    if (result === 'limit') {
+      // 👤 2026-09-07 「1 추천대로」: 마감 재검수(review)는 한도에 다른 모델을 고르지 않는다(리셋 대기 · exit 5 = 날씨).
+      // 회수 dev 는 품질 하한을 sonnet 까지 내려 계속한다(relax). 그 밖(신규 dev · create/replan/mockup)은 종전 하한 안에서만.
+      const mode = limitDowngradeMode({ stage, batchKind, policy: routingConfig.modelPolicy?.limitDowngrade });
+      if (mode === 'block') {
+        note(`⏸ [${story}] ${stage}: ${selected.model} 사용량 한도 — 강등 금지 정책(${stage}·${batchKind}) · 다른 모델을 고르지 않고 리셋 대기`);
+        writeExitInfo({ code: 5, kind: 'limit', provider: selected.provider, story, stage, why: `한도 — 강등 금지(${stage}·${batchKind})` });
+        process.exit(5);
+      }
+      if (mode === 'relax' && !limitRelief) {
+        limitRelief = true;
+        note(`↘ [${story}] ${stage}: ${selected.model} 사용량 한도 — 회수 dev 강등 허용(품질 하한 → sonnet · modelPolicy.limitDowngrade)`);
+      }
+    }
     // Keep Fable → Opus for planning/high-risk dev, bounded by the role's quality floor.
     preferred = selected.model === 'fable' ? 'opus' : '';
   }
@@ -1697,7 +1721,10 @@ for (const story of stories) {
       // (U8-b) spend 는 여기서도 사다리를 안 탄다 — 아래 handleFailure 가 즉시 안내하고 멈춘다.
       if (p === "limit") {
         // v3: dev 가 codex 스펙이면 프로브는 다른 claude 단계 모델을 찔렀다 — 그 경우 강등 대상은 dev 가 아니다(그대로 대기 경로).
-        const down = parseModelSpec(models.dev).provider === "claude" ? nextModelDown(models.dev, null) : null;
+        // 프로브 강등도 같은 정책이다(Sol-high 16차 H1) — 회수 dev 만 sonnet 까지, 그 외는 fable→opus 만.
+        const probeMode = limitDowngradeMode({ stage: "dev", batchKind, policy: routingConfig.modelPolicy?.limitDowngrade });
+        const probeLadder = probeMode === "relax" ? MODEL_LADDER : MODEL_LADDER.filter((m) => m !== "sonnet");
+        const down = parseModelSpec(models.dev).provider === "claude" ? nextModelDown(models.dev, null, probeLadder) : null;
         if (down) {
           note(`↘ [${story}] 경계 프로브 한도 — dev 모델 사다리 강등 ${shownModel(models.dev)} → ${shownModel(down)} (대기 없음)`);
           push("MODEL FALLBACK", `[${story}] 경계 프로브 — dev ${shownModel(models.dev)} 한도로 ${shownModel(down)} 전환(자동)`);

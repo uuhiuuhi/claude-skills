@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { StageRouter } from './runtime/stage-router.mjs';
-import { failureKind, selectModel, MODEL_CATALOG } from './runtime/model-policy.mjs';
+import { failureKind, limitDowngradeMode, selectModel, MODEL_CATALOG } from './runtime/model-policy.mjs';
 import { recordModelEvent, readModelHealth } from './runtime/model-health.mjs';
 import { assignWorkers } from './assign.mjs';
 import { requestPlan } from './orchestrate.mjs';
@@ -136,4 +136,54 @@ test('failure classification separates model errors, quotas, provider spending, 
   for (const [text, expected] of [['API Error: 401 unauthorized', 'auth'], ['spending limit reached', 'spend'],
     ['usage limit reached', 'limit'], ['429 too many requests', 'limit'], ['model fable not found', 'unavailable'],
     ['HTTP 404 backend-api/codex/responses', 'transient'], ['503 overloaded', 'transient']]) assert.equal(failureKind(text), expected);
+});
+
+test('limit downgrade policy (👤 2026-09-07): review never re-chooses on a usage limit; only recovery dev may relax to sonnet', () => {
+  assert.equal(limitDowngradeMode({ stage: 'review', batchKind: 'closeout' }), 'block');
+  assert.equal(limitDowngradeMode({ stage: 'review', batchKind: 'new' }), 'block');
+  assert.equal(limitDowngradeMode({ stage: 'dev', batchKind: 'recovery' }), 'relax');
+  assert.equal(limitDowngradeMode({ stage: 'dev', batchKind: 'new' }), 'floor');
+  assert.equal(limitDowngradeMode({ stage: 'dev', batchKind: 'closeout' }), 'floor');
+  for (const stage of ['create', 'replan', 'mockup']) assert.equal(limitDowngradeMode({ stage, batchKind: 'recovery' }), 'floor');
+  // project config can widen or narrow the policy; unknown shapes fall back to the default
+  assert.equal(limitDowngradeMode({ stage: 'review', policy: { review: true } }), 'floor');
+  assert.equal(limitDowngradeMode({ stage: 'dev', batchKind: 'new', policy: { dev: { new: true } } }), 'relax');
+  assert.equal(limitDowngradeMode({ stage: 'dev', batchKind: 'recovery', policy: { dev: { recovery: false } } }), 'floor');
+  assert.equal(limitDowngradeMode({ stage: 'dev', batchKind: 'recovery', policy: 'garbage' }), 'relax');
+});
+
+test('limitRelief lowers the dev floor to sonnet but never the review floor', () => {
+  const exclude = ['fable', 'opus'];
+  assert.equal(selectModel({ role: 'dev', risk: 7, difficulty: 8, providers, exclude }), null);
+  assert.equal(selectModel({ role: 'dev', risk: 7, difficulty: 8, providers, exclude, limitRelief: true }).model, 'sonnet');
+  assert.equal(selectModel({ role: 'dev', risk: 0, difficulty: 6, providers, exclude, limitRelief: true }).model, 'sonnet');
+  // review: high-risk floor stays tier 3, mid floor stays tier 2 — relief is ignored for the reviewer
+  assert.equal(selectModel({ role: 'review', risk: 7, avoid: 'opus', providers, exclude: ['codex:gpt-6-astra'], limitRelief: true }), null);
+  assert.equal(selectModel({ role: 'review', risk: 0, difficulty: 6, avoid: 'opus', providers, exclude: ['codex:gpt-5.6-sol', 'codex:gpt-6-astra'], limitRelief: true }), null);
+  assert.equal(selectModel({ role: 'replan', risk: 7, providers, exclude, limitRelief: true }), null);
+});
+
+test('StageRouter.choose honours limitRelief on top of shared quota state', () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'routing-relief-'));
+  const router = new StageRouter({ stateDir, providers });
+  router.record('fable', 'limit', { role: 'dev' });
+  router.record('opus', 'limit', { role: 'dev' });
+  assert.equal(router.choose({ role: 'dev', risk: 7, difficulty: 8 }), null);
+  assert.equal(router.choose({ role: 'dev', risk: 7, difficulty: 8, limitRelief: true }).model, 'sonnet');
+  assert.equal(router.choose({ role: 'review', risk: 7, avoid: 'opus', attempted: ['codex:gpt-6-astra'], limitRelief: true }), null);
+});
+
+test('pipeline/runner source contract: the runner passes --batch-kind on both argv builders and the pipeline gates limit downgrades by it', () => {
+  const runner = readFileSync(new URL('./run-night.mjs', import.meta.url), 'utf8');
+  assert.equal((runner.match(/'--batch-kind'/g) || []).length, 2, 'parallel + sequential builders');
+  const pipe = readFileSync(new URL('./runtime/auto-story-pipeline.mjs', import.meta.url), 'utf8');
+  assert.match(pipe, /opt\('batch-kind'/);
+  assert.equal((pipe.match(/limitDowngradeMode\(\{ stage, batchKind/g) || []).length, 2, 'legacy runStage + routed stage');
+  assert.match(pipe, /if \(mode === 'block'\) \{[\s\S]{0,400}process\.exit\(5\)/);
+  // Sol-high 16 H1: legacy ladder and the boundary probe honour the same mode (floor = no sonnet · dev limit = claude only)
+  assert.match(pipe, /nextWorkerSpec\(stage, story, avoid, limitMode\)/);
+  assert.match(pipe, /const allowed = limitMode && stage === "dev" \? \["claude"\] : allowedProvidersFor\(stage\);/);
+  assert.match(pipe, /const ladder = limitMode === "floor" \? MODEL_LADDER\.filter\(\(m\) => m !== "sonnet"\) : MODEL_LADDER;/);
+  assert.match(pipe, /const probeMode = limitDowngradeMode\(\{ stage: "dev", batchKind/);
+  assert.match(pipe, /nextModelDown\(models\.dev, null, probeLadder\)/);
 });

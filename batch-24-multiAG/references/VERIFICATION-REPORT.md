@@ -121,3 +121,10 @@ Claude `C:/Users/user/.claude/skills/batch-24-multiAG`와 Codex `C:/Users/user/.
 - **결함 ① 완료 기록 문자열 치환**(`promoteStory` → 부분 문자열 replace) — finding 본문의 같은 문구에 걸려 줄을 두 동강. `appendCompletionNotes`(줄 단위)로 교체. 2-22 는 잘린 꼬리 복원 + 오삽입 블록 14줄 제거.
 - **결함 ② 순차 STOP 잔여물** — 본 트리 워커의 미완 변경이 refresh 를 밤새 막음(8슬롯). `preserveStopLeftovers`(증거 보관 뒤 auto/* 에 STOP 표식 커밋 · 금지 경로/시크릿은 커밋 안 함)로 러너가 스스로 마무리.
 - Sol-high 14차 기록: `SOL-HIGH-REVIEW-2026-09-06-SKIP-POLICY-GUARD.md`.
+
+
+## 후속 5 — 2026-09-07 아침: 한도 강등 정책 · codex 리뷰 상한 (👤 「1 추천대로 · 2 예」)
+
+- **정책 ①** `modelPolicy.limitDowngrade` — review 는 한도에 다른 모델을 고르지 않고 exit 5(날씨) · 회수 dev 만 sonnet 까지 · 신규 dev 는 fable→opus 만. 러너가 `--batch-kind` 를 넘긴다. 레거시 사다리·경계 프로브도 같은 모드(Sol 16 H1).
+- **정책 ②** `autonomy.maxReviewRoundsPerStory`(2) — 마지막 replan 표식 뒤 codex 리뷰가 2회면 다음 리뷰 전에 replan 선행(마감 재검수 = replan→dev→review). 총량 6회(2×3)면 「자율 한계」 사람 질문 · `REVIEW-CAP-RESET:` 줄로 해제(Sol 16 H2). 펜스 안 헤딩 무시(Sol 16 M3).
+- 테스트 +11 · 초점 172/172 · 전체 스위트 결과는 커밋 메시지에 기재. Sol-high 16·17차 기록: `SOL-HIGH-REVIEW-2026-09-06-SKIP-POLICY-GUARD.md`.

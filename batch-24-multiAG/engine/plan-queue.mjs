@@ -97,7 +97,7 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   // guarded(기본 · 종전) 는 아래 규칙 1~10 그대로다. full 은 「되돌릴 수 없는 실행」만 사람 몫으로 남기고
   // 결정·회수 라운드 개방·재투입 금지·무진전·체인·상한·목업 승인을 전부 편성 안에서 푼다(replan/mockup 단계).
   const AUTO = cfg.autonomy?.mode === 'full'
-  const autoCfg = { maxReplansPerStory: 2, epicScope: 'all', mockups: 'ai-draft', ...(cfg.autonomy ?? {}) }
+  const autoCfg = { maxReplansPerStory: 2, maxReviewRoundsPerStory: 2, epicScope: 'all', mockups: 'ai-draft', ...(cfg.autonomy ?? {}) }
   const humanGates = [] // { key, type: 'question'|'gate'|'post-hoc', text } — 「내가 할 일 뭐야」 재료
   // 상한은 페이스가 아니라 폭주 방지 백스톱이다 — 몫을 다 했다고 남은 슬롯이 쉬면 안 된다
   // (실사고: 상한 12 시절, 오전에 12건 소진 후 남은 슬롯이 통째로 놀았다). 실질 제동은
@@ -240,16 +240,34 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
       if (s.banPresent && s.unfinishedTasks === 0) why.push('재투입 금지 표기는 조언으로만 봄') // 미완 기계 Task 가 있으면 답은 replan 이 아니라 dev 다(리뷰 #1 · 무한 replan 방지)
       if (why.length) { stages = ['replan', ...stages]; notes.push(...why) }
     }
+    let replanHint = null
+    // 리뷰 비용 상한(👤 2026-09-07 「2 예」): 마지막 replan 뒤 codex 리뷰가 상한(기본 2)에 닿았으면 다음 리뷰 전에 replan 이
+    // 먼저 원인을 바꾼다 — 같은 코드에 세 번째 리뷰(회당 25~30만 토큰)를 붓지 않는다. 마감 재검수는 replan→dev→review 로 바꿔
+    // replan 이 연 Task 를 dev 가 실제로 반영한 뒤에만 리뷰한다. replan 은 표식(### Replan/회수 라운드)을 남겨 카운터를 다시 연다.
+    const reviewCap = Number(autoCfg.maxReviewRoundsPerStory)
+    const reviews = Number(s.codexReviewsSinceReplan ?? 0)
+    // 총량 상한(Sol-high 16차 H2): replan 은 표식으로 since-카운터를 되돌리므로 총량이 「리뷰 상한 × (replan 상한 + 1)」(기본 2×3 = 6 —
+    // dev-status 리뷰 반복 게이트 6 과 같은 잣대)에 닿으면 그 스토리만 「자율 한계」로 사람 질문에 올린다. 사람이 풀 때는 스토리 파일
+    // 0열에 `REVIEW-CAP-RESET: <날짜> — <사유>` 한 줄을 적는다(그 뒤부터 다시 센다).
+    const reviewGate = reviewCap > 0 ? reviewCap * (Number(autoCfg.maxReplansPerStory) + 1) : 0
+    const reviewsTotal = Number(s.codexReviewsTotal ?? 0)
+    if (reviewGate > 0 && stages.includes('review') && reviewsTotal >= reviewGate) {
+      return gateOut(r.key, 'question', '자율 한계 — codex 리뷰 ' + reviewsTotal + '회(총량 상한 ' + reviewGate + ' = 리뷰 ' + reviewCap + '회 × replan ' + (Number(autoCfg.maxReplansPerStory) + 1) + '회) · 원인이 코드 밖일 수 있다 — 사람 판단 후 스토리 파일에 `REVIEW-CAP-RESET: <날짜> — <사유>` 줄로 해제')
+    }
+    if (reviewCap > 0 && stages.includes('review') && !stages.includes('replan') && reviews >= reviewCap) {
+      stages = ['replan', ...(kind === 'closeout' ? ['dev', 'review'] : stages)]
+      replanHint = 'codex 리뷰 ' + reviews + '회 소진(상한 ' + reviewCap + ') — 다음 리뷰 전에 접근을 바꿔라(남은 findings 의 원인 재진단 · 과제 재작성/분할 · 다른 구현 경로)'
+      notes.push('codex 리뷰 ' + reviews + '회 → replan 선행(상한 ' + reviewCap + ')')
+    }
     const mp = kind === 'closeout' ? { stage: false } : mockupPlan(section, r.key) // 마감 재검수엔 목업 초안을 붙이지 않는다
     if (mp.block) return exclude(r.key, mp.block), null
     if (mp.stage) { stages = ['mockup', ...stages]; notes.push(mp.note) }
-    let replanHint = null
     if (streak >= 2) {
       if (overLimit()) return gateOut(r.key, 'question', limitWhy())
       // replan 회차(state.replans)는 **러너가 실제로 replan 배치를 돌린 라운드**에만 올린다(리뷰 #2 —
       // 편성 시점에 깎으면 한 번도 안 돌고 「자율 한계」로 빠진다). 편성기는 읽기만 한다.
       if (!stages.includes('replan')) stages = ['replan', ...stages]
-      replanHint = '무진전 편성 ' + streak + '회 — 접근을 바꿔라(과제 재작성·분할·다른 구현 경로)'
+      replanHint = [replanHint, '무진전 편성 ' + streak + '회 — 접근을 바꿔라(과제 재작성·분할·다른 구현 경로)'].filter(Boolean).join(' · ')
       notes.push('무진전 ' + streak + '회 → replan ' + (replansOf(r.key) + 1) + '/' + autoCfg.maxReplansPerStory)
     }
     // 어떤 갈래로든 replan 이 앞섰는데 회차가 상한이면 replan 을 떼고 dev 만 돌린다(리뷰 #1-2 · replan 무한 반복 방지)

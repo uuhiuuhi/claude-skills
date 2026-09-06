@@ -123,6 +123,9 @@ function assertOperationalRuntime() {
 }
 
 const routingFlags = () => CFG.modelPolicy?.enabled ? ['--routing-config', resolve('tools/auto/auto.config.json'), '--model-state-dir', STATE_DIR] : []
+// 배치 종류 — 라벨의 「회수」/「마감」 표기(편성기 kind 와 같은 잣대). 엔진에 --batch-kind 로 넘긴다(한도 강등 정책 · 👤 2026-09-07).
+const batchKindOf = (batch) => batch?.kind && ['new', 'recovery', 'closeout'].includes(batch.kind) ? batch.kind
+  : /회수/.test(batch?.label ?? '') ? 'recovery' : /마감/.test(batch?.label ?? '') ? 'closeout' : 'new'
 
 // ── 다중 프로바이더(2026-09-02) — 설정이 없으면 configured=false 로 종전 동작(Claude 전용 · 엔진 명령줄 무변경) ──
 const PCFG = providerConfig(CFG)
@@ -769,7 +772,7 @@ async function applyOrchestrator(q, outPath) {
     return {
       key,
       epic: Number(String(key).split('-')[0]) || null,
-      kind: /회수/.test(b.label ?? '') ? 'recovery' : /마감/.test(b.label ?? '') ? 'closeout' : 'new',
+      kind: batchKindOf(b),
       force: Boolean(b.force),
       files,
       risk: Math.max(files.length ? 0 : 4, storyRisk({ text, files }).score),
@@ -1321,7 +1324,7 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   const codexOk = await codexAvailable()
   const blocked = [] // exit-info 로 한도·인증이 확인된 프로바이더 — 남은 스토리는 다른 레인으로(08-29 「한도 = 레인 전환 신호」)
   const history = readAssignHistory()
-  const kindOf = /회수/.test(batch.label ?? '') ? 'recovery' : /마감/.test(batch.label ?? '') ? 'closeout' : 'new'
+  const kindOf = batchKindOf(batch)
   const storyInput = (key) => {
     const i = storyList.indexOf(key)
     return { key, kind: kindOf, files: i >= 0 ? (lists[i] ?? []) : [], text: i >= 0 ? (storyText[i] ?? '') : '' }
@@ -1384,6 +1387,7 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
     a.push('--commit') // 브랜치·푸시 없음 — detached HEAD 커밋(엔진 기존 지원 경로). landing 은 아래 직렬.
     a.push(...engineFlagsFromConfig(PCFG)) // 설정 없으면 [] — 종전 명령줄 그대로
     a.push(...routingFlags(), ...(CFG.modelPolicy?.enabled ? ['--policy-assigned'] : []))
+    a.push('--batch-kind', kindOf)
     return a
   }
   const runOne = (wt) => new Promise((done) => {
@@ -1698,6 +1702,7 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     if (dryRun) args.push('--dry-run')
     args.push(...engineFlagsFromConfig(PCFG)) // 설정 없으면 [] — 종전 명령줄 그대로(하위 호환)
     args.push(...routingFlags())
+    args.push('--batch-kind', batchKindOf(batch))
 
     console.log(`\n==== ${label} ====`)
     if (autoPlan) touchLock() // 심박 — 라운드가 아니라 **배치 경계**여야 6h 판정 창과 정합한다

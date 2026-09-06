@@ -10,15 +10,15 @@ export class StageRouter {
     this.claudeLadder = claudeLadder;
     this.now = now;
   }
-  choose({ role, risk, difficulty, preferred = '', avoid = '', attempted = [], preferProvider = 'claude' }) {
+  choose({ role, risk, difficulty, preferred = '', avoid = '', attempted = [], preferProvider = 'claude', limitRelief = false }) {
     const health = readModelHealth(this.stateDir, this.now());
     // BMad planning and mockups currently require the Claude skill adapter.
-    const candidates = modelCandidates({ role, risk, difficulty, preferProvider })
+    const candidates = modelCandidates({ role, risk, difficulty, preferProvider, limitRelief })
       .filter((m) => ['dev', 'review'].includes(role) || providerOf(m) === 'claude');
     return selectModel({ role, risk, difficulty, preferred, avoid, providers: this.providers,
       blocked: (model) => this.exhaustedProviders.includes(providerOf(model)) || health.blocked(model) ||
         (providerOf(model) === 'claude' && this.claudeLadder && !this.claudeLadder.includes(model)),
-      exclude: [...this.exhausted, ...attempted], candidates,
+      exclude: [...this.exhausted, ...attempted], candidates, limitRelief,
       crossProvider: true });
   }
   record(model, kind, extra = {}) {
