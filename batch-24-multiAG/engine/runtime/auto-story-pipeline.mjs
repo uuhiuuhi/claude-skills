@@ -85,7 +85,7 @@ import { buildCodexCommand, runCodexWorker, classifyCodexFailure, codexFailureTe
 import { createGitGuard, findCredentialRemotes, stripRemoteCredentials } from "./providers/git-guard.mjs";
 import { assertSafeModel, assertSafePath, normalizeCommand, spawnSafe } from "./providers/spawn-safe.mjs";
 import { safeGitPush } from "./push-guard.mjs";
-import { newTestsFromDiff, strengthenCompletion } from "./completion-rules.mjs";
+import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes } from "./completion-rules.mjs";
 import { StageRouter, preferredDevProvider } from './stage-router.mjs';
 import { MODEL_CATALOG, canonicalModel, failureKind, providerOf } from './model-policy.mjs';
 import { storyRisk, storyDifficulty } from '../assign.mjs';
@@ -95,6 +95,8 @@ import { parseFileList } from '../runner-rules.mjs';
 import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendDecisionsInbox, countOpenFindings } from "./story-writes.mjs";
 import { detectGates, parseQaChain, classifyQaFailure, repairDecision, testIntegrityFindings, escalateRepairIntroduced, securityTriggers, performanceTriggers, buildVerificationManifest, escalationReport } from "./quality-rules.mjs";
 
+import { fingerprint as qualityFingerprint } from './quality-gates.mjs';
+import { readRecord } from './schema-migration.mjs';
 const SKILL_DIR = dirname(fileURLToPath(import.meta.url));
 const CODEX_REVIEW_SCHEMA = join(SKILL_DIR, "providers", "codex-review.schema.json");
 
@@ -270,7 +272,7 @@ function push(title, body) {
 // ---- (U1) state.json: 완료 단계 기록/skip ----
 function loadState() {
   try {
-    const parsed = JSON.parse(readFileSync(stateFile, "utf8"));
+    const parsed = readRecord(readFileSync(stateFile, "utf8"));
     return parsed && typeof parsed.done === "object" && parsed.done !== null ? parsed : { done: {} };
   } catch {
     return { done: {} }; // 없거나 손상 → 빈 상태(전량 실행)로 안전 폴백
@@ -280,8 +282,17 @@ const state = loadState();
 const key = (story, stage) => `${story}::${stage}`;
 const isDone = (story, stage) => Boolean(state.done[key(story, stage)]);
 function markDone(story, stage) {
+  if (dryRun) return;
   state.done[key(story, stage)] = stamp();
-  if (routingEnabled && stage === 'qa' && !dryRun) {
+  if (!dryRun && stage !== 'qa') {
+    state.workers ??= {};
+    const spec = parseModelSpec(models[stage]);
+    state.workers[key(story, stage)] = { model: models[stage], provider: spec.provider, at: stamp() };
+    if (stage === 'review' && reviewResults[story]) {
+      state.reviews ??= {}; state.reviews[story] = { fingerprint: codeFingerprint(), result: reviewResults[story] };
+    }
+  }
+  if (stage === 'qa' && !dryRun) {
     state.quality ??= {};
     const current = qualityLog[story] ?? {};
     const { diff = '', ...summary } = current;
@@ -290,15 +301,18 @@ function markDone(story, stage) {
       result: deepRedact({ ...summary, testEvidence: newTestsFromDiff(diff) }),
     };
   }
+  state.schema = "batch-24-multiag/state/1";
   writeFileSync(stateFile, JSON.stringify(state, null, 2));
 }
 function invalidate(story, ...downstream) {
+  if (dryRun) return;
   for (const st of downstream) {
     delete state.done[key(story, st)];
-    if (routingEnabled) delete state.workers?.[key(story, st)];
+    delete state.workers?.[key(story, st)];
   }
-  if (routingEnabled && downstream.includes('qa')) delete state.quality?.[story];
-  if (routingEnabled && downstream.includes('review')) delete state.reviews?.[story];
+  if (downstream.includes('qa')) delete state.quality?.[story];
+  if (downstream.includes('review')) delete state.reviews?.[story];
+  state.schema = "batch-24-multiag/state/1";
   writeFileSync(stateFile, JSON.stringify(state, null, 2));
 }
 
@@ -557,19 +571,8 @@ const stashCount = () => git(["stash", "list"]).out.split("\n").filter((l) => l.
 /** 워킹트리 지문 — 수리 워커의 사후조건(코드만 고쳐도 「일했다」 · F31) */
 const treeFingerprint = () => createHash("sha1").update(git(["diff", "HEAD", "--"]).out + "\n" + git(["ls-files", "--others", "--exclude-standard"]).out).digest("hex");
 // Content-based: committing the same code does not invalidate its QA; editing any code does.
-function codeFingerprint() {
-  const result = git(['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
-  if (result.code !== 0) throw new Error('cannot fingerprint code');
-  const paths = [...new Set(result.out.split('\0').filter(Boolean))]
-    .filter((p) => !p.startsWith('_bmad-output/') && !p.startsWith('.claude/')).sort();
-  const hash = createHash('sha256');
-  for (const path of paths) {
-    hash.update(path).update('\0');
-    try { hash.update(readFileSync(resolve(path))); } catch (e) { if (e.code !== 'ENOENT') throw e; hash.update('deleted'); }
-    hash.update('\0');
-  }
-  return hash.digest('hex');
-}
+function codeFingerprint() { return qualityFingerprint(process.cwd()); }
+
 /** (정책 2) 로그·프롬프트에 실리는 모든 명령 출력의 자격증명 **값**을 가린다 — QA·Claude·Codex·repair 공용.
  *  이름(키)은 남긴다(무엇이 새려 했는지는 사람이 알아야 한다). 종전엔 codex 로그에만 걸려 있었다. */
 const scrubLog = (t) => redactSecrets(t);
@@ -711,6 +714,8 @@ function enginePush(label) {
 function commitStory(story, stagesDone) {
   if (!doCommit) return null;
   if (dryRun) { note(`   (dry-run) commit [${story}] paths=${commitPaths.length} push=${doPush}`); return null; }
+  const verified = finalizeManifest(story, null);
+  if (verified?.completion?.verdict !== 'ready' || verified?.quality?.codeFingerprint !== codeFingerprint()) { holdStory(story); process.exit(1); }
   // (#4) 커밋 시점에도 자리를 다시 본다 — 시작 후 위치가 바뀌었으면(워커 조작·외부 개입) 커밋하지 않는다.
   const place = git(["rev-parse", "--abbrev-ref", "HEAD"]).out.trim();
   if (!commitPlaceOk(place)) {
@@ -992,6 +997,11 @@ function prepareWorker(stage, story, variant) {
     models[stage] = formatModelSpec(resolved.spec);
   }
   const spec = resolved.spec;
+  if (!dryRun && role === 'review' && spec.provider === parseModelSpec(knownDevModel(story) || models.dev).provider) {
+    note(`✖ REVIEW STOP — same-provider review forbidden (${spec.provider})`);
+    writeExitInfo({ code: 1, kind: 'review', story, stage, why: 'same-provider-review' });
+    process.exit(1);
+  }
   const storyFile = findStoryFile(story);
   const storyRel = storyFile ? rel(storyFile) : `_bmad-output/implementation-artifacts/${story}.md`;
   const guardCommit = role === "dev" || role === "repair" || role === "replan" || role === "mockup"; // 워커가 HEAD 를 움직이면 안 된다(replan/mockup 도 사후 HEAD·브랜치·stash 검사)
@@ -1001,7 +1011,7 @@ function prepareWorker(stage, story, variant) {
     const transient = [outFile];
     if (role === "review") {
       const d = prepareReviewDiff(story);
-      if (d.empty) {
+      if (d.empty && !dryRun) {
         if (routingEnabled) {
           writeExitInfo({ code: 4, kind: 'review-target-missing', story, stage, why: 'A reviewable diff/baseline is required' });
           note(`✖ [${story}] review 대상 diff/baseline 없음 — 교차 리뷰를 생략하지 않는다`);
@@ -1039,14 +1049,20 @@ function prepareWorker(stage, story, variant) {
       classify: (_text, res) => classifyCodexFailure(codexFailureText(res)),
     };
   }
-  const prompt = role === "repair"
+  let prompt = role === "repair"
     ? codexRepairPrompt({ story, storyFile: storyRel, qaCmd, attempt: variant.attempt, maxAttempts: variant.maxAttempts, failure: variant.failure, integrity: variant.integrity ?? [], guard: GUARD })
     : prompts[stage](story);
   // --settings pipeline-settings.json = nested 인스턴스에만 commit/push/파괴 deny 적용
   // (사람의 settings.json은 deny-free → 대화형 커밋 자유). 엔진 no-commit 가드레일 이중 방어.
-  const built = buildClaudeCommand({ bin: claudeBin, model: spec.model, permMode, settingsPath });
+  const built = buildClaudeCommand({ bin: claudeBin, model: spec.model, permMode, settingsPath, stream: role === "review" });
+  let claudeInputs = null;
+  if (role === "review") {
+    const d = prepareReviewDiff(story);
+    claudeInputs = { storyFile: storyRel, diffFile: rel(d.diffFile), changedFiles: d.files };
+    prompt += "\n리뷰 전 아래 스토리·diff·변경 파일을 실제 Read 도구로 읽고, 열린 지적과 완료 상태를 스토리에 기록하라.\nREVIEW_INPUTS_JSON:" + JSON.stringify([...new Set([storyRel, rel(d.diffFile), ...d.files])]);
+  }
   return {
-    provider: "claude", spec, role, prompt, cmd: built, display: built.display, targetRef: "", guardCommit, transient: [], reviewInputs: null,
+    provider: "claude", spec, role, prompt, cmd: built, display: built.display, targetRef: "", guardCommit, transient: claudeInputs ? [resolve(claudeInputs.diffFile)] : [], reviewInputs: claudeInputs,
     perm: permMode, stageLabel: role === "repair" ? "dev-repair" : stage,
     run: (env) => runClaudeWorker({ cmd: built, prompt, timeoutMs: stageTimeoutMs, env }),
     classify: (text) => classifyFailure(text),
@@ -1177,6 +1193,16 @@ function runClaude(stage, story, variant = null) {
     postOk = true;
   }
 
+  if (code === 0 && w.provider === 'claude' && w.role === 'review') {
+    const required = [...new Set([w.reviewInputs.storyFile, w.reviewInputs.diffFile, ...w.reviewInputs.changedFiles])];
+    const normalizeRead = path => resolve(path).replace(/\\/g, '/').toLowerCase();
+    const readEvidence = required.filter(path => (res.events?.filePaths ?? []).some(read => normalizeRead(read) === normalizeRead(path)));
+    const text = readFileSync(findStoryFile(story), 'utf8');
+    const counts = { patch: countOpenFindings(text, 'Patch'), decision: countOpenFindings(text, 'Decision'), high: (text.match(/^- \[ \].*\[(?:high|critical)\]/gmi) ?? []).length };
+    const verified = required.length > 1 && readEvidence.length === required.length;
+    reviewResults[story] = { provider: 'claude', model: w.spec.model || 'cli-default', result: verified ? counts.patch + counts.decision ? 'findings' : 'clean' : 'not-run(missing read evidence)', counts, readEvidence };
+    if (!verified) note(`[${story}][CLAUDE][REVIEW] 열람 근거 미달 ${readEvidence.length}/${required.length} — 완료 차단`);
+  }
   if (code === 0 && postOk) return "ok";
   if (code === 0 && !postOk) {
     // (U2) no-op 차단: CLI가 오류를 삼키고 exit 0 — 산출물 무변경이면 성공 아님
@@ -1373,7 +1399,8 @@ function runRoutedStage(stage, story, variant) {
           state.reviews ??= {};
           state.reviews[story] = { fingerprint: codeFingerprint(), result: reviewResults[story] };
         }
-        writeFileSync(stateFile, JSON.stringify(state, null, 2));
+        state.schema = "batch-24-multiag/state/1";
+  writeFileSync(stateFile, JSON.stringify(state, null, 2));
       }
       return;
     }
@@ -1401,42 +1428,6 @@ function planCommand(label, cmd) {
   }
 }
 
-function runQaGate(story) {
-  note(`→ [${story}] qa-gate: ${qaCmd}`);
-  if (dryRun) {
-    note(`   (dry-run) skip qa`);
-    return { code: 0, out: "" };
-  }
-  const plan = planCommand("qa 게이트(--qa)", qaCmd);
-  const res = spawnSafe(plan.file, plan.argv, {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    timeout: stageTimeoutMs,
-  });
-  const logFile = resolve(logDir, `${story}-qa.log`);
-  // (정책 2) qa 로그는 stdout/stderr 를 그대로 적었다 — 토큰·URL 자격증명이 출력되면 로그와 repair 프롬프트에 남는다.
-  const out = scrubLog(`${res.stdout || ""}\n${res.stderr || ""}`);
-  writeFileSync(logFile, `# ${qaCmd}\n\n## stdout\n${scrubLog(res.stdout || "")}\n\n## stderr\n${scrubLog(res.stderr || "")}\n`);
-  note(`   qa exit=${res.status} log=${logFile}`);
-  return { code: res.status ?? 1, out };
-}
-
-/** (#10) 조건부 게이트 실제 실행 — 트리거가 켜지고 package.json 에 대응 스크립트가 있으면 **돌린다**.
- *  종전에는 「있으면 사람 확인」 로그만 남기고 매니페스트에 not-run 을 적었다(탐지만 하고 실행 안 함).
- *  반환 { script, cmd, exit, result } · 실패는 품질 루프의 RED 로 전파된다(수리 루프 대상). */
-function runConditionalGate(story, name, gate) {
-  note(`→ [${story}] ${name}-gate: ${gate.cmd}`);
-  if (dryRun) { note(`   (dry-run) skip ${name}`); return { script: gate.script, cmd: gate.cmd, exit: 0, result: "skipped(dry-run)" }; }
-  const plan = planCommand(`${name} 게이트(package.json scripts.${gate.script})`, gate.cmd);
-  const res = spawnSafe(plan.file, plan.argv, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: stageTimeoutMs });
-  const logFile = resolve(logDir, `${story}-${name}.log`);
-  const out = scrubLog(`${res.stdout || ""}\n${res.stderr || ""}`);
-  writeFileSync(logFile, `# ${gate.cmd}\n\n## stdout\n${scrubLog(res.stdout || "")}\n\n## stderr\n${scrubLog(res.stderr || "")}\n`);
-  const exit = res.status ?? 1;
-  note(`   ${name} exit=${exit} log=${logFile}`);
-  return { script: gate.script, cmd: gate.cmd, exit, result: exit === 0 ? "pass" : "fail", out, logFile };
-}
-
 // ---- (P4) 품질 루프 — 무결성 검사 → qa 게이트 → (RED 면 예산 안에서 수리 → 재검증) ----
 const pkgScripts = (() => { try { return JSON.parse(readFileSync(resolve("package.json"), "utf8")).scripts ?? {}; } catch { return {}; } })();
 const gates = detectGates(pkgScripts);
@@ -1457,57 +1448,45 @@ function workingTreeChanges() {
   }
   return { changes, diff, files: changes.map((c) => c.path) };
 }
-/** (#10) 트리거된 조건부 게이트를 실제로 실행한다. 실패면 품질 루프가 쓰는 failure 객체를 돌려준다(= RED).
- *  스크립트가 없으면 종전대로 정직하게 기록만 한다(매니페스트 required-missing) — 없는 검사를 통과로 세지 않는다. */
-function runTriggeredGates(story, q) {
-  for (const name of ["security", "performance"]) {
-    const trig = q[name];
-    const gate = gates[name];
-    if (!trig?.required) continue;
-    if (!gate?.available) {
-      note(`[${story}][QUALITY] ${name === "security" ? "보안" : "성능"} 트리거 ${trig.reasons.length}건 — 프로젝트에 대응 스크립트 없음(매니페스트 required-missing · 사람 확인)`);
-      continue;
-    }
-    note(`[${story}][QUALITY] ${name === "security" ? "보안" : "성능"} 트리거 ${trig.reasons.length}건 — 게이트 ${gate.cmd} 실행`);
-    const r = runConditionalGate(story, name, gate);
-    q[name] = { ...trig, script: r.script, exit: r.exit, result: r.result };
-    if (r.exit !== 0) {
-      const c = classifyQaFailure(r.out ?? "");
-      note(`[${story}][QUALITY][FAIL] ${name} 게이트 RED(exit ${r.exit}) — ${gate.cmd}`);
-      return { kind: name, signature: `${name}:${r.script}:${c.signature}`, excerpt: c.excerpt || String(r.out ?? "").slice(-4000) };
-    }
-  }
-  return null;
-}
-
 function runQualityLoop(story) {
+  if (dryRun) { note(`[${story}][QUALITY] dry-run — no commands or manifests`); return; }
   const q = (qualityLog[story] ??= { attempts: 0, signatures: [], integrity: [], qaExit: null, failureKind: "unknown", escalation: null, security: { required: false, reasons: [] }, performance: { required: false, reasons: [] } });
   for (;;) {
-    let integ = [];
+    const integ = [];
     if (!dryRun) {
       const wt = workingTreeChanges();
       q.diff = wt.diff; // 완료 판정기(T2 새 테스트 계수)가 이번 변경분을 본다
-      // 조건부 게이트 트리거는 무결성 검사와 무관하게 본다 — 트리거가 켜지고 스크립트가 있으면 실제로 돌린다(#10).
-      q.security = securityTriggers({ files: wt.files, diff: wt.diff });
-      q.performance = performanceTriggers({ files: wt.files, diff: wt.diff });
-      if (integrityEnabled) {
-        const storyFile = findStoryFile(story);
-        integ = testIntegrityFindings({ changes: wt.changes, diff: wt.diff, storyText: storyFile ? readFileSync(storyFile, "utf8") : "" });
-        // (F5/F32) 수리 라운드가 새로 만든 skip/ts-ignore/eslint-disable/게이트 설정 변경은 경고가 아니라 차단
-        if (q.baselineIntegrity == null) q.baselineIntegrity = integ;
-        else integ = escalateRepairIntroduced(q.baselineIntegrity, integ);
-        q.integrity = integ;
-        for (const f of integ) note(`[${story}][INTEGRITY][${f.level.toUpperCase()}] ${f.rule} ${f.file}${f.line ? ":" + f.line : ""} — ${f.detail}`);
-      }
+
     }
-    const blocks = integ.filter((f) => f.level === "block");
+    let blocks = integ.filter((f) => f.level === "block");
     let failure = null;
     if (blocks.length === 0) {
-      const qa = runQaGate(story);
-      q.qaExit = qa.code;
+      const policyFile = resolve(logDir, `${story}-quality.json`);
+      note(`→ [${story}] qa-gate: batch-24-multiag scoped quality`);
+      const policyRun = spawnSync(process.execPath, [join(SKILL_DIR, 'quality-gates.mjs'), '--base', opt('quality-base', 'HEAD'), '--out', policyFile], { encoding: 'utf8', timeout: stageTimeoutMs, windowsHide: true });
+      try { q.policy = JSON.parse(readFileSync(policyFile, 'utf8')); } catch { q.policy = { verdict: 'not-verified', gates: [], codeFingerprint: codeFingerprint() }; }
+      note(`   qa exit=${policyRun.status} log=${policyFile}`);
+      const qa = { code: policyRun.status === 0 && q.policy.verdict === 'ready' ? 0 : 1, out: JSON.stringify(q.policy) + String(policyRun.stderr ?? '') };
+      if (qa.code !== 0) note(`[${story}][QUALITY][DETAIL] ${JSON.stringify({ tests: q.policy.testEvidence, execution: q.policy.executedTests, gates: q.policy.gates.map(g => ({ name: g.name, result: g.result, output: g.output?.slice(-1000) })), coverage: q.policy.coverage, integrity: q.policy.integrity })}`);
+      for (const gate of q.policy.gates ?? []) {
+        if (gate.output != null) writeFileSync(resolve(logDir, `${story}-${gate.name}.log`), scrubLog(`# ${gate.command}\n${gate.output}`));
+        if (['security', 'performance'].includes(gate.name)) {
+          if (gate.result === 'required-missing') note(`[${story}][QUALITY] 프로젝트에 대응 스크립트 없음 — ${gate.name} required-missing · 완료 차단`);
+          else if (gate.exit != null) note(`[${story}][QUALITY] ${gate.name === 'security' ? '보안' : '성능'} 트리거 1건 — 게이트 ${gate.command} 실행${gate.sharedCommand ? '(공유 결과)' : ''}`);
+          if (gate.result === 'fail') note(`[${story}][QUALITY] ${gate.name} 게이트 RED(exit=${gate.exit})`);
+        }
+      }
+      writeFileSync(resolve(logDir, `${story}-qa.log`), scrubLog(q.policy.gates.filter(g => ['typecheck', 'lint', 'unit'].includes(g.name)).map(g => `# ${g.command}\n${g.output ?? g.result}`).join('\n')));
+      q.testEvidence = q.policy.testEvidence;
+      q.integrity = q.policy.integrity ?? [];
+      blocks = q.integrity.filter(f => f.level === "block");
+      for (const f of q.integrity) note(`[${story}][INTEGRITY][${f.level.toUpperCase()}] ${f.rule} ${f.file} — ${f.detail}`);
+      q.security = { required: q.policy.risk?.security ?? false, reasons: q.policy.risk?.reasons?.security ?? [], ...(q.policy.gates.find(g => g.name === 'security') ?? { result: 'not-required' }) };
+      q.performance = { required: q.policy.risk?.performance ?? false, reasons: q.policy.risk?.reasons?.performance ?? [], ...(q.policy.gates.find(g => g.name === 'performance') ?? { result: 'not-required' }) };
+      q.qaExit = q.policy?.gates?.filter(g => ['typecheck', 'lint', 'unit'].includes(g.name)).every(g => g.result === 'pass') && q.policy?.gates?.length ? 0 : qa.code;
       if (qa.code === 0) {
         // qa GREEN 이어도 트리거된 조건부 게이트가 남아 있다 — 실행하고, 실패면 품질 루프 RED 다.
-        const cg = runTriggeredGates(story, q);
+        const cg = null; // conditional gates executed exactly once by quality-gates.mjs
         if (!cg) {
           note(`[${story}][QUALITY][PASS] qa GREEN${q.attempts ? ` (수리 ${q.attempts}회 후)` : ""}${integ.length ? ` · 무결성 경고 ${integ.length}건` : ""}`);
           return;
@@ -1515,7 +1494,10 @@ function runQualityLoop(story) {
         failure = cg;
         q.failureKind = failure.kind;
       } else {
-        failure = classifyQaFailure(qa.out);
+        const failedGate = q.policy?.gates?.find(g => g.result === 'required-missing') ?? q.policy?.gates?.find(g => g.result !== 'pass');
+        const classified = classifyQaFailure(failedGate?.output ?? qa.out);
+        const kind = q.policy?.integrity?.some(f => f.level === 'block') ? 'integrity' : q.policy?.executedTests?.result === 'not-verified' ? 'unit-evidence' : q.policy?.coverage && q.policy.coverage.result !== 'pass' ? 'coverage' : failedGate?.name ?? 'quality';
+        failure = { kind, signature: `${kind}:${failedGate?.script ?? ''}:${classified.kind === 'unknown' ? (q.policy?.verdict ?? 'not-verified') : classified.signature}`, excerpt: JSON.stringify({ gate: failedGate?.result, coverage: q.policy?.coverage, tests: q.policy?.testEvidence, execution: q.policy?.executedTests, integrity: q.policy?.integrity }) };
         q.failureKind = failure.kind;
       }
     } else {
@@ -1543,6 +1525,7 @@ function runQualityLoop(story) {
       });
       note(q.escalation);
       push("QA RED", `[${story}] qa 게이트 RED — 사람 개입 필요.`);
+      holdStory(story);
       finalizeManifest(story, null);
       writeExitInfo({ code: 1, kind: "qa", provider: parseModelSpec(models.dev).provider, story, stage: blocks.length ? "integrity" : "qa", why: failure.signature });
       process.exit(1);
@@ -1553,14 +1536,36 @@ function runQualityLoop(story) {
   }
 }
 
+function setVerifiedStoryStatus(story, status) {
+  const sf = findStoryFile(story);
+  if (sf) { const text = readFileSync(sf, 'utf8'); if (/^Status:\s*done\b/m.test(text) || status === 'done') writeFileSync(sf, text.replace(/^Status:\s*\S+/m, `Status: ${status}`)); }
+  const sprint = resolve('_bmad-output/implementation-artifacts/sprint-status.yaml');
+  if (existsSync(sprint)) {
+    const escaped = story.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`^(  ${escaped}(?:-[^:\r\n]+)?:\\s*)(\\S+)`, 'gm');
+    writeFileSync(sprint, readFileSync(sprint, 'utf8').replace(re, (match, prefix, old) => old === 'done' || status === 'done' ? prefix + status : match));
+  }
+}
+function holdStory(story) { setVerifiedStoryStatus(story, 'review'); }
+function appendVerifiedNotes(text, notes) {
+  const heading = '### Completion Notes List';
+  return text.includes(heading) ? text.replace(heading, heading + '\n\n' + notes + '\n') : text + '\n' + heading + '\n' + notes + '\n';
+}
+function promoteStory(story, manifest) {
+  if (manifest.completion.verdict !== 'ready') throw new Error('completion not ready');
+  setVerifiedStoryStatus(story, 'done');
+  const sf = findStoryFile(story);
+  if (sf) writeFileSync(sf, appendVerifiedNotes(readFileSync(sf, 'utf8'), renderCompletionNotes(manifest)));
+}
+
 // ---- (P5) 검증 매니페스트 ----
 function finalizeManifest(story, commitSha) {
-  if (!writeManifest || dryRun) return;
+  if (dryRun) return null;
   try {
-    const savedQuality = routingEnabled && state.quality?.[story]?.fingerprint === codeFingerprint() ? state.quality[story].result : null;
-    const q = routingEnabled ? (qualityLog[story] ?? savedQuality ?? {}) : (qualityLog[story] ?? {});
+    const savedQuality = state.quality?.[story]?.fingerprint === codeFingerprint() ? state.quality[story].result : null;
+    const q = qualityLog[story] ?? savedQuality ?? {};
     const workers = {};
-    if (routingEnabled) {
+    {
       for (const st of KNOWN_STAGES) {
         const actual = state.workers?.[key(story, st)];
         if (actual && isDone(story, st)) {
@@ -1570,7 +1575,7 @@ function finalizeManifest(story, commitSha) {
       }
     }
     for (const st of stages) {
-      if (routingEnabled) continue;
+      if (workers[st]) continue;
       const p = parseModelSpec(models[st]);
       workers[st] = { provider: p.provider, model: p.model || (p.provider === "codex" ? "default" : "cli-default") };
     }
@@ -1579,7 +1584,7 @@ function finalizeManifest(story, commitSha) {
       story, generatedAt: stamp(), branch, commit: commitSha ?? headSha().slice(0, 12),
       workers, gates, qa: { chain: qaChain, exit: q.qaExit ?? (!routingEnabled && isDone(story, "qa") ? 0 : null), failureKind: q.failureKind ?? "unknown" },
       integrity: q.integrity ?? [], repair: { attempts: q.attempts ?? 0, signatures: q.signatures ?? [], exhausted: Boolean(q.escalation) },
-      review: reviewResults[story] ?? (routingEnabled && state.reviews?.[story]?.fingerprint === codeFingerprint()
+      review: reviewResults[story] ?? (state.reviews?.[story]?.fingerprint === codeFingerprint()
         ? state.reviews[story].result
         : (stages.includes("review") ? { provider: workers.review?.provider ?? "claude", model: workers.review?.model ?? "", result: isDone(story, "review") ? "written-by-worker(스토리 파일 참조)" : "not-run" } : null)),
       security: q.security ?? { required: false, reasons: [] }, performance: q.performance ?? { required: false, reasons: [] },
@@ -1587,15 +1592,29 @@ function finalizeManifest(story, commitSha) {
     });
     // (완료 판정 강화) 매니페스트 **형태는 그대로 두고** `completion` 필드만 더한다 — 「없는 검사」를 통과로
     // 세지 않고 not-verified 로 남기는 판정기(completion-rules.mjs)를 여기 한 곳에서만 부른다.
+    m.quality = q.policy ?? { verdict: 'not-verified' };
+    m.codeFingerprint = codeFingerprint();
+    m.scope = 'worker';
+    for (const [check, gate] of Object.entries({ typecheck: 'typecheck', lint: 'lint', unit: 'unit', security: 'security', performance: 'performance', api: 'api', authorization: 'authorization' })) {
+      const run = q.policy?.gates?.find(g => g.name === gate);
+      m.checks[check] = run?.result ?? (q.policy?.verdict === 'ready' ? 'not-required' : 'not-run');
+    }
+    m.checks.coverage = q.policy?.coverage?.result ?? 'not-run';
+    m.checks.integration = 'not-required'; // worker scope; landing has a separate mandatory gate
     const sf = findStoryFile(story);
-    m.completion = strengthenCompletion({ manifest: m, storyText: sf ? readFileSync(sf, "utf8") : "", diff: q.diff ?? "", testEvidence: q.testEvidence ?? null });
+    const storyText = sf ? readFileSync(sf, 'utf8') : '';
+    const projected = storyText.replace(/^Status:\s*\S+/m, 'Status: done');
+    const notes = renderCompletionNotes(m);
+    const completedText = appendVerifiedNotes(projected, notes);
+    m.completion = strengthenCompletion({ manifest: m, storyText: completedText, diff: q.diff ?? '', testEvidence: q.testEvidence ?? null });
     // (M2 · 3차 리뷰) T2 의 「정상·실패·경계」 판정 근거를 매니페스트에 **구조화**해 남긴다 — 판정 문장만
     // 남기면 다음 라운드가 근거를 다시 못 센다. `checks.unit` 은 pass/fail 문자열 계약이라 형을 바꾸지 않고
     // 옆에 `checks.unitKinds` 로 붙인다(readiness·현황판이 `String(checks.unit)` 으로 읽는다).
     m.checks.unitKinds = m.completion.evidence?.newTests?.kinds ?? null;
     writeFileSync(resolve(logDir, `${story}-verification.json`), JSON.stringify(m, null, 2) + "\n");
+    return m;
   } catch (e) {
-    note(`⚠ [${story}] 매니페스트 기록 실패(계속): ${e?.message ?? e}`);
+    note(`⚠ [${story}] 매니페스트 기록 실패(완료·커밋 차단): ${e?.message ?? e}`);
   }
 }
 
@@ -1632,6 +1651,7 @@ function storyNeedsWork(story) {
 const modelsShown = Object.fromEntries(Object.entries(models).map(([k, v]) => [k, shownModel(v)]));
 appendFileSync(runLog, `\n${"=".repeat(70)}\n[${stamp()}] BATCH START stories=[${stories.join(", ")}] stages=[${stages.join(", ")}] models=${JSON.stringify(modelsShown)} perm=${permMode} dryRun=${dryRun} force=${force} waitAuthMin=${waitAuthMin} e2e=${e2eCmd || "-"} ntfy=${ntfyTopic ? "on" : "off"} commit=${doCommit} branch=${branchName || "-"} push=${doPush} autoRepair=${autoRepair} integrity=${integrityEnabled ? "on" : "off"} codexRoles=${codexRoles.join(",") || "-"} autonomy=${autonomy}\n`);
 note(`=== auto-story-pipeline v2: ${stories.length} 스토리 × [${stages.join(", ")}] ===`);
+if (opt("qa", "")) planCommand("qa 게이트(--qa)", qaCmd);
 // (N2 · 2026-09-02 2차 리뷰) 종전에는 경고만 남기고 계속했다 — nested 인스턴스의 commit/push deny 가
 // 통째로 빠진 채 무인 배치가 돌았다는 뜻이다(fail-open). 이제 없으면 시작하지 않는다.
 if (!settingsPath) {
@@ -1708,13 +1728,13 @@ for (const story of stories) {
       // (U1-b) 허수 완주 방지 — 기록을 믿지 않고 실제로 돌린다(👤 2026-08-30 승인 (a)).
       note(`⚠ [${story}] dev 완료 기록을 무시한다 — 스토리에 완료 Task 0건 · 미완 1건 이상(허수 완주 방지). 실제로 실행한다.`);
       invalidate(story, "dev", "qa", "review");
-    } else if (isDone(story, stage) && !force && stage === 'review' && routingEnabled && state.reviews?.[story]?.fingerprint !== codeFingerprint()) {
+    } else if (isDone(story, stage) && !force && stage === 'review' && state.reviews?.[story]?.fingerprint !== codeFingerprint()) {
       note(`⚠ [${story}] review 완료 기록을 무시한다 — 현재 코드와 일치하는 교차 리뷰 근거가 없다`);
       invalidate(story, 'review');
     } else if (isDone(story, stage) && !force) {
       note(`↷ [${story}] ${stage} skip — state.json 완료 기록 (재실행=--force).`);
       // dev가 skip이면 qa도 이미 통과한 기록이 있을 때만 skip (아래 qa 블록에서 판정)
-      if (stage === "dev" && (!isDone(story, "qa") || (routingEnabled && state.quality?.[story]?.fingerprint !== codeFingerprint()))) {
+      if (stage === "dev" && (!isDone(story, "qa") || (state.quality?.[story]?.fingerprint !== codeFingerprint()))) {
         runQualityLoop(story); // RED 면 내부에서 STOP(exit 1) — 수리 예산이 있으면 그 안에서만 재시도
         markDone(story, "qa");
       }
@@ -1727,8 +1747,9 @@ for (const story of stories) {
     if (stage === "dev") invalidate(story, "qa", "review");
 
     runStage(stage, story); // 실패 시 내부에서 exit (인증 오류는 대기 모드 시 자동 재시도)
+    if (!dryRun) holdStory(story);
     markDone(story, stage);
-    if (routingEnabled && stage === 'review' && !dryRun && state.quality?.[story]?.fingerprint !== codeFingerprint()) {
+    if (stage === 'review' && !dryRun && state.quality?.[story]?.fingerprint !== codeFingerprint()) {
       note(`[${story}] review 이후 코드 또는 QA 근거 변경 — QA 재검증`);
       runQualityLoop(story);
       markDone(story, 'qa');
@@ -1746,7 +1767,15 @@ for (const story of stories) {
       markDone(story, "qa");
     }
   }
-  finalizeManifest(story, null);
+  const final = finalizeManifest(story, null);
+  if (!dryRun && (final?.completion?.verdict !== 'ready' || final?.quality?.codeFingerprint !== codeFingerprint())) {
+    holdStory(story);
+    if (!doCommit && !(stages.includes('dev') && stages.includes('review'))) { note(`↷ [${story}] 요청 단계 완료 · completion=${final?.completion?.verdict ?? 'not-verified'} · done/commit/push 없음`); continue; }
+    note(`✖ COMPLETION STOP — [${story}] ${final?.completion?.verdict ?? 'not-verified'} · done/commit/push blocked · ${JSON.stringify(final?.completion?.criteria?.filter(c => c.result !== 'pass'))}`);
+    writeExitInfo({ code: 1, kind: 'qa', story, stage: 'completion', why: final?.completion?.verdict ?? 'not-verified' });
+    process.exit(1);
+  }
+  if (!dryRun) promoteStory(story, final);
   const sha = commitStory(story, stages);
   if (sha) finalizeManifest(story, sha);
   note(`✔ [${story}] 완료 (review 상태까지).${doCommit ? ` 스토리 커밋${doPush ? "+푸시(" + branchName + ")" : ""} 수행 — 정본 main 반영은 사람 머지.` : " 커밋/푸시는 사람 게이트 — 미실행."}`);

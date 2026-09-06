@@ -1,0 +1,7 @@
+/_verification/
+/*.log
+/*-lcov.info
+/coverage-diagnostic.json
+/benchmark-comparison*.json
+
+/benchmark-*.json

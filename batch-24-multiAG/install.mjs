@@ -85,11 +85,11 @@ const project = String(existingCfg.project || basename(ROOT)).replace(/[^a-zA-Z0
 const bundledRuntime = join(SELF, 'engine', 'runtime', 'auto-story-pipeline.mjs')
 if (!existsSync(bundledRuntime) || !existsSync(join(dirname(bundledRuntime), 'providers', 'index.mjs')))
   fail('번들 모델 런타임이 불완전하다(engine/runtime 확인)')
-// Codex 는 선택 사항 — 없어도 Claude 전용으로 그대로 돈다. 있으면 어떤 상태인지만 적어 둔다(설치 결정은 사람 몫).
+// 설치는 가능하지만 완료에는 독립 제공자 리뷰가 필요하다. CLI 가용성과 인증 상태를 기록한다.
 {
   const codexBin = process.env.CODEX_BIN || whichBin('codex')
   const v = codexBin ? safeExec(codexBin, ['--version']) : { status: 1, stdout: '', stderr: 'PATH 에 codex 없음' }
-  if ((v.status ?? 1) !== 0) notes.push('· Codex CLI 없음 — Claude 전용(providers.codex.enabled 는 false 유지). 쓰려면 `npm i -g @openai/codex` + `codex login`')
+  if ((v.status ?? 1) !== 0) notes.push('· Codex CLI 없음 — 독립 제공자 리뷰와 완료가 차단됨(providers.codex.enabled 는 false 유지). 사용하려면 `npm i -g @openai/codex` + `codex login`')
   else {
     const l = safeExec(codexBin, ['login', 'status'])
     const ok = (l.status ?? 1) === 0 && /logged in/i.test(`${l.stdout}${l.stderr}`) && !/not logged in/i.test(`${l.stdout}${l.stderr}`)
@@ -102,14 +102,14 @@ if (![join(ROOT, '.claude', 'pipeline-settings.json'), join(homedir(), '.claude'
     'deny 규칙(예: {"permissions":{"deny":["Bash(git commit:*)","Bash(git push:*)","Bash(git stash:*)","Bash(git reset:*)"]}})을 담아 둘 것')
 if (!existsSync(join(ROOT, '_bmad-output', 'implementation-artifacts', 'sprint-status.yaml')))
   notes.push('⚠️ sprint-status.yaml 이 없다 — BMad 산출물이 없으면 자동 편성(--auto-plan)은 돌지 않는다(수동 큐는 가능)')
-if (!(pkg.scripts && pkg.scripts.qa)) notes.push('⚠️ `npm run qa` 스크립트가 없다 — 엔진 qa 게이트가 실패한다. typecheck+lint+test 조합으로 정의할 것')
+for (const name of ['typecheck', 'lint', 'test:affected', 'coverage', 'test:all', 'test:integration']) if (!pkg.scripts?.[name]) notes.push(`· ${name} 없음 — QUALITY-GATES.md의 별칭/범위 계약을 확인할 것. 적용되는 필수 게이트 부재는 완료를 차단한다.`)
 
 // ── 1. 엔진 파일 설치 ────────────────────────────────────────────────────
 const dst = join(ROOT, 'tools', 'auto')
 mkdirSync(dst, { recursive: true })
 // 목록을 고정하지 않는다 — 엔진에 새 모듈(plan-dag·conflicts…)이 생길 때마다 설치본만 구판이 되어
 // 러너가 ERR_MODULE_NOT_FOUND 로 죽는다(2026-09-02 e2e 실측). 테스트 파일은 제외한다.
-for (const f of readdirSync(join(SELF, 'engine')).filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs'))) {
+for (const f of readdirSync(join(SELF, 'engine')).filter((n) => n.endsWith('.mjs') && (!n.endsWith('.test.mjs') || n === 'model-routing.test.mjs'))) {
   const to = join(dst, f)
   if (existsSync(to) && !has('force')) { notes.push(`· ${f} 이미 있음 — 건너뜀(덮어쓰려면 --force)`); continue }
   copyFileSync(join(SELF, 'engine', f), to)
@@ -118,9 +118,12 @@ for (const f of readdirSync(join(SELF, 'engine')).filter((n) => n.endsWith('.mjs
 const runtimeDst = join(dst, 'runtime')
 if (existsSync(runtimeDst) && !has('force')) notes.push('· runtime 이미 있음 — 건너뜀(덮어쓰려면 --force)')
 else {
-  cpSync(join(SELF, 'engine', 'runtime'), runtimeDst, { recursive: true, force: true })
+  cpSync(join(SELF, 'engine', 'runtime'), runtimeDst, { recursive: true, force: true, filter: src => !src.endsWith('.test.mjs') || ['quality-gates.test.mjs', 'authorization-matrix.test.mjs'].includes(basename(src)) })
   console.log('✔ tools/auto/runtime (프로젝트 고정 모델 런타임)')
 }
+mkdirSync(join(dst, 'fixtures'), { recursive: true });
+copyFileSync(join(SELF, 'engine/fixtures/strict-quality-fixture.mjs'), join(dst, 'fixtures/strict-quality-fixture.mjs'));
+for (const guide of ['QUALITY-GATES.md', 'MIGRATION.md']) copyFileSync(join(SELF, 'references', guide), join(dst, guide));
 const routingGuide = join(dst, 'MODEL-ROUTING.md')
 if (existsSync(routingGuide) && !has('force')) notes.push('· MODEL-ROUTING.md 이미 있음 — 건너뜀(덮어쓰려면 --force)')
 else {
@@ -149,8 +152,8 @@ if (!existsSync(cfgPath)) {
       'modelPolicy: 여섯 모델 등급 라우팅. Sonnet→Terra, Opus→Sol, Fable→Astra이며 Fable 한도는 Opus로 전환한다.',
       'providers.codex: { enabled(기본 true), max(동시 1 고정 권장 — 같은 auth.json 동시 사용 불가), roles([\"review\"] 또는 [\"review\",\"dev\"]),',
       '  reviewKinds([\"new\",\"closeout\"] — recovery 는 review 단계가 없다), split(dev 역할일 때 병렬 짝을 Claude/Codex 로 나눔), network(기본 false — Codex dev 샌드박스 네트워크) }',
-      '  codex 는 배치 워크트리에서만 실행되며(본 트리 실데이터 반출 방지) 미설치·미인증·한도면 엔진이 claude 로 폴백한다 — 배치는 서지 않는다.',
-      'quality: { autoRepair: true|숫자(총 수리 시도 · 기본 0 = qa RED 즉시 STOP), sameRootCauseMaxRetries(기본 3), integrity: auto|on|off }',
+      '  교차 제공자 리뷰가 불가능하면 not-verified로 완료·commit·push를 차단한다. 동일 제공자 자체 리뷰 금지.',
+      'quality: autoRepair는 수리 예산이다. 필수 품질·무결성·manifest는 off/no-manifest로 끌 수 없다. QUALITY-GATES.md 참조.',
       'integrationGate: { enabled(병렬 landing 뒤 통합 트리에서 qa 1회) } — RED 는 **설정으로 우회 불가**: 항상 landing 되돌림 + STOP + push 금지(옛 pushOnFail 은 폐지 · 남아 있으면 무시하고 경고)',
       'orchestrator: { enabled(기본 true), model(기본 fable), timeoutMin(기본 5), cacheHours(기본 12) }',
       '  기본값은 켜짐이다. Fable 계획 결과를 캐시해 반복 슬롯의 불필요한 호출을 줄인다.',

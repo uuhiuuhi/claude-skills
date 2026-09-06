@@ -1,3 +1,4 @@
+import { readRecord } from './runtime/schema-migration.mjs';
 // diagnose.mjs — 프로젝트 자동 진단(SPEC §1 · 설계 §1-1·§2).
 //
 // 두 단계로 갈라 둔다:
@@ -29,8 +30,8 @@ const { deepRedact, redactSecrets } = await import(resolveAsf('providers/redact.
 // 게이트 실행의 기본 spawn — 마감 시 **프로세스 트리 전체**를 끊는다(codex-review-r6 Medium).
 import { spawnWithDeadline } from './spawn-deadline.mjs'
 
-export const SNAPSHOT_SCHEMA = 'night-batch-ops/snapshot/1'
-export const DIAGNOSIS_SCHEMA = 'night-batch-ops/diagnosis/1'
+export const SNAPSHOT_SCHEMA = 'batch-24-multiag/snapshot/1'
+export const DIAGNOSIS_SCHEMA = 'batch-24-multiag/diagnosis/1'
 
 // ── 정규식 SoT (설계 §2-2) ────────────────────────────────────────────────────
 /** 설계 §2-2 원문 그물 — **1차 선별용**. 이것만으로 판정하면 오탐이 실측으로 터진다(아래 3분할). */
@@ -110,7 +111,7 @@ function readTextSafe(p, max = MAX_FILE_BYTES) {
 function readJsonSafe(p) {
   const t = readTextSafe(p)
   if (t === null) return null
-  try { return JSON.parse(t) } catch { return null }
+  try { return readRecord(t) } catch { return null }
 }
 function listDir(p) {
   try { return readdirSync(p, { withFileTypes: true }) } catch { return [] }

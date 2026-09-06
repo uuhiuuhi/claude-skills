@@ -1,0 +1,25 @@
+✔ Fable quota is shared across independent routers; Opus runs immediately; reset restores Fable (5.8324ms)
+✔ auth/spend block that provider; quota blocks only the affected model (6.8384ms)
+✔ late success from an earlier in-flight request cannot reopen a failed model (10.4361ms)
+✔ a later-started success clears provider failures but never another model quota (15.416ms)
+✔ a dependent story cannot execute in the same parallel batch as its prerequisite (1.7952ms)
+✔ duplicate sprint rows schedule a story once and keep the latest status (0.6052ms)
+✔ health failure details are redacted at the persistence boundary (2.8777ms)
+✔ high-risk reviewer never falls to Opus/Sol/Terra; no same-provider self review (0.2016ms)
+✔ six catalog models form three cross-provider quality pairs (0.2333ms)
+✔ Codex max=1 queues multiple review assignments without consuming an assignment budget (0.7154ms)
+✔ unavailable providers do not get routed; empty scope does not qualify for cheap models (0.3393ms)
+✔ orchestrator cannot omit candidates, reduce stages, or assign identical dev/review models (0.9069ms)
+✔ guarded orchestration may choose a safe subset while full mode must cover all candidates (0.2398ms)
+✔ pinned runtime is selected ahead of global installation (0.1391ms)
+✔ Codex reasoning effort reaches argv as a config value (0.5069ms)
+✔ provider-level exhaustion blocks every model from that provider (1.0211ms)
+✔ failure classification separates model errors, quotas, provider spending, and transport errors (0.9774ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 144.6114

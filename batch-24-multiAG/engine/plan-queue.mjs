@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readRecord } from './runtime/schema-migration.mjs';
 // 큐 자동 편성기 — 「다음 할 일」을 규칙만으로 고른다. LLM 호출 0.
 // 이식판: 프로젝트 고유값(에픽 순서·병행 허용·하루 상한·목업 게이트·상태 폴더)은 전부
 // `tools/auto/auto.config.json` 이 소유한다 — 이 파일에는 프로젝트 이름이 없다.
@@ -72,7 +73,7 @@ const allowNewUnderChain = RULES.allowNewUnderChain ?? ((ageDays) => (ageDays ??
 /** 프로젝트 설정 — 없으면 빈 객체(호출부가 필수값 부재를 판정한다) */
 export function loadConfig(root) {
   const p = join(root, 'tools', 'auto', 'auto.config.json')
-  try { return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : {} } catch { return {} }
+  try { return existsSync(p) ? readRecord(readFileSync(p, 'utf8')) : {} } catch { return {} }
 }
 
 export function todayStr(d = new Date()) {
@@ -83,7 +84,7 @@ export function todayStr(d = new Date()) {
 const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null)
 // 부수 상태 파일(상한 연장·체인 정보)은 다른 프로세스가 쓴다 — 반쯤 쓰인 파일 하나가
 // 편성기를 통째로 세우면 무정지가 아니다. 깨졌으면 「없음」으로 보고 계속한다.
-const readJson = (p) => { try { return JSON.parse(readIf(p) ?? '{}') } catch { return {} } }
+const readJson = (p) => { try { return readRecord(readIf(p) ?? '{}') } catch { return {} } }
 
 export function plan({ root, stateDir, max, today = todayStr(), config }) {
   const cfg = config ?? loadConfig(root)
@@ -117,12 +118,12 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   const epicsText = readIf(join(root, '_bmad-output', 'planning-artifacts', 'epics.md')) ?? ''
   const inboxText = readIf(join(ART, 'DECISIONS-INBOX.md')) ?? ''
   const verdictsPath = String(gateCfg.verdictsPath ?? MOCKUP_GATE_DEFAULT.verdictsPath).split(/[/\\]+/).filter(Boolean)
-  const verdicts = gateCfg.marker ? JSON.parse(readIf(join(root, ...verdictsPath)) ?? '{}') : {}
+  const verdicts = gateCfg.marker ? readRecord(readIf(join(root, ...verdictsPath)) ?? '{}') : {}
   if (!sprintText) throw new Error('sprint-status.yaml 을 읽지 못했다 — 편성 불가(빈 큐를 정상인 척 내보내지 않는다)')
 
   // 일일 상한 원장 — 상태 파일은 저장소 밖(워크트리 reset 에 안 쓸린다)
   const statePath = join(stateDir, 'auto-plan-state.json')
-  const state = JSON.parse(readIf(statePath) ?? '{}')
+  const state = readRecord(readIf(statePath) ?? '{}')
   state.days ??= {}
   state.replans ??= {} // full: 스토리별 replan 회차(진전이 나면 0 으로 본다)
   // day.progressed[] 는 러너가 쓴다(그 라운드 커밋이 실제로 만진 스토리 키) — 규칙 9 v2 의 재료.

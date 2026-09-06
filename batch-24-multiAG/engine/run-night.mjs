@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { fingerprint as qualityFingerprint } from './runtime/quality-gates.mjs';
+import { readRecord } from './runtime/schema-migration.mjs';
 // 야간 무인 배치 러너 (상시) — 날짜·스토리를 **하드코딩하지 않는다**.
 // 이식판: 프로젝트 고유값은 `tools/auto/auto.config.json` 이 소유한다.
 //
@@ -238,7 +240,7 @@ function writeMetrics(batchId, label, summary, record) {
 
 /** 엔진이 남긴 STOP 부기(exit-info.json) — 없으면 null */
 function readExitInfo(dir) {
-  try { return JSON.parse(readFileSync(join(dir, '_bmad-output', 'implementation-artifacts', 'auto-pipeline-logs', 'exit-info.json'), 'utf8')) } catch { return null }
+  try { return readRecord(readFileSync(join(dir, '_bmad-output', 'implementation-artifacts', 'auto-pipeline-logs', 'exit-info.json'), 'utf8')) } catch { return null }
 }
 // ── 실패 증거 보존(2026-09-02 hardening #9) ────────────────────────────────────────────────
 // 로그만 복사하던 시절엔 「repair 가 절반쯤 고치고 exit 1」 하면 그 절반이 `worktree remove --force`
@@ -343,7 +345,7 @@ async function archiveEvidence(wt) {
     // ③ 요약 — 무엇이 얼마나 바뀌었나 · 어디서 이어가나
     const head = (g(['rev-parse', 'HEAD']).stdout ?? '').trim()
     writeFileSync(join(dst, 'summary.json'), JSON.stringify({
-      schema: 'night-batch-ops/evidence/1',
+      schema: 'batch-24-multiag/evidence/1',
       story: wt.story, at: new Date().toISOString(), worktree: wt.dir,
       base: wt.base ?? '', head,
       diffStat: redact((g(['diff', '--stat', 'HEAD', '--', '.', ...EVIDENCE_DIFF_EXCLUDES]).stdout ?? '').trim()),
@@ -412,7 +414,7 @@ const notify = (rawTitle, rawBody, rawBrief) => {
       const tokenOk = token !== '' && !/[/?#\s]/.test(token)
       // BOM 내성 — PowerShell 저장 JSON 은 EF BB BF 로 시작해 parse 가 죽고, 이 catch 는
       // 무음이라 알림이 조용히 증발한다(실기 테스트에서 실발생).
-      const chatId = chatPath ? JSON.parse(readFileSync(chatPath, 'utf8').replace(/^\uFEFF/, '')).chat_id : null
+      const chatId = chatPath ? readRecord(readFileSync(chatPath, 'utf8').replace(/^\uFEFF/, '')).chat_id : null
       const topicPath = join(homedir(), '.claude', 'ntfy-topic.txt')
       const topic = existsSync(topicPath) ? readFileSync(topicPath, 'utf8').trim() : ''
       const channel = notifyChannel({ telegramReady: Boolean(tokenOk && chatId), ntfyReady: Boolean(topic) })
@@ -438,7 +440,7 @@ const notify = (rawTitle, rawBody, rawBrief) => {
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex')
 const loadState = () => {
   const p = join(STATE_DIR, 'auto-plan-state.json')
-  const s = existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : {}
+  const s = existsSync(p) ? readRecord(readFileSync(p, 'utf8')) : {}
   s.days ??= {}
   s.consumed ??= {} // 수동 큐 소비 표식은 **전역**이다 — 날짜별로 두면 자정이 지나는 순간 어제 큐가
   // "새 큐"로 보여 통째로 재실행된다(실사고 — 7커밋 중복)
@@ -465,7 +467,7 @@ const LOCK_TOKEN = randomUUID()
 function readLockInfo() {
   if (!existsSync(lockPath)) return { exists: false }
   let parsed = null
-  try { parsed = JSON.parse(readFileSync(lockPath, 'utf8')) } catch { /* 손상 */ }
+  try { parsed = readRecord(readFileSync(lockPath, 'utf8')) } catch { /* 손상 */ }
   if (!parsed) return { exists: true, parseOk: false, hbAgeMs: Infinity }
   let pidAlive
   try { process.kill(parsed.pid, 0); pidAlive = true } catch (e) { pidAlive = e?.code === 'ESRCH' ? false : 'unknown' }
@@ -478,7 +480,7 @@ function touchLock() { // 심박 — 라운드 시작·배치 경계마다. 자�
   // tmp 파일에 다 쓴 뒤 rename(원자 교체) — 읽는 쪽은 언제 읽어도 완전한 JSON 만 본다.
   const tmp = `${lockPath}.${process.pid}.tmp`
   try {
-    const cur = JSON.parse(readFileSync(lockPath, 'utf8'))
+    const cur = readRecord(readFileSync(lockPath, 'utf8'))
     if (cur.token !== LOCK_TOKEN) return
     writeFileSync(tmp, JSON.stringify({ ...cur, hb: new Date().toISOString() }))
     renameSync(tmp, lockPath)
@@ -519,7 +521,7 @@ function touchLock() { // 심박 — 라운드 시작·배치 경계마다. 자�
   }
   process.on('exit', () => {
     try {
-      const cur = JSON.parse(readFileSync(lockPath, 'utf8'))
+      const cur = readRecord(readFileSync(lockPath, 'utf8'))
       if (cur.token === LOCK_TOKEN) unlinkSync(lockPath) // 자기 lock 만 지운다(ABA 차단)
     } catch { /* 이미 없음/손상 */ }
   })
@@ -752,7 +754,7 @@ const ORCH_COOLDOWN_AFTER = 3
 
 function readOrchCache() {
   try {
-    const o = JSON.parse(readFileSync(ORCH_CACHE_PATH, 'utf8'))
+    const o = readRecord(readFileSync(ORCH_CACHE_PATH, 'utf8'))
     return o && typeof o === 'object' && !Array.isArray(o) ? o : null
   } catch { return null }
 }
@@ -981,7 +983,7 @@ async function selectQueue() {
   const { s, save } = loadState()
   if (existsSync(manualQueuePath)) {
     try {
-      const q = JSON.parse(readFileSync(manualQueuePath, 'utf8'))
+      const q = readRecord(readFileSync(manualQueuePath, 'utf8'))
       const h = sha(manualQueuePath)
       const consumedBefore = s.consumed[h] || Object.values(s.days).some((d) => d.consumed?.[h])
       if (q.planned !== 'auto' && !consumedBefore) {
@@ -1001,7 +1003,7 @@ async function selectQueue() {
   if (dryRun) planArgs.push('--no-ledger') // 리허설이 하루 상한 원장을 소모하지 않는다
   const planRun = spawnSync(process.execPath, planArgs, { stdio: 'inherit' })
   if (planRun.status !== 0) fail('편성기 실패 — 이 슬롯 중단(빈 큐를 정상인 척 돌리지 않는다)', 3)
-  const q = JSON.parse(readFileSync(autoOut, 'utf8'))
+  const q = readRecord(readFileSync(autoOut, 'utf8'))
   const meta = q._편성 ?? null
   PLAN_VALIDATION = q.validation ?? null // 편성기 자기 검증 — 요약·알림이 「왜 빠졌나」를 근거로 읽는다
   if (PLAN_VALIDATION && !PLAN_VALIDATION.ok) {
@@ -1058,7 +1060,13 @@ const WORKTREE_ENV = Object.freeze({
 //
 /** 통합 게이트 실행 — RED 는 **설정으로 우회되지 않는다**(hardening #5). 되돌리고 STOP·push 금지.
  *  @returns {{integration: object, skipPush: boolean, worst: number}} */
+let landingPublicationReady = false;
+let landingPublicationFingerprint = null;
 function runIntegrationGate({ landedStories, landingBase, batchId, timeoutMin, record }) {
+  landingPublicationReady = false;
+  if (!dryRun && landedStories.some(l => {
+    try { const m = readRecord(readFileSync(join(LOG_DIR, `${l.story}-verification.json`), 'utf8')); return m.completion?.verdict !== 'ready' || m.quality?.verdict !== 'ready'; } catch { return true; }
+  })) return { integration: { result: 'fail', ran: false, why: 'worker completion not ready' }, skipPush: true, worst: 1 };
   let skipPush = false
   let worst = 0
   /** 통합 결과를 각 스토리 검증 매니페스트에 병합 — **없으면 만들지 않고 경고**한다(빈 껍데기 매니페스트는 거짓 증거다) */
@@ -1068,14 +1076,15 @@ function runIntegrationGate({ landedStories, landingBase, batchId, timeoutMin, r
       const p = join(LOG_DIR, `${l.story}-verification.json`)
       if (!existsSync(p)) { missing.push(l.story); continue }
       try {
-        writeFileSync(p, JSON.stringify(applyIntegrationToManifest(JSON.parse(readFileSync(p, 'utf8')), result), null, 2) + '\n', 'utf8')
+        writeFileSync(p, JSON.stringify(applyIntegrationToManifest(readRecord(readFileSync(p, 'utf8')), result), null, 2) + '\n', 'utf8')
         touched.push(p)
       } catch (e) { missing.push(`${l.story}(${e?.message ?? e})`) }
     }
+    if (missing.length) { skipPush = true; worst = 1; }
     if (missing.length) record(`⚠ [INTEGRATION] 검증 매니페스트 없음/갱신 실패 — ${missing.join(', ')}(새로 만들지 않는다)`)
     return touched
   }
-  const gate0 = integrationGateDecision({ enabled: PCFG.integrationGate.enabled, landedCount: landedStories.length, qaExit: null })
+  const gate0 = integrationGateDecision({ enabled: true, landedCount: landedStories.length, qaExit: null })
   let integration = { result: 'pass', qaExit: null, landingBase, at: new Date().toISOString(), ran: false, batchId }
   if (gate0.run && !dryRun) {
     // (BRIEF 정책 8 · codex-review-r3 M5) 셸 문자열 결합 제거 — `npm(.cmd) run <이름>` argv 경로다.
@@ -1086,31 +1095,28 @@ function runIntegrationGate({ landedStories, landingBase, batchId, timeoutMin, r
       const bad = { result: 'fail', qaExit: 2, landingBase, at: new Date().toISOString(), ran: false, batchId, why: '게이트 명령 거부' }
       return { integration: bad, skipPush: true, worst: 7 }
     }
+    inv = { file: process.execPath, argv: [join(dirname(fileURLToPath(import.meta.url)), 'runtime', 'quality-gates.mjs'), '--phase', 'landing', '--base', landingBase, '--out', join(LOG_DIR, 'landing-quality.json')], verbatim: false, display: 'batch-24-multiag landing: full unit + integration (deduplicated)' };
     record(`[INTEGRATION][RUN] landing ${landedStories.length}건 뒤 통합 게이트: ${inv.display}`)
     const runGate = () => spawnSync(inv.file, inv.argv, { shell: false, windowsVerbatimArguments: inv.verbatim, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: timeoutMin * 60 * 1000, windowsHide: true })
     mkdirSync(LOG_DIR, { recursive: true })
     // (N3/정책 2) 통합 로그도 마스킹해서 적는다 — 종전엔 qa stdout/stderr 원문이 그대로 남았다.
-    const writeGateLog = (g) => writeFileSync(join(LOG_DIR, 'integration-gate.log'), REDACT(`# ${inv.display}\n\n## stdout\n${g.stdout ?? ''}\n\n## stderr\n${g.stderr ?? ''}\n`), 'utf8')
+    const writeGateLog = (g) => {
+      let outputs = '';
+      try { outputs = (readRecord(readFileSync(join(LOG_DIR, 'landing-quality.json'), 'utf8')).gates ?? []).map(gate => `# ${gate.command}\n${gate.output ?? gate.result}`).join('\n'); } catch { /* CLI failure is recorded below even if report is missing */ }
+      writeFileSync(join(LOG_DIR, 'integration-gate.log'), REDACT(`# ${inv.display}\n\n## stdout\n${g.stdout ?? ''}\n\n## stderr\n${g.stderr ?? ''}\n\n## executed gates\n${outputs}\n`), 'utf8');
+    }
     let g = runGate()
     writeGateLog(g)
     let qaExit = g.status ?? 1
-    // RED 1회 재실행(👤 2026-09-04 「예」) — 같은 트리에서 한 번 더 돌려 플레이크(초점·타이밍 · 실측 2회/일)를 가른다.
-    // 1차 로그는 상태 폴더에 사본으로 남기고(재실행이 덮어쓴다), 두 번째도 RED 면 종전 rollback 경로 그대로다(우회 아님).
-    let firstExit = null
-    if (qaExit !== 0 && (PCFG.integrationGate.retry ?? 0) > 0) {
-      firstExit = qaExit
-      try { const arc = join(STATE_DIR, 'archive'); mkdirSync(arc, { recursive: true }); cpSync(join(LOG_DIR, 'integration-gate.log'), join(arc, `integration-gate-${batchId}-attempt1.log`)) } catch { /* 사본 실패는 재실행을 막지 않는다 */ }
-      record(`[INTEGRATION][RETRY] 1차 RED(exit ${qaExit}) — 같은 트리에서 1회 재실행(플레이크 판별 · 1차 로그 = archive/integration-gate-${batchId}-attempt1.log)`)
-      g = runGate()
-      writeGateLog(g)
-      qaExit = g.status ?? 1
-      if (qaExit === 0) record('[INTEGRATION][RETRY] 2차 GREEN — 1차는 플레이크로 본다(원인 검사는 attempt1 로그)')
-    }
+    // First RED is final for this landing: preserve evidence, rollback and block push.
     const gate = integrationGateDecision({ enabled: true, landedCount: landedStories.length, qaExit })
     if (gate.action === 'push') {
       record(`[INTEGRATION][PASS] ${gate.why} (log=auto-pipeline-logs/integration-gate.log)`)
-      integration = { result: 'pass', qaExit, landingBase, at: new Date().toISOString(), ran: true, batchId, ...(firstExit != null ? { retried: true, firstExit } : {}) }
+      integration = { result: 'pass', qaExit, landingBase, at: new Date().toISOString(), ran: true, batchId }
+      integration.codeFingerprint = qualityFingerprint(process.cwd())
       const touched = applyStoryManifests(integration)
+      landingPublicationReady = !skipPush
+      landingPublicationFingerprint = qualityFingerprint(process.cwd())
       // 매니페스트 갱신분은 **커밋해 둔다** — 남겨 두면 작업 트리가 dirty 로 남아 다음 라운드의 cherry-pick 이
       // 같은 파일에서 거부된다(landing 실패로 둔갑). ignore 대상이면 add 가 아무것도 안 하고 commit 이 조용히 실패한다.
       if (touched.length) {
@@ -1128,7 +1134,7 @@ function runIntegrationGate({ landedStories, landingBase, batchId, timeoutMin, r
       for (const l of landedStories) {
         const p = join(LOG_DIR, `${l.story}-verification.json`)
         if (!existsSync(p)) continue
-        try { snapshots.push({ story: l.story, json: JSON.parse(readFileSync(p, 'utf8')) }) } catch { /* 손상 매니페스트는 건너뛴다 */ }
+        try { snapshots.push({ story: l.story, json: readRecord(readFileSync(p, 'utf8')) }) } catch { /* 손상 매니페스트는 건너뛴다 */ }
       }
       skipPush = true // reset 성공 여부와 무관하게 **먼저** 막는다
       // 되돌림은 추적 파일인 integration-gate.log 까지 이전 라운드 내용으로 되돌린다 — RED 원인이 영영 사라진다
@@ -1142,7 +1148,7 @@ function runIntegrationGate({ landedStories, landingBase, batchId, timeoutMin, r
       const rs = spawnSync('git', ['reset', '--hard', landingBase], { encoding: 'utf8' })
       const nowHead = headSha() // 「reset 을 불렀다」가 아니라 「되돌아갔다」를 확인한다
       const reverted = rs.status === 0 && nowHead === landingBase
-      integration = { result: reverted ? 'rollback' : 'fail', qaExit, landingBase, at: new Date().toISOString(), ran: true, head: nowHead, batchId, ...(firstExit != null ? { retried: true, firstExit } : {}) }
+      integration = { result: reverted ? 'rollback' : 'fail', qaExit, landingBase, at: new Date().toISOString(), ran: true, head: nowHead, batchId }
       if (reverted) {
         record(`[INTEGRATION][FAIL] ${gate.why} — landing ${landedStories.length}건 되돌림(${landingBase.slice(0, 7)}) · 산출물 archive/integration-fail-* 태그 · log=${gateLogCopy || 'auto-pipeline-logs/integration-gate.log(되돌림으로 이전 내용)'}`)
         notify('통합 게이트 RED', `landing ${landedStories.length}건이 합쳐진 트리에서 qa RED — 되돌리고 STOP. archive/integration-fail-* 태그와 integration-gate.log 확인`,
@@ -1196,6 +1202,7 @@ function writeRollbackManifests({ snapshots, integration, batchId, record }) {
  *  현재 브랜치와 다르면(설정 오류·승계 사고) 밀지 않고, 미는 몫의 diff 에 금지 경로·시크릿이 있어도 밀지 않는다
  *  (러너가 cherry-pick·매니페스트 커밋을 직접 만들므로 엔진의 스테이징 검사만으로는 빈틈이 남는다). */
 function pushBranchOnce({ enabled, skipPush, record }) {
+  if (!dryRun && (!landingPublicationReady || landingPublicationFingerprint !== qualityFingerprint(process.cwd()))) return false;
   let pushed = false
   if (enabled && !dryRun && !skipPush) {
     const r = safeGitPush({ ref: BRANCH })
@@ -1217,7 +1224,7 @@ function writeBatchManifest({ batchId, label, stories, stages, workers, mode, la
     mkdirSync(LOG_DIR, { recursive: true })
     const mp = join(LOG_DIR, `batch-${batchId}-manifest.json`)
     writeFileSync(mp, JSON.stringify({
-      schema: 'night-batch-ops/batch-manifest/1',
+      schema: 'batch-24-multiag/batch-manifest/1',
       batchId, label, branch: BRANCH, at: new Date().toISOString(), mode,
       stories, stages, workers,
       landing: landedStories.map((l, i) => ({ order: i + 1, story: l.story, head: l.head })),
@@ -1551,7 +1558,7 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
 async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger = '') {
   let queue
   try {
-    queue = JSON.parse(readFileSync(queuePath, 'utf8'))
+    queue = readRecord(readFileSync(queuePath, 'utf8'))
   } catch (error) {
     fail(`큐 파일 JSON 을 읽지 못했다: ${error.message}`)
   }
@@ -1680,7 +1687,7 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     // 엔진이 스토리마다 즉시 밀면 합쳐진 트리가 RED 여도 원격에는 이미 RED 조합이 남는다.
     // 커밋은 로컬 `auto/*` 에 그대로 쌓이고, 게이트 GREEN 을 본 뒤 **러너가 1회** push 한다
     // (병렬 경로와 같은 규칙). 게이트가 꺼져 있으면 종전 명령줄 그대로다.
-    const seqGate = PCFG.integrationGate.enabled && (defaults.commit || defaults.push)
+    const seqGate = Boolean(defaults.commit || defaults.push)
     if (defaults.push) args.push('--push', ...(seqGate ? ['--defer-push'] : []))
     if (dryRun) args.push('--dry-run')
     args.push(...engineFlagsFromConfig(PCFG)) // 설정 없으면 [] — 종전 명령줄 그대로(하위 호환)

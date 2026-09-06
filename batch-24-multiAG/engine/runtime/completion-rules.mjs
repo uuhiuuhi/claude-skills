@@ -12,10 +12,10 @@
 //
 // 순수 모듈 — 파일·프로세스에 손대지 않는다. 파이프라인은 `finalizeManifest()` 끝에서 3줄로 부른다.
 
-import { TEST_FILE_RE, splitDiffByFile } from './quality-rules.mjs'
+import { TEST_FILE_RE, splitDiffByFile, maskJavaScript } from './quality-rules.mjs'
 import { countOpenFindings } from './story-writes.mjs'
 
-export const COMPLETION_SCHEMA = 'auto-story-finish/completion/1'
+export const COMPLETION_SCHEMA = 'batch-24-multiag/completion/1'
 
 export const PASS = 'pass'
 export const FAIL = 'fail'
@@ -29,7 +29,7 @@ export const NV = 'NOT VERIFIED'
 const NA_RE = /^(n\/a|required-missing|not-run|unknown)/i
 const REPAIR_INTRODUCED_RE = /repair-introduced/
 const REPAIR_SENSITIVE_RE = /^(test-skip|test-only|empty-test|trivial-assertion|assertion-weakened|ts-ignore|eslint-disable|coverage-exclude|gate-config-changed)/
-const TEST_CASE_RE = /\b(it|test)\s*\(|\bdescribe\s*\(/
+const TEST_CASE_RE = /\b(it|test)\s*\(/
 
 const arr = (x) => (Array.isArray(x) ? x : [])
 const str = (x) => String(x ?? '')
@@ -45,6 +45,7 @@ export const COMPLETION_CRITERIA = Object.freeze([
   { id: 'T6', label: '만든 쪽과 다른 쪽이 실제로 읽고 교차 검토했고 높음 지적이 0이다' },
   { id: 'T7', label: '문서에 적힌 상태와 실제 코드 상태가 같다' },
   { id: 'T8', label: '완료 기록이 실측 수치를 인용하고 확인 못 한 것을 적었다' },
+  { id: 'Q9', label: '위험도별 필수 게이트와 변경 코드 90% 커버리지' },
 ])
 
 const LABEL = Object.fromEntries(COMPLETION_CRITERIA.map((c) => [c.id, c.label]))
@@ -170,7 +171,7 @@ export function strengthenCompletion({ manifest, storyText = '', diff = '', test
         kinds: Object.fromEntries(TEST_KINDS.map((kind) => [kind, Number.isFinite(Number(testEvidence.kinds?.[kind])) ? Number(testEvidence.kinds[kind]) : 0])),
       }
     : newTestsFromDiff(diff)
-  criteria.push(crit('T2', ...testKindsVerdict(tests)))
+  criteria.push(crit('T2', ...((m.quality?.risk?.category === 'docs' || m.quality?.risk?.source?.length === 0) ? [PASS, '문서·주석·정적 리소스 변경 — 코드 테스트 비적용'] : testKindsVerdict(tests))))
 
   // T3 — 검사 사슬
   {
@@ -208,6 +209,10 @@ export function strengthenCompletion({ manifest, storyText = '', diff = '', test
   const notes = completionNotesAudit({ manifest: m, storyText })
   criteria.push(crit('T8', notes.result, notes.why))
 
+  {
+    const quality = m.quality ?? { verdict: NOT_VERIFIED };
+    criteria.push({ id: 'Q9', label: '위험도별 필수 게이트와 변경 코드 90% 커버리지', result: quality.verdict === 'ready' ? PASS : quality.verdict === 'not-ready' ? FAIL : NOT_VERIFIED, why: `quality=${quality.verdict}` });
+  }
   const counts = {
     pass: criteria.filter((c) => c.result === PASS).length,
     fail: criteria.filter((c) => c.result === FAIL).length,
@@ -244,6 +249,9 @@ const KIND_KO = { normal: '정상', failure: '실패', boundary: '경계' }
 /** 케이스 한 건(이름 + 본문)의 유형 — 실패 > 경계 > 정상 우선순위(한 건은 한 유형으로만 센다). */
 export function classifyTestCase(blockText) {
   const s = str(blockText)
+  if (/\bassert\.(?:throws|rejects)\s*\(|\.rejects\b|\.toThrow\s*\(/.test(s)) return 'failure';
+  const title = /\b(?:it|test)\s*\(\s*(['"`])([^'"`]+)\1/.exec(s)?.[2];
+  if (title) return TEST_KIND_FAILURE_RE.test(title) ? 'failure' : TEST_KIND_BOUNDARY_RE.test(title) ? 'boundary' : 'normal';
   if (TEST_KIND_FAILURE_RE.test(s)) return 'failure'
   if (TEST_KIND_BOUNDARY_RE.test(s)) return 'boundary'
   return 'normal'
@@ -252,9 +260,10 @@ export function classifyTestCase(blockText) {
 /** 추가된 줄들을 테스트 케이스 단위 블록으로 자른다 — 케이스 선언 줄부터 다음 선언 줄 직전까지가 본문. */
 function testCaseBlocks(added = []) {
   const blocks = []
-  for (const a of added) {
+  const masked = maskJavaScript(added.map(a => str(a?.text)).join('\n')).code.split('\n');
+  for (const [i, a] of added.entries()) {
     const t = str(a?.text)
-    if (TEST_CASE_RE.test(t)) blocks.push([t])
+    if (TEST_CASE_RE.test(masked[i])) blocks.push([t])
     else if (blocks.length) blocks[blocks.length - 1].push(t)
   }
   return blocks.map((b) => b.join('\n'))
@@ -271,7 +280,7 @@ export function newTestsFromDiff(diff) {
   let cases = 0
   for (const [path, f] of Object.entries(byFile)) {
     if (!TEST_FILE_RE.test(path)) continue
-    const blocks = testCaseBlocks(f.added ?? [])
+    const blocks = testCaseBlocks(f.added ?? []).filter(b => /\b(?:expect\s*\(|assert(?:\.[A-Za-z]+)?\s*\()/.test(b))
     if (!blocks.length) continue
     files.push(path)
     cases += blocks.length

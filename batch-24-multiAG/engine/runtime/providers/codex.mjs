@@ -29,7 +29,7 @@ import { assertSafeConfig, assertSafeModel, assertSafePath, spawnSafe, UnsafeArg
 
 export const CODEX_REASONING_EFFORTS = Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 
-export const CODEX_MARKERS = Object.freeze(['.auto-batch-worktree'])
+export const CODEX_MARKERS = Object.freeze(['.auto-batch-worktree', '.baroos-auto-worktree'])
 
 /** cwd 허용 판정(순수) — marker · linked worktree · 명시 env 중 하나. */
 export function codexCwdAllowed({ markerPresent = false, gitIsFile = false, envOverride = '' } = {}) {

@@ -1,0 +1,179 @@
+{
+  "result": "pass",
+  "mode": "changed-lines-and-branches",
+  "minimum": 90,
+  "percent": 97.78911564625851,
+  "branchPercent": 90.50554870530209,
+  "total": 1176,
+  "covered": 1150,
+  "branches": 811,
+  "coveredBranches": 734,
+  "unknown": [],
+  "files": [
+    {
+      "path": "batch-24-multiAG/engine/asf-resolve.mjs",
+      "total": 9,
+      "covered": 9
+    },
+    {
+      "path": "batch-24-multiAG/engine/assign.mjs",
+      "total": 1,
+      "covered": 1
+    },
+    {
+      "path": "batch-24-multiAG/engine/autofinish.mjs",
+      "total": 27,
+      "covered": 27
+    },
+    {
+      "path": "batch-24-multiAG/engine/backlog.mjs",
+      "total": 1,
+      "covered": 1
+    },
+    {
+      "path": "batch-24-multiAG/engine/bench.mjs",
+      "total": 20,
+      "covered": 20
+    },
+    {
+      "path": "batch-24-multiAG/engine/bmad-sync.mjs",
+      "total": 2,
+      "covered": 2
+    },
+    {
+      "path": "batch-24-multiAG/engine/diagnose.mjs",
+      "total": 3,
+      "covered": 3
+    },
+    {
+      "path": "batch-24-multiAG/engine/metrics.mjs",
+      "total": 2,
+      "covered": 2
+    },
+    {
+      "path": "batch-24-multiAG/engine/orchestrate.mjs",
+      "total": 5,
+      "covered": 5
+    },
+    {
+      "path": "batch-24-multiAG/engine/plan-queue.mjs",
+      "total": 4,
+      "covered": 4
+    },
+    {
+      "path": "batch-24-multiAG/engine/push-guard.mjs",
+      "total": 1,
+      "covered": 1
+    },
+    {
+      "path": "batch-24-multiAG/engine/readiness.mjs",
+      "total": 5,
+      "covered": 5
+    },
+    {
+      "path": "batch-24-multiAG/engine/report.mjs",
+      "total": 1,
+      "covered": 1
+    },
+    {
+      "path": "batch-24-multiAG/engine/run-night.mjs",
+      "total": 34,
+      "covered": 33
+    },
+    {
+      "path": "batch-24-multiAG/engine/runner-rules.mjs",
+      "total": 6,
+      "covered": 6
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs",
+      "total": 122,
+      "covered": 119
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/completion-rules.mjs",
+      "total": 13,
+      "covered": 13
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/model-health.mjs",
+      "total": 2,
+      "covered": 2
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/providers/claude.mjs",
+      "total": 18,
+      "covered": 18
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/providers/codex.mjs",
+      "total": 1,
+      "covered": 1
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/providers/index.mjs",
+      "total": 3,
+      "covered": 3
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/quality-rules.mjs",
+      "total": 52,
+      "covered": 52
+    },
+    {
+      "path": "batch-24-multiAG/engine/telegram-commands.mjs",
+      "total": 1,
+      "covered": 1
+    },
+    {
+      "path": "batch-24-multiAG/install.mjs",
+      "total": 9,
+      "covered": 9
+    },
+    {
+      "path": "batch-24-multiAG/engine/finish-stories.mjs",
+      "total": 35,
+      "covered": 35
+    },
+    {
+      "path": "batch-24-multiAG/engine/fixtures/fake-bmad-project.mjs",
+      "total": 293,
+      "covered": 293
+    },
+    {
+      "path": "batch-24-multiAG/engine/fixtures/strict-quality-fixture.mjs",
+      "total": 49,
+      "covered": 49
+    },
+    {
+      "path": "batch-24-multiAG/engine/fixtures/stub-claude.mjs",
+      "total": 123,
+      "covered": 120
+    },
+    {
+      "path": "batch-24-multiAG/engine/fixtures/stub-codex.mjs",
+      "total": 71,
+      "covered": 71
+    },
+    {
+      "path": "batch-24-multiAG/engine/gate-benchmark.mjs",
+      "total": 27,
+      "covered": 8
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/authorization-matrix.mjs",
+      "total": 17,
+      "covered": 17
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/quality-gates.mjs",
+      "total": 212,
+      "covered": 212
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/schema-migration.mjs",
+      "total": 7,
+      "covered": 7
+    }
+  ]
+}

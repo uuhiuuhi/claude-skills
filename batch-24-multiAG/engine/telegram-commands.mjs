@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readRecord } from './runtime/schema-migration.mjs';
 // 텔레그램 원격 명령 폴러 — 「머지 + 재개」 만. 러너(run-night.mjs) 무수정.
 //
 // 왜 생겼나(실사고): 미머지 auto/* 잔존으로 슬롯이 밤새 휴면했다. 휴면 해제의 유일한 열쇠
@@ -64,7 +65,7 @@ const DAILY_CAP = Number(CFG.dailyCap ?? 30)
 
 // BOM 제거 — PowerShell 이 쓴 JSON(예: telegram-chat.json)은 EF BB BF 로 시작해 JSON.parse 가 죽는다
 // (실기 테스트에서 실발생 · Windows 파일 교훈). 러너 notify 도 같은 내성을 갖는다.
-const readJson = (p, def) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8').replace(/^\uFEFF/, '')) : def)
+const readJson = (p, def) => (existsSync(p) ? readRecord(readFileSync(p, 'utf8').replace(/^\uFEFF/, '')) : def)
 const writeJson = (p, v) => writeFileSync(p, JSON.stringify(v, null, 2) + '\n', 'utf8')
 
 /** 원장 1행 — 수신·판정·실행 결과 전부 */

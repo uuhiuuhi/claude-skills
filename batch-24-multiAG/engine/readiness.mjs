@@ -13,7 +13,7 @@
 // 산출 JSON 스키마 = `night-batch-ops/readiness/1` (현황판 ⑦ 블록이 읽는다).
 
 // ── 상수 ─────────────────────────────────────────────────────────────────────
-export const READINESS_SCHEMA = 'night-batch-ops/readiness/1'
+export const READINESS_SCHEMA = 'batch-24-multiag/readiness/1'
 
 export const PASS = 'pass'
 export const FAIL = 'fail'
@@ -61,6 +61,7 @@ export const TASK_CRITERIA = Object.freeze([
   { id: 'T6', label: '만든 쪽과 다른 쪽이 실제로 읽고 교차 검토했고 높음 지적이 0이다', evidence: [{ file: '<story>-verification.json', field: 'review' }, { file: '<story>-verification.json', field: 'workers.dev' }], required: true },
   { id: 'T7', label: '문서에 적힌 상태와 실제 코드 상태가 같다', evidence: [{ file: 'diagnosis.json', field: 'stories[].verdict' }, { file: 'sprint-status.yaml', field: '<story>' }, { file: '<story>.md', field: 'Status' }], required: true },
   { id: 'T8', label: '완료 기록이 실측 수치를 인용하고 확인 못 한 것을 적었다', evidence: [{ file: '<story>.md', field: 'Completion Notes List' }], required: true },
+  { id: 'Q9', label: '위험도별 필수 게이트와 변경 코드 90% 커버리지', evidence: [{ file: '<story>-verification.json', field: 'quality.verdict' }], required: true },
 ])
 
 /** 프로젝트 8조건 (SPEC §7 뒷단 · 설계 §6 P1~P8). */
@@ -236,6 +237,10 @@ export function taskReadiness({ item = null, manifest = null, story = null, diag
     const c = fromCompletion(manifest, 'T8')
     criteria.push(c ? mk(C('T8'), c.result, c.why) : mk(C('T8'), NOT_VERIFIED, '완료 기록을 검사한 판정이 없다 — 실측 인용 여부를 확인하지 못했다'))
   }
+
+  const quality = manifest?.quality?.verdict;
+  const completion = manifest?.completion?.verdict;
+  criteria.push(mk(C('Q9'), quality === 'not-ready' || completion === 'not-ready' ? FAIL : quality === 'ready' && completion === 'ready' ? PASS : NOT_VERIFIED, `quality=${quality ?? 'not-verified'}; completion=${completion ?? 'not-verified'}`));
 
   return finish({ kind: 'task', subject: key, title: str(item?.title || key), criteria, diagnosis })
 }

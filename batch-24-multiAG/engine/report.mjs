@@ -15,7 +15,7 @@
 import { maskSecrets, deepRedact } from './diagnose.mjs'
 import { compareRuns } from './metrics.mjs'
 
-export const REPORT_SCHEMA = 'night-batch-ops/report/1'
+export const REPORT_SCHEMA = 'batch-24-multiag/report/1'
 
 /** SPEC §10 의 열 항목 — **순서·번호를 바꾸지 않는다**(테스트가 문다). */
 export const REPORT_SECTIONS = Object.freeze([

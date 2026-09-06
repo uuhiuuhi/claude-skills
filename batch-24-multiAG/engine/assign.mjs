@@ -1,3 +1,4 @@
+import { readRecord } from './runtime/schema-migration.mjs';
 // 워커 배정 규칙 — 2026-09-02 「9점대 하네스」
 //
 // 무엇을 대체하나: `runner-rules.assignProviders` 는 codex dev 를 **홀짝 인덱스**로 나눴다
@@ -79,7 +80,7 @@ const entryKey = (story, provider, role) => `${story}|${provider}|${role}`
 /** 파일 내용(문자열·객체·null) → 정규화된 기록. 깨졌으면 빈 기록(편성이 서면 안 된다). */
 export function parseHistory(input) {
   let raw = input
-  if (typeof raw === 'string') { try { raw = JSON.parse(raw) } catch { return emptyHistory() } }
+  if (typeof raw === 'string') { try { raw = readRecord(raw) } catch { return emptyHistory() } }
   if (!raw || typeof raw !== 'object' || typeof raw.entries !== 'object' || raw.entries === null) return emptyHistory()
   const entries = {}
   for (const [k, v] of Object.entries(raw.entries)) {

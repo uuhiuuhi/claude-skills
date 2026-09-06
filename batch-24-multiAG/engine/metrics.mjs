@@ -1,3 +1,4 @@
+import { readRecord } from './runtime/schema-migration.mjs';
 // 배치 계측 — 2026-09-02 「9점대 하네스」 (워커 F2)
 //
 // 무엇을 재나: 하네스가 「빨라졌다」고 말하려면 **무엇이 빨라졌는지**를 숫자로 대야 한다.
@@ -15,7 +16,7 @@
 import { appendFileSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-export const METRICS_SCHEMA = 'night-batch-ops/metrics/1'
+export const METRICS_SCHEMA = 'batch-24-multiag/metrics/1'
 export const METRICS_HISTORY_FILE = 'metrics-history.jsonl'
 export const metricsHistoryPath = (stateDir) => join(String(stateDir ?? '.'), METRICS_HISTORY_FILE)
 
@@ -91,7 +92,7 @@ export function parseCodexUsage(text) {
     const line = raw.trim()
     if (!line.startsWith('{') || !line.includes('turn.completed')) continue
     let ev
-    try { ev = JSON.parse(line) } catch { continue }
+    try { ev = readRecord(line) } catch { continue }
     if (ev?.type !== 'turn.completed' || !ev.usage) continue
     const u = ev.usage
     const i = Number(u.input_tokens ?? u.inputTokens ?? 0) || 0

@@ -156,12 +156,9 @@ export function enforceCrossSpec({ dev, review, ladder = DEFAULT_CLAUDE_LADDER }
   const r = typeof review === 'string' ? parseModelSpec(review) : review
   if (!d || !r) return { review: r, changed: false }
   if (d.provider === 'claude' && r.provider === 'claude') {
-    if (!d.model || !r.model || d.model !== r.model) return { review: r, changed: false }
-    const alt = ladder.find((m) => m !== d.model)
-    return alt ? { review: { provider: 'claude', model: alt }, changed: true } : { review: r, changed: false }
+    const model = d.model === 'sonnet' ? 'gpt-5.6-terra' : d.model === 'fable' ? 'gpt-6-astra' : 'gpt-5.6-sol';
+    return { review: { provider: 'codex', model }, changed: true };
   }
-  if (d.provider === 'codex' && r.provider === 'codex' && (d.model || '') === (r.model || '')) {
-    return { review: { provider: 'claude', model: ladder[0] ?? '' }, changed: true }
-  }
+  if (d.provider === 'codex' && r.provider === 'codex') return { review: { provider: 'claude', model: ladder[0] ?? 'opus' }, changed: true };
   return { review: r, changed: false }
 }
