@@ -68,11 +68,11 @@
 
 ## 전역 설치와 운영 상태
 
-Claude `C:/Users/user/.claude/skills/batch-24-multiAG`와 Codex `C:/Users/user/.codex/skills/batch-24-multiAG`는 백업 후 검증된 구현 `be8e776`으로 갱신했다. 최초 갱신 시 각 146개 파일을 해시 대조했고, 최종 문서·증거는 후속 동기화한다. 기존 실행 중인 운영 runner가 이 갱신만으로 교체되는 것은 아니다.
+Claude `C:/Users/user/.claude/skills/batch-24-multiAG`와 Codex `C:/Users/user/.codex/skills/batch-24-multiAG`는 백업 후 검증된 구현 `be8e776`으로 갱신했다. 최초 갱신 시 각 146개 파일을 해시 대조했고, 16:01 KST 최종 문서·증거 동기화 후 각 156개 파일의 SHA 일치와 모델 정책·품질 모듈 로드를 확인했다. 기존 실행 중인 운영 runner가 이 갱신만으로 교체되는 것은 아니다.
 
 **전역 단일화는 미완료다.** Claude의 `night-batch-ops`, `auto-story-finish`, Codex의 `auto-story-finish`를 보존했다. 구 전역 경로에 의존하는 실제 프로젝트가 남아 있기 때문이다. inspectier 두 프로젝트의 pinned runtime 이전은 빈 전역 환경에서 격리 smoke 6/6으로 검증했고 안전한 적용·rollback 스크립트를 준비했지만 실제 프로젝트에는 적용하지 않았다.
 
-운영 `C:/Projects/jng-os-auto`는 `19cc0b85`이며 이번 작업에서 변경하지 않았다. 2026-09-06 **15:53 KST** 조회 당시 `BaroOS-auto-slots`는 Ready, 다음 실행은 **16:05 KST**였다. 예약 작업을 끄거나 켜지 않았으며 운영 원격/main push도 하지 않았다.
+운영 `C:/Projects/jng-os-auto`는 `19cc0b85`이며 이번 작업에서 변경하지 않았다. 2026-09-06 **16:02 KST** 조회 당시 `BaroOS-auto-slots`는 Ready, 다음 실행은 **16:05 KST**였다. 예약 작업을 끄거나 켜지 않았으며 운영 원격/main push도 하지 않았다.
 
 운영 전환의 차단 사유는 DB integration 준비 상태다. 실제 테스트는 존재하지만 48개 파일에 hardcoded `it.skip` 51개, `it.skipIf` 19개, `ctx.skip` 134개 사용 지점이 있다(실행 테스트 수가 아닌 소스 선언 수). 엄격한 zero-skip landing 검사는 일반 코드 배치도 차단할 수 있다. 외부 계정·이메일·DB 쓰기를 동반할 수 있는 probe를 임의로 켜거나 인증 정보를 복사하지 않았다. API/auth/security/performance 프로젝트 adapter 부재는 각각 해당 변경에만 차단 사유가 된다.
 

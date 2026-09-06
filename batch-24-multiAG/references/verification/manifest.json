@@ -604,7 +604,32 @@
       }
     ],
     "legacyRemoved": false,
-    "reason": "actual legacy-dependent project rollout remains incomplete"
+    "reason": "actual legacy-dependent project rollout remains incomplete",
+    "finalSync": {
+      "at": "2026-09-06T07:01:51.193Z",
+      "documentationSnapshotCommit": "919b3e0cff077d0beb96263af7493bc06b3ff88d",
+      "targets": [
+        {
+          "path": "C:\\Users\\user\\.claude\\skills\\batch-24-multiAG",
+          "verifiedFiles": 156,
+          "changedFiles": 17,
+          "moduleLoad": "pass",
+          "legacyRetained": [
+            "night-batch-ops",
+            "auto-story-finish"
+          ]
+        },
+        {
+          "path": "C:\\Users\\user\\.codex\\skills\\batch-24-multiAG",
+          "verifiedFiles": 156,
+          "changedFiles": 17,
+          "moduleLoad": "pass",
+          "legacyRetained": [
+            "auto-story-finish"
+          ]
+        }
+      ]
+    }
   },
   "operationalState": {
     "at": "2026-09-06T15:53:17.4363389+09:00",
@@ -638,7 +663,18 @@
         "lastRun": "1999-11-30T00:00:00.0000000+09:00",
         "lastResult": 267011
       }
-    ]
+    ],
+    "finalReadOnlyCheck": {
+      "at": "2026-09-06T16:02:12.3635967+09:00",
+      "head": "19cc0b85",
+      "status": [
+        "?? .auto-batch-worktree"
+      ],
+      "task": "BaroOS-auto-slots",
+      "state": "Ready",
+      "nextRun": "2026-09-06T16:05:00+09:00",
+      "modified": false
+    }
   },
   "limits": [
     "Scores describe the gate engine, not application security certification.",
