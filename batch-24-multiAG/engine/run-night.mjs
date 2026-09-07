@@ -47,7 +47,7 @@ import { parallelHazardsCompat } from './conflicts.mjs'
 import { appendJsonl, metricsHistoryPath, parseCodexUsage, parseEngineLog, renderMetricsTable, summarizeTimeline, writeJsonAtomic } from './metrics.mjs'
 import { makeClaudePlanRunner, requestPlan } from './orchestrate.mjs'
 import { buildDag, parseDependsOn } from './plan-dag.mjs'
-import { LOG_PREFIX, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, LOG_PREFIX, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = fileURLToPath(resolveAsf('auto-story-pipeline.mjs'))
 // mockup 단계가 든 배치는 목업 폴더(config mockupGate.mockupsDir · 기본 mockups)를 스토리 커밋에 함께 싣는다 —
@@ -1147,7 +1147,7 @@ function runIntegrationGate({ landedStories, landingBase, batchId, timeoutMin, r
         record(`[INTEGRATION][FAIL] ${gate.why} — landing ${landedStories.length}건 되돌림(${landingBase.slice(0, 7)}) · 산출물 archive/integration-fail-* 태그 · log=${gateLogCopy || 'auto-pipeline-logs/integration-gate.log(되돌림으로 이전 내용)'}`)
         notify('통합 게이트 RED', `landing ${landedStories.length}건이 합쳐진 트리에서 qa RED — 되돌리고 STOP. archive/integration-fail-* 태그와 integration-gate.log 확인`,
           `통합 게이트 RED · landing ${landedStories.length}건 되돌림. ${NTFY_BRIEF}`)
-        worst ||= 1
+        worst ||= 1 // (이 함수는 landing-publication 테스트가 본문만 떼어 격리 실행한다 — 외부 헬퍼 참조 금지 · 여기 worst 는 0/1 뿐)
       } else {
         record(`[INTEGRATION][ROLLBACK-FAIL] ${gate.why} — **되돌림 실패**(HEAD ${nowHead.slice(0, 7)} ≠ ${landingBase.slice(0, 7)}${rs.status !== 0 ? ` · git reset exit ${rs.status}: ${(rs.stderr ?? '').trim().split('\n')[0]}` : ''}) · push 는 막았다 · 사람이 브랜치를 직접 확인해야 한다`)
         notify('통합 게이트 RED + 되돌림 실패 — 사람 확인 필요', `qa RED 뒤 \`git reset --hard ${landingBase}\` 가 듣지 않았다(HEAD=${nowHead}). push 는 막았고 배치는 STOP.\n브랜치 ${BRANCH} 를 사람이 직접 정리해야 한다. archive/integration-fail-* 태그에 산출물 보존.`,
@@ -1471,7 +1471,7 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
     if (!r || r.code !== 0) {
       const ev = await archiveEvidence(wt)
       if (ev) evidence[wt.story] = ev
-      record(`- **중단(exit ${r?.code ?? '?'}): ${wt.story} (병렬 dev)** — 성공분 landing 후 배치 STOP${ev ? ` · 증거 보관 ${ev}` : ''}`); worst ||= r?.code ?? 1; continue
+      record(isReviewPendingExit(r?.code) ? `- ⏳ 리뷰 대기(exit ${r.code}): ${wt.story} (병렬 dev) — 다음 편성이 마감 재검수${ev ? ` · 증거 보관 ${ev}` : ''}` : `- **중단(exit ${r?.code ?? '?'}): ${wt.story} (병렬 dev)** — 성공분 landing 후 배치 STOP${ev ? ` · 증거 보관 ${ev}` : ''}`); worst = worseExit(worst, r?.code ?? 1); continue
     }
     const head = spawnSync('git', ['-C', wt.dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim()
     if (head === wt.base) { record(`- 완주(커밋 없음): ${wt.story}`); continue }
@@ -1506,7 +1506,7 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
         // 충돌 파일 0 = 충돌이 아니라 **적용 거부**(dirty 트리·잘못된 부모 등)다 — 사유를 그대로 적어야 다음 사람이 헛짚지 않는다.
         const why = conflicted.length ? '자동 해소 불가 충돌: ' + conflicted.slice(0, 4).join(', ') : 'cherry-pick 거부: ' + ((pick.stderr ?? '').trim().split('\n').find((l) => /error|fatal/i.test(l)) ?? (pick.stderr ?? '').trim().split('\n')[0] ?? '?').slice(0, 160)
         record(`- **landing 실패(${why}): ${wt.story}** — 산출물은 archive/parallel-* 태그 보존 · 다음 순차 라운드가 회수`)
-        worst ||= 1
+        worst = worseExit(worst, 1)
         continue
       }
       record(`- 완주: ${wt.story} (병렬 dev → landing · 충돌 자동 해소 ${Object.keys(plan).length}파일)`)
@@ -1525,7 +1525,7 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   })
   const integration = gateOut.integration
   // 되돌림 실패(7)는 다른 실패보다 위다 — 앞선 워커 실패로 worst 가 이미 1이어도 7 로 올린다.
-  worst = gateOut.worst === 7 ? 7 : (worst || gateOut.worst)
+  worst = worseExit(worst, gateOut.worst) // 진짜 실패 > 리뷰 대기(8) > 성공 · 되돌림 실패(7) 최상위
   const pushed = pushBranchOnce({ enabled: Boolean(defaults.push), skipPush: gateOut.skipPush, record })
   writeBatchManifest({
     batchId, label: batch.label ?? '', stories: storyList, stages: batch.stages ?? ['dev'], workers, mode: 'parallel',
@@ -1552,10 +1552,11 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   // ── 배정 기록 — 라운드가 끝난 뒤 한 번. 연속 실패가 쌓이면 다음 편성이 그 프로바이더를 피한다. ──
   if (!dryRun) {
     writeAssignHistory(wts.flatMap((wt) => {
-      const okStory = (outs.find((o) => o.story === wt.story)?.code ?? 1) === 0
+      const storyCode = outs.find((o) => o.story === wt.story)?.code ?? 1
+      const okStory = storyCode === 0 || isReviewPendingExit(storyCode) // 리뷰 대기 = dev·qa 는 성공(Codex P2-5)
       // review 전용 배치는 dev 가 돌지 않았다 — dev 성적을 적으면 다음 배정이 없는 실패/성공을 근거로 삼는다
       const rows = reviewOnly ? [] : [{ story: wt.story, provider: wt.devProvider ?? 'claude', role: 'dev', ok: okStory, rounds: 1 }]
-      if (wt.review) rows.push({ story: wt.story, provider: wt.reviewProvider ?? specProvider(wt.review), role: 'review', ok: okStory, rounds: 1 })
+      if (wt.review && !isReviewPendingExit(storyCode)) rows.push({ story: wt.story, provider: wt.reviewProvider ?? specProvider(wt.review), role: 'review', ok: okStory, rounds: 1 })
       return rows
     }))
   }
@@ -1663,8 +1664,8 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
       if (pr !== null) {
         addMetrics(pr.metrics)
         results.push({ label, code: pr.code, started, batchBase, stories: batch.stories ?? [], stages: batch.stages ?? [] })
-        record(`- ${pr.code === 0 ? '완주' : `**중단(exit ${pr.code})**`}: ${label} (병렬)`)
-        if (pr.code !== 0) {
+        record(`- ${pr.code === 0 ? '완주' : isReviewPendingExit(pr.code) ? `⏳ 리뷰 대기(exit ${pr.code})` : `**중단(exit ${pr.code})**`}: ${label} (병렬)`)
+        if (pr.code !== 0 && !isReviewPendingExit(pr.code)) {
           record(`- 남은 배치는 실행하지 않았다 — \`auto-pipeline-logs/run-summary.log\` 확인`)
           break
         }
@@ -1720,7 +1721,7 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
         landedStories, landingBase: batchBase, batchId: seqBatchId, record,
         timeoutMin: batch.stageTimeoutMin ?? defaults.stageTimeoutMin ?? 120,
       })
-      code = gateOut.worst === 7 ? 7 : (code || gateOut.worst)
+      code = worseExit(code, gateOut.worst)
       seqIntegration = gateOut.integration.result
       // landing 0건이면 push 할 것이 없다 — 엔진이 커밋 전에 STOP 한 자리에서 없는 브랜치를 밀지 않는다.
       const pushed = pushBranchOnce({ enabled: Boolean(defaults.push) && landedStories.length > 0, skipPush: gateOut.skipPush, record })
@@ -1737,7 +1738,7 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
       })
     }
     results.push({ label, code, started, batchBase, stories: batch.stories ?? [], stages: batch.stages ?? [] })
-    record(`- ${code === 0 ? '완주' : `**중단(exit ${code})**`}: ${label}`)
+    record(`- ${code === 0 ? '완주' : isReviewPendingExit(code) ? `⏳ 리뷰 대기(exit ${code} · 다음 편성이 마감 재검수)` : `**중단(exit ${code})**`}: ${label}`)
     if (code !== 0) {
       // 순차 워커는 **본 트리**에서 돌았다 — STOP 이 남긴 미완 변경을 그대로 두면 다음 슬롯의 refresh 가
       // 「미완 작업」으로 거부해 사람이 커밋할 때까지 러너가 선다(2026-09-06/07 밤 8슬롯 공회전). 증거를 먼저
@@ -1752,6 +1753,8 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
         else if (kept?.failed) record(`⚠ STOP 잔여물 보존 실패 — ${kept.failed}. 다음 슬롯이 refresh 에서 멈추면 사람이 트리를 검토할 것`)
         else if (kept?.skipped && kept.skipped !== 'clean') record(`⚠ STOP 잔여물 보존 건너뜀 — ${kept.skipped}${kept.branch ? `(${kept.branch})` : ''}`)
       }
+      // 리뷰 대기(exit 8)는 고장이 아니다 — 잔여물은 위에서 보존했고, 남은 배치는 계속 돈다(👤 2026-09-07 · 동결 예외).
+      if (isReviewPendingExit(code)) continue
       // 앞 배치가 멈췄는데 뒤를 돌리면 원인이 섞인다.
       record(`- 남은 배치는 실행하지 않았다 — \`auto-pipeline-logs/run-summary.log\` 확인`)
       break
@@ -1788,7 +1791,7 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
   }
   writeSummary()
 
-  const worst = results.find((entry) => entry.code !== 0)
+  const worst = results.find((entry) => entry.code !== 0 && !isReviewPendingExit(entry.code)) // 리뷰 대기(exit 8)는 고장이 아니다
 
   // 조기 종료(STOP) 시 하루 상한 원장 환불 — 미실행 배치가 기록만 남아 이후 슬롯의
   // remaining 을 0 으로 만드는 결함 봉쇄(실사고 2026-08-27). 자동 편성 라운드에만 의미가 있다.
@@ -1818,7 +1821,8 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
   if (autoPlan && !dryRun) {
     const { s, win, save } = loadState()
     // 차단기 v2: 원인 서명(exit 코드 + 배치 라벨) 단위. stops 필드는 원격 명령 /status·/resume 호환용으로 유지된다.
-    Object.assign(win, stopRecord(win, worst ? worst.code : null, worst?.label))
+    const worstAny = results.find((entry) => entry.code !== 0) // 리뷰 대기(8) 포함 — stopRecord 가 8 을 「세지도 지우지도 않음」으로 다룬다
+    Object.assign(win, stopRecord(win, worst ? worst.code : (worstAny ? worstAny.code : null), worst?.label ?? worstAny?.label))
     // 진전 원장 — 이 라운드 커밋이 만진 스토리 md 키를 남긴다. 편성기의 「무진전 편성 연속」 상한 재료다
     // (같은 스토리를 몇 번 편성했나가 아니라, 편성하고도 아무것도 못 만졌나를 센다).
     const day = s.days[START_DATE]
@@ -1853,7 +1857,7 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     }
     if (spend.speak) notify(spend.title, spend.body)
     else if (!spendBlocked) notify(worst ? `슬롯 STOP(exit ${worst.code}) · 라운드 ${round}` : `슬롯 완주 ${done}배치 · 라운드 ${round}`,
-      `${results.map((r) => `${r.code === 0 ? 'OK' : 'STOP'} ${r.label}`).join('\n')}${blocked ? (fullMode ? `\n사람 몫 ${blocked}건 — 「내가 할 일 뭐야」` : `\n결정 대기가 스토리 ${blocked}개를 막는 중 — DECISIONS-INBOX.md`) : ''}${exhausted ? `\n무인 소진 ${exhausted}건 — 사람 판단 필요(아침 브리핑)` : ''}`,
+      `${results.map((r) => `${r.code === 0 ? 'OK' : isReviewPendingExit(r.code) ? '리뷰대기' : 'STOP'} ${r.label}`).join('\n')}${blocked ? (fullMode ? `\n사람 몫 ${blocked}건 — 「내가 할 일 뭐야」` : `\n결정 대기가 스토리 ${blocked}개를 막는 중 — DECISIONS-INBOX.md`) : ''}${exhausted ? `\n무인 소진 ${exhausted}건 — 사람 판단 필요(아침 브리핑)` : ''}`,
       // 공개 폴백에는 배치 라벨을 싣지 않는다 — 건수·exit 코드까지만.
       `완주 ${done}건${worst ? ` · STOP exit ${worst.code}` : ''}${blocked ? ` · ${fullMode ? '사람 몫' : '결정 대기'} ${blocked}건` : ''}. ${NTFY_BRIEF}`)
   }

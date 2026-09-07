@@ -200,12 +200,14 @@ export function summarizeTimeline(events = [], opts = {}) {
     : qaLast.length ? Math.max(...qaLast) : null
   const highFindings = Number(q.highFindings ?? 0) || 0
   const integration = String(q.integration ?? 'pass')
-  const badStories = stories.filter((s) => Number.isFinite(s.exit) && s.exit !== 0).map((s) => s.story)
+  const badStories = stories.filter((s) => Number.isFinite(s.exit) && s.exit !== 0 && s.exit !== 8).map((s) => s.story) // 8 = 리뷰 대기(고장 아님 · runner-rules.REVIEW_PENDING_EXIT)
+  const pendingStories = stories.filter((s) => Number(s.exit) === 8).map((s) => s.story)
   const why = []
   if (qaExit === null) why.push('qa 결과 없음(게이트 미실행)')
   else if (qaExit !== 0) why.push(`qa RED(exit ${qaExit})`)
   if (highFindings > 0) why.push(`리뷰 high ${highFindings}건`)
   if (integration !== 'pass') why.push(`통합 게이트 ${integration}`)
+  if (pendingStories.length) why.push(`리뷰 대기 ${pendingStories.length}건(다음 편성이 마감 재검수)`)
   if (badStories.length) why.push(`워커 STOP ${badStories.join(',')}`)
 
   return {

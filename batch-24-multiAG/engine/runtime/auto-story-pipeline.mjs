@@ -85,13 +85,13 @@ import { buildCodexCommand, runCodexWorker, classifyCodexFailure, codexFailureTe
 import { createGitGuard, findCredentialRemotes, stripRemoteCredentials, localGitFingerprintFor } from "./providers/git-guard.mjs";
 import { assertSafeModel, assertSafePath, normalizeCommand, spawnSafe } from "./providers/spawn-safe.mjs";
 import { safeGitPush } from "./push-guard.mjs";
-import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes } from "./completion-rules.mjs";
+import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes, reviewPendingOnly } from "./completion-rules.mjs";
 import { StageRouter, preferredDevProvider } from './stage-router.mjs';
 import { MODEL_CATALOG, failureKind, providerOf, limitDowngradeMode } from './model-policy.mjs';
 import { storyRisk, storyDifficulty } from '../assign.mjs';
 import { readEvidenceFor } from './providers/codex.mjs';
 import { deepRedact } from './providers/redact.mjs';
-import { parseFileList } from '../runner-rules.mjs';
+import { parseFileList, REVIEW_PENDING_EXIT } from '../runner-rules.mjs';
 import { countReviewRounds } from '../story-ledger.mjs';
 import { applyReviewTail, applyReviewTailBlock } from './review-tail.mjs';
 import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendDecisionsInbox, appendCompletionNotes, countOpenFindings } from "./story-writes.mjs";
@@ -149,6 +149,8 @@ const batchKind = ['new', 'recovery', 'closeout'].includes(opt('batch-kind', '')
 const routingConfig = routingPath ? JSON.parse(readFileSync(routingPath, 'utf8')) : {};
 // 리뷰 꼬리 정책(👤 2026-09-07 「리뷰 횟수 최적화」): N차 리뷰부터 high 가 아닌 열린 Patch 를 ⏭️ Defer 로 닫는다(review-tail.mjs). 0 = 끔.
 const deferTailFromRound = Number(routingConfig?.autonomy?.deferTailFromRound ?? 3);
+// 5범주 경로 보호(👤 2026-09-07 「나」): 프로젝트가 autonomy.noDeferPaths 로 민감 경로 정규식을 더한다(엔진 기본은 review-tail.mjs).
+const noDeferPaths = Array.isArray(routingConfig?.autonomy?.noDeferPaths) ? routingConfig.autonomy.noDeferPaths.map(String) : [];
 const routingEnabled = routingConfig.modelPolicy?.enabled === true;
 const modelStateDir = opt('model-state-dir', process.env.AUTO_BATCH_STATE_DIR || '');
 if (routingEnabled && !modelStateDir) throw new Error('routing requires an explicit model-state-dir');
@@ -791,7 +793,7 @@ const REVIEW_POLICY = (s) => {
   const tail = deferTailFromRound > 0
     ? `${deferTailFromRound}차부터 엔진이 high 가 아닌 Patch 를 자동 이월(⏭️ Defer · 이월 금지 5범주 제외)하고 done 을 허용한다 — ${n >= deferTailFromRound ? "지금이 그 라운드다: " : ""}정말 막아야 할 것만 high 로 낸다.`
     : "꼬리 이월 정책은 꺼져 있다.";
-  return ` [리뷰 정책 · 2026-09-07] 이 스토리는 ${n}차 리뷰다. ① 정확성·명시 요구사항(AC·Dev Notes 제약)에 영향을 주는 것만 \`- [ ] [Review][Patch][high|medium|low] <제목> [file:line] — <상세>\` 또는 \`- [ ] [Review][Decision] …\` 으로 낸다 — 심각도 표기는 필수(high = AC 실패·데이터 오염·사용자 차단 · 표기 없는 Patch 는 medium 으로 본다). ② 취향·스타일·과잉 방어·리팩터링 제안은 \`- [x] [Review][Optional] <제목> — ⏭️ optional(정확성·명시 요구사항 영향 없음)\` 로 적는다. ③ 이번 diff 가 만든 회귀가 아닌 기존 문제는 \`- [x] [Review][Defer] <제목> [file:line] — ⏭️ deferred, pre-existing\` 으로 분리한다. ④ 보안·권한 / 개인정보 / 데이터 손실·복구 / 결제·청구 / 외부 발송·배포 안전장치는 심각도 무관 Patch/Decision 이다. ⑤ 발견 0건이면 억지로 만들지 말고 \`- ✅ Clean review — 발견 0건\` 한 줄만 남긴다. ⑥ ${tail} ⑦ 이번 라운드 기록은 스토리 파일 Tasks 절 안에 **반드시 새 헤딩 \`### Review Findings — ${n}차 (${today()} · bmad-code-review)\`** 을 열고 그 아래에 적는다 — 엔진이 이 헤딩으로 라운드를 세고 꼬리 정책을 적용한다(헤딩 없이 기존 절에 덧붙이면 라운드가 0 으로 남아 상한·이월이 작동하지 않는다 · 2-25 실사고).`;
+  return ` [리뷰 정책 · 2026-09-07] 이 스토리는 ${n}차 리뷰다. ① 정확성·명시 요구사항(AC·Dev Notes 제약)에 영향을 주는 것만 \`- [ ] [Review][Patch][high|medium|low] <제목> [file:line] — <상세>\` 또는 \`- [ ] [Review][Decision] …\` 으로 낸다 — 심각도 표기는 필수(high = AC 실패·데이터 오염·사용자 차단 · 표기 없는 Patch 는 medium 으로 본다). ② 취향·스타일·과잉 방어·리팩터링 제안은 \`- [x] [Review][Optional] <제목> — ⏭️ optional(정확성·명시 요구사항 영향 없음)\` 로 적는다. ③ 이번 diff 가 만든 회귀가 아닌 기존 문제는 \`- [x] [Review][Defer] <제목> [file:line] — ⏭️ deferred, pre-existing\` 으로 분리한다. ④ 보안·권한 / 개인정보 / 데이터 손실·복구 / 결제·청구 / 외부 발송·배포 안전장치에 닿는 지적은 Patch/Decision 으로 내되 **심각도를 high 로 매기고 줄 끝에 \`[5범주]\` 표식을 붙인다**(엔진은 이 표식·해당 파일 경로·5범주 어휘 중 하나만 있어도 이월하지 않는다 — 에둘러 쓰지 말고 범주를 그대로 적어라). ⑤ 발견 0건이면 억지로 만들지 말고 \`- ✅ Clean review — 발견 0건\` 한 줄만 남긴다. ⑥ ${tail} ⑦ 이번 라운드 기록은 스토리 파일 Tasks 절 안에 **반드시 새 헤딩 \`### Review Findings — ${n}차 (${today()} · bmad-code-review)\`** 을 열고 그 아래에 적는다 — 엔진이 이 헤딩으로 라운드를 세고 꼬리 정책을 적용한다(헤딩 없이 기존 절에 덧붙이면 라운드가 0 으로 남아 상한·이월이 작동하지 않는다 · 2-25 실사고).`;
 };
 const prompts = {
   create: (s) => `/bmad-create-story ${s}\n\n${GUARD} 스토리 스펙(AC·파일 그라운딩)을 작성·저장하고 종료.`,
@@ -927,7 +929,7 @@ function applyCodexReview(story, res, w) {
   const r = renderReviewFindings({ story: storyKey, model: w.spec.model, date: today(), targetRef: w.targetRef, round: reviewRoundOf(md) + 1, result: json });
   // (👤 2026-09-07 리뷰 꼬리 정책) N차 이상이면 high 가 아닌 열린 Patch 를 ⏭️ Defer 로 닫는다(이월 금지 5범주 제외 · review-tail.mjs).
   // **삽입 전 렌더 블록**에 적용한다 — insertReviewFindings 는 Tasks 절 끝에 넣으므로 파일 순서상 마지막 리뷰가 아닐 수 있다(Codex 교차리뷰 1차 M3).
-  const tail = applyReviewTailBlock(r.block, { round: reviewRoundOf(md) + 1, fromRound: deferTailFromRound, date: today(), story: storyKey });
+  const tail = applyReviewTailBlock(r.block, { round: reviewRoundOf(md) + 1, fromRound: deferTailFromRound, date: today(), story: storyKey, noDeferPaths });
   if (tail.applied) note(`[${story}][CODEX][REVIEW] 리뷰 꼬리 정책 — ${tail.why}`);
   let next = insertReviewFindings(md, tail.applied ? tail.text : r.block);
   // (F30) 이번 라운드 0건이어도 **이전 라운드의 열린 Patch/Decision** 이 남아 있으면 done 이 아니다
@@ -1229,7 +1231,7 @@ function runClaude(stage, story, variant = null) {
     if (sfTail && postOk && reviewRoundOf(mdTail) <= reviewRoundsBefore) note(`⚠ [${story}][CLAUDE][REVIEW] 이번 라운드 헤딩(### Review Findings — N차)이 새로 생기지 않았다 — 라운드 계수·꼬리 정책 미적용(리뷰 지시문 ⑦ 위반 · 다음 라운드에서 헤딩을 요구한다)`);
     if (sfTail && postOk && reviewRoundOf(mdTail) > reviewRoundsBefore) {
       // before 를 주면 이번에 새로 생긴 리뷰 헤딩을 블록으로 고른다 — 리뷰어가 Tasks 절에 끼워 넣어 파일 순서상 마지막이 아닐 수 있다(Codex 2차 M3)
-      const tail = applyReviewTail(mdTail, { round: reviewRoundOf(mdTail), fromRound: deferTailFromRound, date: today(), story: basename(sfTail, '.md'), before: storyTextBefore });
+      const tail = applyReviewTail(mdTail, { round: reviewRoundOf(mdTail), fromRound: deferTailFromRound, date: today(), story: basename(sfTail, '.md'), before: storyTextBefore, noDeferPaths });
       if (tail.applied) {
         let nextTail = tail.text;
         const openNow = countOpenFindings(nextTail, 'Patch') + countOpenFindings(nextTail, 'Decision');
@@ -1747,6 +1749,7 @@ try { unlinkSync(exitInfoFile); } catch { /* 이전 배치 부기 없음 */ } //
 
 ensureBranch();
 
+const reviewPendingStories = []; // (👤 2026-09-07 · 동결 예외) 리뷰 대기 — 남은 스토리까지 돌린 뒤 한 번에 exit 8(Codex 리뷰 P2-4: 뒤 스토리가 편성만 되고 안 돈 채 사라지지 않게)
 for (const story of stories) {
   note(`──────── STORY ${story} ────────`);
 
@@ -1842,6 +1845,13 @@ for (const story of stories) {
   if (!dryRun && (final?.completion?.verdict !== 'ready' || final?.quality?.codeFingerprint !== codeFingerprint())) {
     holdStory(story);
     if (!doCommit && !(stages.includes('dev') && stages.includes('review'))) { note(`↷ [${story}] 요청 단계 완료 · completion=${final?.completion?.verdict ?? 'not-verified'} · done/commit/push 없음`); continue; }
+    // (👤 2026-09-07 · 동결 예외) 회수(dev 전용) 배치는 review 단계가 없어 T6 를 채울 수 없다 — 이건 고장이 아니라 다음 편성(마감 재검수)의 몫.
+    // STOP(exit 1)로 세면 차단기가 낮 창을 잠근다(09-07 실사고 · 3-8 2회 + 2-26 2회). exit 8 「리뷰 대기」로 나가고 러너가 구분한다. done/commit/push 없음은 불변.
+    if (final?.quality?.codeFingerprint === codeFingerprint() && reviewPendingOnly(final?.completion?.criteria, { hasReviewStage: stages.includes('review') })) {
+      note(`⏳ [${story}] 리뷰 대기(exit ${REVIEW_PENDING_EXIT}) — 이 배치엔 review 단계가 없어 T6(교차 검토)만 미충족 · 다음 편성이 마감 재검수를 연다 · done/commit/push 없음 · 차단기 미계수(잔여물은 러너의 STOP 보존 커밋)`);
+      reviewPendingStories.push(story);
+      continue;
+    }
     note(`✖ COMPLETION STOP — [${story}] ${final?.completion?.verdict ?? 'not-verified'} · done/commit/push blocked · ${JSON.stringify(final?.completion?.criteria?.filter(c => c.result !== 'pass'))}`);
     writeExitInfo({ code: 1, kind: 'qa', story, stage: 'completion', why: final?.completion?.verdict ?? 'not-verified' });
     process.exit(1);
@@ -1850,6 +1860,13 @@ for (const story of stories) {
   const sha = commitStory(story, stages);
   if (sha) finalizeManifest(story, sha);
   note(`✔ [${story}] 완료 (review 상태까지).${doCommit ? ` 스토리 커밋${doPush ? "+푸시(" + branchName + ")" : ""} 수행 — 정본 main 반영은 사람 머지.` : " 커밋/푸시는 사람 게이트 — 미실행."}`);
+}
+
+// (👤 2026-09-07 · 동결 예외) 리뷰 대기 스토리가 있으면 e2e·push 전에 exit 8 — 이 배치 산출물의 push 는 다음 편성(마감 재검수) 뒤 러너 몫(STOP 잔여물 보존과 같은 경로).
+if (reviewPendingStories.length) {
+  note(`⏳ 리뷰 대기 ${reviewPendingStories.length}건(${reviewPendingStories.join(", ")}) — exit ${REVIEW_PENDING_EXIT} · done/commit/push 없음 · 러너는 고장으로 세지 않는다`);
+  writeExitInfo({ code: REVIEW_PENDING_EXIT, kind: 'review-pending', story: reviewPendingStories.join('+'), stage: 'completion', why: 'T6 only — no review stage in this batch' });
+  process.exit(REVIEW_PENDING_EXIT);
 }
 
 // ---- (2026-08-08) 배치 종료 e2e 스모크 — 프로젝트가 --e2e 로 명령을 지정한 경우에만, 전 스토리 완주 후 1회 ----

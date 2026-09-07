@@ -12,11 +12,23 @@ export function waitAuthMin(autoPlan, batchVal, defaultVal) {
   return batchVal ?? defaultVal ?? 480
 }
 
-/** 연속 중단 차단기 갱신 — 한도(exit 5)는 고장이 아니라 날씨다.
+/** 엔진 종료 코드 8 = 「리뷰 대기」(👤 2026-09-07 · 동결 예외) — 회수(dev 전용) 배치가 qa GREEN 인데 이 배치엔 review 단계가 없어
+ *  완주 게이트 T6(교차 검토)만 못 채운 상태. 고장이 아니라 다음 편성(마감 재검수)의 몫이다. 09-07 낮 실사고: 3-8 2회 + 2-26 2회 =
+ *  창 누적 4회 차단(11:0x~12:15 공회전). 차단기·알림에서 제외하고 다음 배치를 계속 돈다(잔여물 보존 커밋은 그대로). */
+export const REVIEW_PENDING_EXIT = 8
+export const isReviewPendingExit = (code) => Number(code) === REVIEW_PENDING_EXIT
+/** 종료 코드 합산 — 진짜 실패가 리뷰 대기(8)를 덮고, 8 은 성공(0)을 덮는다 · 되돌림 실패(7)가 최상위 · 같은 등급은 앞 값 유지.
+ *  종전 `worst ||= code` 는 8 이 먼저 오면 뒤의 실패 1 을 가렸다(Codex 리뷰 P1). */
+export function worseExit(a, b) {
+  const rank = (c) => { const n = Number(c ?? 0); return n === 0 ? 0 : isReviewPendingExit(n) ? 1 : n === 7 ? 3 : 2 }
+  return rank(b) > rank(a) ? Number(b) : Number(a ?? 0)
+}
+
+/** 연속 중단 차단기 갱신 — 한도(exit 5)는 고장이 아니라 날씨다 · 리뷰 대기(exit 8)도 고장이 아니다.
  *  5 를 stops 에 세면 한도 두 번에 밤 전체가 「고장」으로 분류된다. */
 export function nextStops(prevStops, worstCode) {
   if (worstCode == null) return 0
-  if (worstCode === 5) return prevStops
+  if (worstCode === 5 || isReviewPendingExit(worstCode)) return prevStops
   return prevStops + 1
 }
 
@@ -227,7 +239,7 @@ export function lockAction({ exists, parseOk, pidAlive, hbAgeMs }) {
 export function stopRecord(win, worstCode, label) {
   const w = { sigs: { ...(win?.sigs ?? {}) }, total: win?.total ?? 0, stops: win?.stops ?? 0 }
   if (worstCode == null) return { ...w, sigs: {}, stops: 0 } // 성공 — 스트릭 소거
-  if (worstCode === 5) return w // 한도는 날씨
+  if (worstCode === 5 || isReviewPendingExit(worstCode)) return w // 한도는 날씨 · 리뷰 대기는 다음 편성 몫
   const sig = `${worstCode}|${label ?? ''}`
   w.sigs[sig] = (w.sigs[sig] ?? 0) + 1
   w.total += 1

@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn } from './runner-rules.mjs'
+import { REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn } from './runner-rules.mjs'
 
 const RUN_NIGHT_URL = new URL('./run-night.mjs', import.meta.url)
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -516,5 +516,23 @@ describe('[사다리] 오케스트레이터 모델 사다리 — 👤 2026-09-04
     assert.equal(shouldLadderOn('deterministic-fallback(invented-story:9-9)'), false)
     assert.equal(shouldLadderOn('fable'), false)
     assert.equal(shouldLadderOn(null), false)
+  })
+})
+
+describe('리뷰 대기(exit 8) — 👤 2026-09-07 동결 예외: 회수 dev 배치의 T6 미충족은 고장이 아니다', () => {
+  it('nextStops·stopRecord 는 exit 8 을 세지 않는다(한도 exit 5 와 같은 취급) · 차단도 안 된다', () => {
+    assert.equal(REVIEW_PENDING_EXIT, 8); assert.equal(isReviewPendingExit('8'), true); assert.equal(isReviewPendingExit(1), false)
+    assert.equal(nextStops(1, 8), 1)
+    let w = stopRecord(undefined, 8, 'A'); w = stopRecord(w, 8, 'A'); w = stopRecord(w, 8, 'A'); w = stopRecord(w, 8, 'A')
+    assert.equal(stopBlocked(w), false); assert.equal(w.total, 0)
+    w = stopRecord(w, 1, 'A'); assert.equal(w.total, 1)
+    // 리뷰 대기 라운드는 스트릭을 지우지도 않는다(Codex P2-3) — 고장 A → 리뷰 대기 → 고장 A = 2회 차단
+    let v = stopRecord(undefined, 1, 'A'); v = stopRecord(v, 8, 'B'); v = stopRecord(v, 1, 'A')
+    assert.equal(stopBlocked(v), true)
+  })
+  it('worseExit — 진짜 실패 > 리뷰 대기(8) > 성공 · 되돌림 실패(7) 최상위 · 같은 등급은 앞 값(Codex P1-2)', () => {
+    assert.equal(worseExit(0, 8), 8); assert.equal(worseExit(8, 1), 1); assert.equal(worseExit(1, 8), 1)
+    assert.equal(worseExit(8, 0), 8); assert.equal(worseExit(0, 0), 0); assert.equal(worseExit(undefined, 1), 1)
+    assert.equal(worseExit(1, 7), 7); assert.equal(worseExit(7, 1), 7); assert.equal(worseExit(1, 6), 1); assert.equal(worseExit(5, 8), 5); assert.equal(worseExit(8, 5), 5)
   })
 })

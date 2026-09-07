@@ -15,6 +15,36 @@ import { fenceStep, atxHeadingDepth, reviewRoundHeadingDepth } from '../story-le
 
 // 심각도는 닫는 강조 기호·공백 뒤에도 올 수 있다: `**[Review][Patch]**[high]` · `[Review][Patch] [low]` (1차 H2)
 const OPEN_PATCH_RE = /^([ \t]*- )\[ \] ([*_]{0,2}\[Review\]\[Patch\][*_]{0,2}[ \t]*(?:\[([A-Za-z]+)\])?.*)$/
+// ── 5범주 틈 좁히기(👤 2026-09-07 「나」) — 단어 목록(NO_DEFER_RE)만으로는 리뷰어가 에둘러 쓰면 medium 이 이월될 수 있다. 두 겹을 더한다.
+// ① 리뷰어 표식: 지시문이 5범주 지적에 [5범주]([guard]·[no-defer] 동의어)를 붙이게 한다 — 표식이 있으면 심각도 무관 유지.
+const GUARD_TAG_RE = /\[(5범주|guard|no-defer)\]/i
+// ② 경로 보호: 지적이 가리키는 **파일 경로**가 민감 영역이면 문구와 무관하게 유지. 엔진 기본(프로젝트 공통 어휘) + autonomy.noDeferPaths(프로젝트 정규식 문자열 배열).
+//    경로 토큰만 본다(본문 단어가 아니라) — "session" 같은 낱말이 산문에 있어도 경로가 아니면 안 잡힌다(과잉 유지로 꼬리 정책을 무력화하지 않게).
+export const NO_DEFER_PATH_DEFAULT_RE = /(^|[\/\\])(supabase|migrations?|auth|login|session|rls|polic(?:y|ies)|permissions?|roles?|billing|invoices?|payments?|charges?|청구|결제|vault|notify|notifications?|outbox|mail|sms|telegram|webhooks?|dispatch|deploy|wrangler|workflows|backup|restore|purge|secrets?|credentials?)(?=[\/\\.\-_]|$)|(^|[\/\\])\.env(?:\.|$)|\.(?:sql|pem|key)$/i
+// 경로 토큰 — 허용 문자(유니코드 글자·숫자·_ . - / \)의 연속을 **한 번의 선형 스캔**으로 자른 뒤(Codex 2차 M1: 구분자 없는 4만 자에서 1.9초 → 선형),
+// ① 구분자(/ 또는 \)가 든 것은 경로 ② 구분자 없는 점 토큰은 **위치 표기 안([…]·백틱)** 이거나 점파일(.env)이거나 알려진 파일 확장자일 때만 경로다 —
+// `notifications.length`·`session.duration` 같은 산문 멤버식은 경로가 아니다(Codex 2차 M2). 따옴표·괄호·백틱은 문자 클래스 밖이라 자동 제외(1차 M3).
+const RUN_RE = /[\p{L}\p{N}_.\-\/\\]+/gu
+const FILE_EXT_RE = /^(?:[cm]?[jt]sx?|sql|toml|jsonc?|ya?ml|md|env|sh|ps1|bat|cmd|py|rb|go|rs|java|kt|cs|php|tsv|csv|txt|html?|css|scss|svg|pem|key|crt|cer|p12|pfx|lock|cfg|ini|conf|properties|xml|gradle|dockerfile)$/i
+export function pathTokens(text) {
+  const src = String(text); const out = []
+  for (const m of src.matchAll(RUN_RE)) {
+    const raw = m[0]; const s = raw.replace(/[.,;:]+$/, '')
+    if (s.length < 2 || /^\.{1,2}$/.test(s)) continue
+    if (/[\/\\]/.test(s)) { out.push(s); continue }
+    const dot = s.lastIndexOf('.'); if (dot < 0) continue
+    const before = src[m.index - 1] ?? '', after = src[m.index + raw.length] ?? ''
+    const inRef = before === '[' || before === '`' || after === ']' || after === '`'
+    if (inRef || s.startsWith('.') || FILE_EXT_RE.test(s.slice(dot + 1))) out.push(s)
+  }
+  return out
+}
+export function buildNoDeferPathRes(extra = []) {
+  const res = [NO_DEFER_PATH_DEFAULT_RE]
+  for (const s of Array.isArray(extra) ? extra : []) { try { res.push(new RegExp(String(s), 'i')) } catch { /* 잘못된 정규식은 무시(설정 오류가 밤을 세우지 않게) */ } }
+  return res
+}
+const pathGuarded = (full, res) => pathTokens(full).some((p) => res.some((re) => re.test(p)))
 // 지적의 이어지는 줄 = 들여쓴 줄(중첩 불릿 `  - …` 포함) · 빈 줄 뒤에 들여쓴 문단이 오면 그 문단까지(CommonMark 목록 항목 경계 · Codex 3차 H1).
 // 헤딩·펜스(앞 공백 0~3)는 항목이 아니다.
 const isIndented = (line) => /^[ \t]+\S/.test(line) && !atxHeadingDepth(line) && !/^ {0,3}(`{3,}|~{3,})/.test(line)
@@ -30,7 +60,8 @@ function collectContinuation(lines, i, to) {
 }
 const oneLine = (s) => String(s).replace(/\s+/g, ' ').trim()
 
-function rewriteRegion(lines, from, to, { round, date, story }) {
+function rewriteRegion(lines, from, to, { round, date, story, noDeferPaths }) {
+  const pathRes = buildNoDeferPathRes(noDeferPaths)
   const out = { deferred: [], kept: [] }
   let fence = null
   for (let i = from; i < to; i++) {
@@ -45,6 +76,8 @@ function rewriteRegion(lines, from, to, { round, date, story }) {
     const sev = (m[3] || 'medium').toLowerCase()
     if (sev === 'high' || sev === 'critical') { out.kept.push({ line: i + 1, why: sev }); continue }
     if (NO_DEFER_RE.test(full)) { out.kept.push({ line: i + 1, why: '이월 금지 5범주' }); continue }
+    if (GUARD_TAG_RE.test(full)) { out.kept.push({ line: i + 1, why: '5범주 표식' }); continue }
+    if (pathGuarded(full, pathRes)) { out.kept.push({ line: i + 1, why: '5범주 경로' }); continue }
     const body = m[2].replace(/\s+$/, '')
     lines[i] = m[1] + '[x] ~~' + body + '~~ — ⏭️ Defer(리뷰 꼬리 정책 · ' + round + '차 · ' + date + ' · deferred-work 이관)'
     out.deferred.push(oneLine(body + (cont.length ? ' ' + cont.map(oneLine).join(' ') : '')) + ' — ⏭️ 리뷰 꼬리 정책(' + story + ' ' + round + '차 · ' + date + ' · ' + (tagged ? sev : '심각도 미표기=medium') + ')')
@@ -79,11 +112,11 @@ function reviewHeadings(lines) {
 /**
  * 파일 전체에서 이번 라운드 블록에 적용한다(bmad-code-review 경로).
  * @param {string} md 스토리 원문(리뷰 기재 후)
- * @param {{round:number, fromRound?:number, date?:string, story?:string, before?:string|null}} o
+ * @param {{round:number, fromRound?:number, date?:string, story?:string, before?:string|null, noDeferPaths?:string[]}} o
  *   round = 이번 라운드 번호 · before = 리뷰 워커 실행 전 원문(주면 그때 없던 헤딩 중 마지막을 이번 블록으로 고른다)
  * @returns {{text:string, applied:boolean, deferred:string[], kept:{line:number, why:string}[], why:string}}
  */
-export function applyReviewTail(md, { round, fromRound = 3, date = '', story = '', before = null } = {}) {
+export function applyReviewTail(md, { round, fromRound = 3, date = '', story = '', before = null, noDeferPaths = [] } = {}) {
   const text = String(md ?? '')
   const base = { text, applied: false, deferred: [], kept: [] }
   const g = gate(round, fromRound); if (g) return { ...base, why: g }
@@ -105,15 +138,15 @@ export function applyReviewTail(md, { round, fromRound = 3, date = '', story = '
     const d = atxHeadingDepth(lines[i])
     if (d && d <= pick.depth) { end = i; break }
   }
-  return finish(text, lines, nl, rewriteRegion(lines, pick.i + 1, end, { round, date, story }), round)
+  return finish(text, lines, nl, rewriteRegion(lines, pick.i + 1, end, { round, date, story, noDeferPaths }), round)
 }
 
 /** 삽입 전 렌더 블록(헤딩 포함 · 한 라운드) 전체에 적용한다(Codex 경로). */
-export function applyReviewTailBlock(block, { round, fromRound = 3, date = '', story = '' } = {}) {
+export function applyReviewTailBlock(block, { round, fromRound = 3, date = '', story = '', noDeferPaths = [] } = {}) {
   const text = String(block ?? '')
   const base = { text, applied: false, deferred: [], kept: [] }
   const g = gate(round, fromRound); if (g) return { ...base, why: g }
   const nl = text.includes('\r\n') ? '\r\n' : '\n'
   const lines = text.split(/\r?\n/)
-  return finish(text, lines, nl, rewriteRegion(lines, 0, lines.length, { round, date, story }), round)
+  return finish(text, lines, nl, rewriteRegion(lines, 0, lines.length, { round, date, story, noDeferPaths }), round)
 }

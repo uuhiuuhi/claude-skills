@@ -586,7 +586,7 @@ export function codexReviewPrompt({ story, storyFile, diffFile, changedFiles = [
     '- **정확성이나 명시된 요구사항(AC·Dev Notes 제약)에 영향을 주는 것만** kind=patch(고칠 것) 또는 decision(사람이 정해야 함)으로 낸다. 취향·스타일·과잉 방어는 kind=optional 로 분리한다.',
     '- 이번 diff 가 만든 회귀가 **아닌** 기존 문제는 kind=defer + preExisting=true 로 분리한다(이 스토리의 findings 가 아니다).',
     '- 테스트가 결함 위에 서 있는 패턴(결함을 재현하지 못하는 테스트 · 같은 인스턴스만 rerender · 항상 통과하는 단언)을 특히 의심하라.',
-    '- 보안·권한 / 개인정보 / 데이터 손실·복구 / 결제·청구 / 외부 발송·배포 안전장치에 닿는 문제는 심각도와 무관하게 patch 또는 decision 으로 낸다(이월 금지 5범주 — defer/optional 로 내면 엔진이 patch 로 승격한다).',
+    '- 보안·권한 / 개인정보 / 데이터 손실·복구 / 결제·청구 / 외부 발송·배포 안전장치에 닿는 문제는 심각도와 무관하게 patch 또는 decision 으로 낸다(이월 금지 5범주 — defer/optional 로 내면 엔진이 patch 로 승격한다). · 👤 2026-09-07: severity=high 로 매기고 title 앞에 [5범주] 를 붙여라 — 엔진의 꼬리 이월 정책이 이 표식·파일 경로·범주 어휘로 유지 여부를 정하니 에둘러 쓰지 마라).',
     '- 발견 0건이면 verdict=clean 이고 findings 는 빈 배열이다 — 억지로 만들지 마라. 확실하지 않으면 severity=low + kind=optional.',
     '- 각 finding 의 detail 은 재현 조건 → 결과 → 왜 문제인지 순으로 한 단락. evidence 는 코드 인용(짧게). 한국어로 쓴다.',
     '',

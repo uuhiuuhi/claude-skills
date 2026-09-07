@@ -1,7 +1,7 @@
 // 리뷰 꼬리 정책(review-tail.mjs) — 👤 2026-09-07 「리뷰 횟수 최적화」
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { applyReviewTail, applyReviewTailBlock } from './review-tail.mjs'
+import { applyReviewTail, applyReviewTailBlock, pathTokens } from './review-tail.mjs'
 
 const md = (block, nl = '\n') => [
   '# 스토리', 'Status: review', '', '## Tasks / Subtasks', '- [x] **Task 1** 끝', '', '### Review Findings', '',
@@ -146,5 +146,65 @@ describe('applyReviewTail — Codex 3차 H1: 중첩 불릿·빈 줄 뒤 들여�
     assert.match(r.text, /^- \[ \] \[Review\]\[Patch\]\[medium\] 필터가 틀리다/m)
     assert.match(r.text, /^- \[ \] \[Review\]\[Patch\]\[medium\] 헤더 누락/m)
     assert.match(r.text, /^- \[x\] ~~\[Review\]\[Patch\]\[low\] 마지막/m)
+  })
+})
+
+describe('applyReviewTail — 5범주 틈 좁히기(👤 2026-09-07 「나」): 표식 · 경로 보호 · 프로젝트 경로 확장', () => {
+  const md = (extra = []) => ['# s', '## Tasks', '## Review Findings — 3차',
+    '- [ ] [Review][Patch][medium] 목록 정렬 흔들림 [src/features/tickets/List.tsx:40] — 상세',
+    '- [ ] [Review][Patch][medium] 필터 조건이 틀리다 [src/features/tickets/List.tsx:41] — 상세 [5범주]',
+    '- [ ] [Review][Patch][low] 조건 누락 [supabase/migrations/20260907_x.sql:12] — 상세',
+    '- [ ] [Review][Patch][medium] 헤더 계산 [src/lib/roles.ts:8] — 상세',
+    '- [ ] [Review][Patch][medium] 표시 자리수 [src/features/contracts/ContractsPage.tsx:700] — 상세',
+    '- [ ] [Review][Patch][low] 산문에 session 이라는 낱말만 있고 경로는 무관 [src/features/tickets/Row.tsx:3] — 상세',
+    ...extra, ''].join('\n')
+  it('엔진 기본: [5범주] 표식 · supabase/*.sql · roles.ts 는 유지, 무관 경로는 이월(산문 낱말은 경로가 아니다)', () => {
+    const r = applyReviewTail(md(), { round: 3, date: 'd' })
+    assert.deepEqual(r.kept.map((k) => k.why), ['5범주 표식', '5범주 경로', '5범주 경로'])
+    assert.equal(r.deferred.length, 3)
+    assert.match(r.deferred[0], /목록 정렬 흔들림/); assert.match(r.deferred[1], /표시 자리수/); assert.match(r.deferred[2], /산문에 session/)
+  })
+  it('autonomy.noDeferPaths 로 프로젝트 경로(contracts 기능 폴더)를 더하면 그 지적도 유지 · 잘못된 정규식은 무시', () => {
+    const r = applyReviewTail(md(), { round: 3, date: 'd', noDeferPaths: ['src/features/(auth|contracts|vault|admin)/', '('] })
+    assert.deepEqual(r.kept.map((k) => k.why), ['5범주 표식', '5범주 경로', '5범주 경로', '5범주 경로'])
+    assert.equal(r.deferred.length, 2)
+  })
+  it('[guard]·[no-defer] 동의어 · 블록 모드에도 같은 규칙 · 경로 토큰 추출', () => {
+    const block = ['### Review Findings — Codex 교차리뷰 (3차)', '- [ ] [Review][Patch][medium] [guard] 표식 [src/a.ts:1] — 상세', '- [ ] [Review][Patch][medium] 설정 값 [wrangler.jsonc:3] — 상세', '- [ ] [Review][Patch][medium] 그냥 [src/b.ts:2] — 상세'].join('\n')
+    const r = applyReviewTailBlock(block, { round: 3, date: 'd' })
+    assert.deepEqual(r.kept.map((k) => k.why), ['5범주 표식', '5범주 경로'])
+    assert.equal(r.deferred.length, 1)
+    assert.deepEqual(pathTokens('x [src/lib/roles.ts:8] y ' + String.fromCharCode(96) + 'supabase/functions/outbox-dispatch/index.ts' + String.fromCharCode(96)), ['src/lib/roles.ts', 'supabase/functions/outbox-dispatch/index.ts'])
+  })
+})
+
+describe('pathTokens / 경로 보호 — Codex 회수(H1 .env · M2 확장자 화이트리스트 · M3 유니코드 따옴표)', () => {
+  it('.env·점파일 · 확장자 무관 경로(run.sh · x.py · index.cjs) · 유니코드 따옴표 안 경로 · :줄 제거 · 백슬래시', () => {
+    assert.deepEqual(pathTokens('a [.env:1] b [backup/run.sh:3] c “supabase/functions/x.ts” d session/index.cjs e ledger.tsv f supabase\\migrations\\x.sql:9 g ./src/a.ts.'),
+      ['.env', 'backup/run.sh', 'supabase/functions/x.ts', 'session/index.cjs', 'ledger.tsv', 'supabase\\migrations\\x.sql', './src/a.ts'])
+    const md = ['# s', '## Tasks', '## Review Findings — 3차',
+      '- [ ] [Review][Patch][medium] 값이 비어 있다 [.env:1] — 상세',
+      '- [ ] [Review][Patch][medium] 스크립트 순서 [backup/run.sh:3] — 상세',
+      '- [ ] [Review][Patch][medium] 따옴표 “supabase/functions/x.ts” 안 — 상세',
+      '- [ ] [Review][Patch][medium] 원장 파일 [ledger.tsv:2] — 상세',
+      '- [ ] [Review][Patch][medium] 산문: e.g. and/or 읽기/쓰기 v1.2 [src/features/tickets/a.tsx:1] — 상세', ''].join('\n')
+    const r = applyReviewTail(md, { round: 3, date: 'd', noDeferPaths: ['\\.tsv$'] })
+    assert.deepEqual(r.kept.map((k) => k.why), ['5범주 경로', '5범주 경로', '5범주 경로', '5범주 경로'])
+    assert.equal(r.deferred.length, 1); assert.match(r.deferred[0], /산문/)
+  })
+})
+
+describe('pathTokens — Codex 2차 회수(M1 선형 스캔 · M2 산문 멤버식 제외)', () => {
+  it('산문 멤버식(notifications.length · session.duration · session.id)은 경로가 아니다 · 위치 표기 안·점파일·알려진 확장자는 경로다', () => {
+    assert.deepEqual(pathTokens('notifications.length 와 session.duration 과 session.id 를 본다 [src/ui/Counter.tsx:4]'), ['src/ui/Counter.tsx'])
+    assert.deepEqual(pathTokens('표기 안 [session.id:3] 과 백틱 ' + String.fromCharCode(96) + 'roles.txt' + String.fromCharCode(96) + ' 과 bare ledger.tsv 와 .env.local'), ['session.id', 'roles.txt', 'ledger.tsv', '.env.local'])
+    const md = ['# s', '## Tasks', '## Review Findings — 3차',
+      '- [ ] [Review][Patch][medium] notifications.length 가 0 이면 문구가 빈다 [src/ui/Counter.tsx:4] — session.duration 표시도 같다', ''].join('\n')
+    const r = applyReviewTail(md, { round: 3, date: 'd' })
+    assert.equal(r.deferred.length, 1); assert.equal(r.kept.length, 0)
+  })
+  it('구분자 없는 4만 자 입력도 선형 시간(100ms 미만)에 끝나고 토큰 0', () => {
+    const t0 = Date.now(); const r = pathTokens('a'.repeat(40000)); const ms = Date.now() - t0
+    assert.deepEqual(r, []); assert.ok(ms < 100, 'took ' + ms + 'ms')
   })
 })

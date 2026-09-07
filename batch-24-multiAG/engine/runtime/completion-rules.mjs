@@ -146,6 +146,18 @@ export function bmadStateAgreesWithCode({ storyText = '', sprintStatus = null, m
   return { ok: true, why: statusInFile === 'done' ? '문서·원장·코드가 모두 완료로 일치' : `문서·원장·코드가 모두 「${statusInFile}」로 일치`, statusInFile, statusInSprint: inSprint, expected, openPatch, openDecision }
 }
 
+/** 회수(dev 전용) 배치의 「리뷰 대기」 판정(👤 2026-09-07 · 동결 예외) — 이 배치엔 review 단계가 없어 T6(교차 검토)만 못 채웠고
+ *  T7 은 그 파생(「교차 검토가 성립하지 않았다」)뿐일 때 true. 열린 지적·사람 결정·검사 미통과가 섞이면 false(진짜 not-ready).
+ *  @param {Array<{id:string,result:string,why?:string}>} criteria 완주 게이트 판정 목록
+ *  @param {{hasReviewStage:boolean}} o 이 배치에 review 단계가 있었는가 */
+export function reviewPendingOnly(criteria, { hasReviewStage = false } = {}) {
+  if (hasReviewStage) return false
+  const failing = (Array.isArray(criteria) ? criteria : []).filter((c) => c && c.result !== PASS)
+  const t6 = failing.find((c) => c.id === 'T6')
+  if (!t6 || t6.result !== NOT_VERIFIED || !/교차 검토 기록이 없다|교차 검토를 돌리지 않았다/.test(str(t6.why))) return false
+  return failing.every((c) => c.id === 'T6' || (c.id === 'T7' && /교차 검토/.test(str(c.why)) && !/열린 지적|사람 결정|검사가 통과/.test(str(c.why))))
+}
+
 // ── 본체 ─────────────────────────────────────────────────────────────────────
 /**
  * 완료 기준 8조건 판정. **순수** — 매니페스트를 고치지 않고 completion 객체를 돌려준다.

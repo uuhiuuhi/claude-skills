@@ -9,6 +9,7 @@ import { describe, it } from 'node:test'
 
 import { TASK_CRITERIA } from '../readiness.mjs'
 import {
+  reviewPendingOnly,
   COMPLETION_CRITERIA, FAIL, NOT_READY, NOT_VERIFIED, NV, PASS, READY,
   blockingIntegrity, bmadStateAgreesWithCode, classifyTestCase, completionNotesAudit, crossReviewResult,
   newTestsFromDiff, renderCompletionNotes, reviewEvidenceCount, strengthenCompletion, testKindsVerdict,
@@ -353,5 +354,24 @@ describe('completion-rules — 게이트 판정', () => {
     assert.match(idOf(c, 'T3').why, /문법/)
     assert.equal(idOf(c, 'T1').result, FAIL)
     assert.equal(c.verdict, NOT_READY)
+  })
+})
+
+describe('reviewPendingOnly — 회수 dev 배치의 T6 미충족만이면 「리뷰 대기」(👤 2026-09-07 동결 예외 · 09-07 낮 실사고)', () => {
+  const T6 = { id: 'T6', result: 'not-verified', why: '교차 검토 기록이 없다' }
+  const T7rev = { id: 'T7', result: 'fail', why: '문서는 완료라고 적었는데 코드 상태가 아니다 — 교차 검토가 성립하지 않았다' }
+  const pass = (id) => ({ id, result: 'pass', why: 'ok' })
+  it('T6(기록 없음) + T7(교차 검토 파생)만 실패 · review 단계 없음 → true', () => {
+    assert.equal(reviewPendingOnly([pass('T1'), T6, T7rev, pass('T8')], { hasReviewStage: false }), true)
+    assert.equal(reviewPendingOnly([pass('T1'), T6], { hasReviewStage: false }), true)
+  })
+  it('review 단계가 있었으면 false · 열린 지적/검사 미통과가 섞이면 false · T6 가 fail(높음 잔존·같은 제공자)이면 false · 빈 입력 false', () => {
+    assert.equal(reviewPendingOnly([T6, T7rev], { hasReviewStage: true }), false)
+    assert.equal(reviewPendingOnly([T6, { id: 'T7', result: 'fail', why: '문서는 완료라고 적었는데 코드 상태가 아니다 — 교차 검토가 성립하지 않았다 · 열린 지적 2건' }], { hasReviewStage: false }), false)
+    assert.equal(reviewPendingOnly([T6, { id: 'T1', result: 'fail', why: '검사 RED' }], { hasReviewStage: false }), false)
+    assert.equal(reviewPendingOnly([{ id: 'T6', result: 'fail', why: '검토에서 높음 지적 1건이 남아 있다' }], { hasReviewStage: false }), false)
+    assert.equal(reviewPendingOnly([{ id: 'T6', result: 'fail', why: '만든 쪽과 검토한 쪽이 같다(claude)' }], { hasReviewStage: false }), false)
+    assert.equal(reviewPendingOnly([], { hasReviewStage: false }), false)
+    assert.equal(reviewPendingOnly(null, { hasReviewStage: false }), false)
   })
 })
