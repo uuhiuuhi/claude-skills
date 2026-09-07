@@ -170,6 +170,8 @@ if (!existsSync(cfgPath)) {
       'providers.codex.max 는 동시 실행 상한이다. 배치 전체의 총 Codex 호출량 제한으로 해석하지 않는다.',
       '── 자율운전(2026-09-03) ──',
       'autonomy.mode: guarded(기본 = 위 규칙 그대로 · 결정·회수 라운드·목업 승인·무진전은 사람 몫) | full(24시간 자율운전).',
+      'autonomy.maxReviewRoundsPerStory(기본 2 · 0 = 끔): 마지막 replan 표식 뒤 리뷰 상한 — **모든 리뷰어**(bmad-code-review · Codex) 라운드를 센다(👤 2026-09-07 「리뷰 횟수 최적화」). 닿으면 다음 리뷰 전에 replan 선행 · 총량 = 상한 × (maxReplansPerStory+1) 이면 「자율 한계」 사람 질문 · 해제 = 스토리 0열 `REVIEW-CAP-RESET: <날짜> — <사유>`.',
+      'autonomy.deferTailFromRound(기본 3 · 0 = 끔): N차 리뷰부터 high/critical 이 아닌 열린 Patch 를 엔진이 ⏭️ Defer 로 닫고(deferred-work 이관 · 이월 금지 5범주 제외) done 을 허용한다 — 리뷰가 매 라운드 취향 지적을 만들어 수렴하지 않던 실사고(11-6 6차 · 11-7 11차) 대응.',
       '  full: main 머지 · 배포 · 운영 DB 쓰기 · 삭제 · 외부 발송 · 시크릿은 종전대로 사람 승인이고, 그 밖의 편성 판단은 편성기·오케스트레이터가 한다 —',
       '  결정은 replan/dev 가 ⭐추천안을 채택해 인박스 「🔵 사후 확인」에 근거를 남기며(사람이 사후 확인·되돌리기), 열린 Patch 만 남은 스토리는 replan 이 회수 Task 를 연다.',
       '  무진전은 replan(접근 변경)으로 풀고 maxReplansPerStory 회를 넘기면 그 스토리만 「자율 한계」로 사람 질문에 올린다.',

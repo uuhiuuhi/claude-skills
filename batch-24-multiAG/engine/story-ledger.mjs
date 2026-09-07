@@ -66,26 +66,51 @@ export function readStorySignals(text) {
   //   codexReviewsTotal = 마지막 `REVIEW-CAP-RESET:`(0열 · 사람이 풀 때 적는 줄) 뒤의 전체 — 편성기의 「자율 한계」 재료(Sol-high 16차 H2:
   //     replan 이 표식을 남기며 카운터를 되돌리므로 since 만 보면 replan→dev→review 가 사람 게이트 없이 무한히 돈다).
   // 펜스(```/~~~) 안의 줄은 무시한다(Sol-high 16차 M3 — 인용 예시가 카운터를 되돌리지 않게). 인용(> )은 0열이 아니라 원래 안 잡힌다.
-  const { codexReviewsSinceReplan, codexReviewsTotal } = countCodexReviews(text)
-  return { openDecision, openDecisions, openPatches, banPresent, unfinishedTasks, files, humanGateTasks, humanGateLines, blockedOnHuman, codexReviewsSinceReplan, codexReviewsTotal }
+  const { reviewsSinceReplan, reviewsTotal, reviewsAll, codexReviewsSinceReplan, codexReviewsTotal } = countReviewRounds(text)
+  return { openDecision, openDecisions, openPatches, banPresent, unfinishedTasks, files, humanGateTasks, humanGateLines, blockedOnHuman, reviewsSinceReplan, reviewsTotal, reviewsAll, codexReviewsSinceReplan, codexReviewsTotal }
 }
 
-/** Codex 교차리뷰 헤딩 계수 — 줄 단위 · 펜스 인식 · CRLF 무관. */
-export function countCodexReviews(text) {
-  let inFence = false, lastReplan = -1, lastReset = -1
-  const codex = []
-  String(text ?? '').split(/\r?\n/).forEach((line, i) => {
-    if (/^ {0,3}(```|~~~)/.test(line)) { inFence = !inFence; return }
-    if (inFence) return
-    if (/^### (Replan|회수 라운드)(?=\s|$)/.test(line)) lastReplan = i
-    else if (/^REVIEW-CAP-RESET:/.test(line)) lastReset = i
-    else if (/^### Review Findings — Codex 교차리뷰/.test(line)) codex.push(i)
-  })
-  return {
-    codexReviewsSinceReplan: codex.filter((i) => i > lastReplan && i > lastReset).length,
-    codexReviewsTotal: codex.filter((i) => i > lastReset).length,
-  }
+/** ATX 헤딩 깊이(0 = 헤딩 아님) — 앞 공백 0~3 · 구분자 공백/탭(CommonMark · Codex 2차 M5). */
+export const atxHeadingDepth = (line) => { const m = /^ {0,3}(#{1,6})[ \t]/.exec(line); return m ? m[1].length : 0 }
+
+/** 펜스 상태기 — 여는 줄이면 {ch,len} 을 기억하고, 같은 기호가 그 길이 이상인 줄에서만 닫는다(4백틱 펜스 안의 3백틱 예시 · Codex 1차 M6/2차 M4).
+ *  반환 {state, toggled} — toggled 인 줄(여닫는 줄)과 state 가 있는 줄(펜스 안)은 본문이 아니다. */
+export function fenceStep(state, line) {
+  if (!state) { const m = /^ {0,3}(`{3,}|~{3,})/.exec(line); return m ? { state: { ch: m[1][0], len: m[1].length }, toggled: true } : { state, toggled: false } }
+  const close = new RegExp('^ {0,3}\\' + state.ch + '{' + state.len + ',}[ \\t]*$')
+  return close.test(line) ? { state: null, toggled: true } : { state, toggled: false }
 }
+
+/** 리뷰 라운드 헤딩 깊이(0 = 아님) — 어느 리뷰어든: bmad-code-review `## Review Findings — N차 …`/`### Review Findings — …` · Codex `### Review Findings — Codex 교차리뷰 …`.
+ *  제목이 「Review Findings」로 **시작**하고 뒤에 구분자(— – - : · ( )가 와야 라운드다 — 골격 앵커 `### Review Findings`·`### Review Findings ###`(닫는 #)·
+ *  `### Notes on Review Findings format`·본문에 그 문구를 인용한 다른 절 제목은 라운드가 아니다(Codex 2차 M6 · 실물 2건 오탐 실측). */
+export function reviewRoundHeadingDepth(line) {
+  const t = String(line).replace(/[ \t]+#+[ \t]*$/, '')
+  const m = /^ {0,3}(#{2,4})[ \t]+Review Findings[ \t]*[—–\-:·(]/.exec(t)
+  return m ? m[1].length : 0
+}
+export const isCodexReviewHeading = (line) => /^ {0,3}###[ \t]+Review Findings[ \t]+— Codex 교차리뷰/.test(line)
+
+/** 리뷰 라운드 계수 — 줄 단위 · 펜스 인식(길이 추적) · CRLF 무관.
+ *  reviews* = **모든 리뷰어**(편성기 상한의 재료) · codex* = Codex 교차리뷰만(종전 호환) · reviewsAll = RESET 무관 전체(헤딩 번호용).
+ *  👤 2026-09-07 「리뷰 횟수 최적화」: 상한(maxReviewRoundsPerStory)이 Codex 헤딩만 세어 bmad-code-review 6~13차 스토리 11건에서
+ *  한 번도 발동하지 않았다(실측 codexReviewsTotal 0/0 · 11-6 13헤딩 · 11-7 11 · 11-4 10) — 편성기는 이제 reviews* 를 본다. */
+export function countReviewRounds(text) {
+  let fence = null, lastReplan = -1, lastReset = -1
+  const all = [], codex = []
+  String(text ?? '').split(/\r?\n/).forEach((line, i) => {
+    const f = fenceStep(fence, line); fence = f.state
+    if (f.toggled || fence) return
+    if (/^ {0,3}###[ \t]+(Replan|회수 라운드)(?=\s|$)/.test(line)) lastReplan = i
+    else if (/^REVIEW-CAP-RESET:/.test(line)) lastReset = i
+    else if (reviewRoundHeadingDepth(line)) { all.push(i); if (isCodexReviewHeading(line)) codex.push(i) }
+  })
+  const since = (xs) => xs.filter((i) => i > lastReplan && i > lastReset).length
+  const total = (xs) => xs.filter((i) => i > lastReset).length
+  return { reviewsSinceReplan: since(all), reviewsTotal: total(all), reviewsAll: all.length, codexReviewsSinceReplan: since(codex), codexReviewsTotal: total(codex) }
+}
+/** 종전 이름(호환) — 같은 결과(codex* 필드 포함). */
+export const countCodexReviews = countReviewRounds
 
 /** sprint-status.yaml → [{key, status, epic}] (스토리 키 행만 — 주석·벌크 무시) */
 export function parseSprint(text) {

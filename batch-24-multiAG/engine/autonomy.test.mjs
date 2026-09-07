@@ -273,8 +273,8 @@ describe('[자율운전] 리뷰 비용 상한 — 👤 2026-09-07 「2 예」: �
     const r = run({ sprint: { '2-1-a': 'review' }, stories: { '2-1-a': closeout() } })
     const b = r.batch('2-1-a')
     assert.deepEqual(b.stages, ['replan', 'dev', 'review'])
-    assert.match(b.replanHint, /codex 리뷰 2회 소진\(상한 2\)/)
-    assert.match(String(r.pick('2-1-a').why), /codex 리뷰 2회 → replan 선행\(상한 2\)/)
+    assert.match(b.replanHint, /리뷰 2회 소진\(상한 2\)/)
+    assert.match(String(r.pick('2-1-a').why), /리뷰 2회 → replan 선행\(상한 2\)/)
   })
   it('replan 표식이 뒤에 있으면 카운터가 다시 열려 종전대로 review 만 · 1회면 상한 미달', () => {
     const rearmed = run({ sprint: { '2-1-a': 'review' }, stories: { '2-1-a': closeout('### Replan 2026-09-06\n접근 변경\n') } })
@@ -286,7 +286,7 @@ describe('[자율운전] 리뷰 비용 상한 — 👤 2026-09-07 「2 예」: �
     const fresh = run({ sprint: { '2-1-a': 'in-progress' }, stories: { '2-1-a': story({ status: 'in-progress', tasks: '- [x] T1', findings: codex(1) + codex(2) + '- [ ] [Review][Patch] 열린 것\n' }) } })
     // Tasks 절 안의 열린 Patch 는 dev 일감(회수 dev 만) — review 단계가 없으므로 상한은 건드리지 않는다
     assert.deepEqual(fresh.batch('2-1-a').stages, ['dev'])
-    assert.doesNotMatch(String(fresh.batch('2-1-a').replanHint ?? ''), /codex 리뷰/)
+    assert.doesNotMatch(String(fresh.batch('2-1-a').replanHint ?? ''), /리뷰 \d+회 소진/)
     const off = run({ sprint: { '2-1-a': 'review' }, stories: { '2-1-a': closeout() } }, { ...FULL, autonomy: { ...FULL.autonomy, maxReviewRoundsPerStory: 0 } })
     assert.deepEqual(off.batch('2-1-a').stages, ['review'])
   })
@@ -306,7 +306,7 @@ describe('[자율운전] 리뷰 비용 상한 — 👤 2026-09-07 「2 예」: �
     assert.equal(s.codexReviewsTotal, 6); assert.equal(s.codexReviewsSinceReplan, 2)
     const r = run({ sprint: { '2-1-a': 'review' }, stories: { '2-1-a': six } })
     assert.equal(r.batch('2-1-a'), undefined)
-    assert.match(r.ex('2-1-a').why, /자율 한계 — codex 리뷰 6회\(총량 상한 6/)
+    assert.match(r.ex('2-1-a').why, /자율 한계 — 리뷰 6회\(모든 리뷰어 · 총량 상한 6/)
     assert.ok(r.info.humanGates.some((g) => g.key === '2-1-a' && g.type === 'question'))
     const five = closeout('### Replan 2026-09-05\n' + codex(3) + codex(4) + '### Replan 2026-09-06\n' + codex(5))
     assert.deepEqual(run({ sprint: { '2-1-a': 'review' }, stories: { '2-1-a': five } }).batch('2-1-a').stages, ['review'])
@@ -320,6 +320,41 @@ describe('[자율운전] 리뷰 비용 상한 — 👤 2026-09-07 「2 예」: �
     })
     const b = r.batch('2-1-a')
     assert.deepEqual(b.stages, ['replan', 'dev', 'review'])
-    assert.match(b.replanHint, /codex 리뷰 2회 소진.*무진전 편성 2회/)
+    assert.match(b.replanHint, /리뷰 2회 소진.*무진전 편성 2회/)
+  })
+})
+
+describe('[자율운전] 리뷰 상한은 모든 리뷰어를 센다 — 👤 2026-09-07 「리뷰 횟수 최적화」(Codex 헤딩만 세어 bmad-code-review 6~13차 11건에서 미발동)', () => {
+  const claude = (n, lvl = '##') => `${lvl} Review Findings — ${n}차 (2026-09-0${n} · 비대화형 배치 · 적대 3레이어 병렬 · 다른 LLM 관점)\n\n- [x] ~~[Review][Patch] p${n}~~ — ✅ 해소\n`
+  const closeout = (extra = '') => story({ status: 'review', tasks: '- [x] **Task 1** 끝', findings: claude(1) + claude(2, '###') + extra })
+  it('readStorySignals — ##/### Review Findings — N차 헤딩을 세고 골격 앵커 `### Review Findings` 단독 줄·Follow-ups 는 안 센다 · codex* 는 종전대로', () => {
+    const s = readStorySignals(closeout())
+    assert.equal(s.reviewsSinceReplan, 2); assert.equal(s.reviewsTotal, 2); assert.equal(s.reviewsAll, 2)
+    assert.equal(s.codexReviewsSinceReplan, 0); assert.equal(s.codexReviewsTotal, 0)
+    assert.equal(readStorySignals(story({ findings: '(아직 리뷰 전)\n' })).reviewsTotal, 0)
+    assert.equal(readStorySignals(story({ findings: '### Review Findings — 3차 트리아지 요약 (2026-08-29 · bmad-code-review)\n### Review Follow-ups (AI) — 4차 회수\n' })).reviewsTotal, 1)
+    const mixed = readStorySignals(closeout('### Review Findings — Codex 교차리뷰 (2026-09-06 · 3차 · codex exec · codex:gpt-6-astra)\n'))
+    assert.equal(mixed.reviewsTotal, 3); assert.equal(mixed.codexReviewsTotal, 1)
+    // Codex 2차 M6 — 제목이 「Review Findings」로 시작하고 구분자가 와야 라운드: 닫는 #·다른 절 제목·본문 인용은 0
+    const B4 = String.fromCharCode(96).repeat(4), B3 = String.fromCharCode(96).repeat(3)
+    assert.equal(readStorySignals(story({ findings: '### Review Findings ###\n### Notes on Review Findings format\n### 이 세션이 회수한 리뷰 Findings (스토리 파일 ' + B3.slice(0, 1) + '### Review Findings' + B3.slice(0, 1) + ' 와 짝)\n### 리뷰 라운드 처리 (2026-09-01 — Review Findings 9건 전건 회수)\n' })).reviewsTotal, 0)
+    // Codex 2차 M4 — 4백틱 펜스 안의 3백틱 예시·샘플 헤딩·RESET 줄은 세지도 되돌리지도 않는다
+    assert.equal(readStorySignals(story({ findings: claude(1) + B4 + 'md\n' + B3 + '\n## Review Findings — 9차 (예시)\nREVIEW-CAP-RESET: 2026-09-07 — 예시\n' + B3 + '\n' + B4 + '\n' + claude(2, '###') })).reviewsTotal, 2)
+  })
+  it('Claude 리뷰 2회 소진 → replan→dev→review · replan 표식 뒤 다시 열림 · REVIEW-CAP-RESET 뒤부터 다시 센다', () => {
+    const r = run({ sprint: { '2-1-a': 'review' }, stories: { '2-1-a': closeout() } })
+    assert.deepEqual(r.batch('2-1-a').stages, ['replan', 'dev', 'review'])
+    assert.match(r.batch('2-1-a').replanHint, /리뷰 2회 소진\(상한 2\)/)
+    const rearmed = run({ sprint: { '2-1-a': 'review' }, stories: { '2-1-a': closeout('### Replan 2026-09-06\n접근 변경\n') } })
+    assert.deepEqual(rearmed.batch('2-1-a').stages, ['review'])
+    const s = readStorySignals(closeout('REVIEW-CAP-RESET: 2026-09-07 — 꼬리 정책 적용 후 마감 재검수 1회\n' + claude(3)))
+    assert.equal(s.reviewsTotal, 1); assert.equal(s.reviewsAll, 3)
+  })
+  it('Claude 리뷰 총량 6회(리뷰 2 × replan 3) → 「자율 한계」 사람 질문 — 11-6(13차)·11-7(11차) 같은 스토리가 여기 걸린다', () => {
+    const six = closeout('### Replan 2026-09-05\n' + claude(3) + claude(4) + '### Replan 2026-09-06\n' + claude(5) + claude(6))
+    const r = run({ sprint: { '2-1-a': 'review' }, stories: { '2-1-a': six } })
+    assert.equal(r.batch('2-1-a'), undefined)
+    assert.match(r.ex('2-1-a').why, /자율 한계 — 리뷰 6회\(모든 리뷰어 · 총량 상한 6/)
+    assert.ok(r.info.humanGates.some((g) => g.key === '2-1-a' && g.type === 'question'))
   })
 })

@@ -592,7 +592,8 @@ test('실물 BaroOS 저장소 읽기 전용 스모크(있을 때만)', { skip: e
   assert.ok(snap.code.testCount >= 200, `테스트 파일 ${snap.code.testCount}`)
   assert.ok(snap.deploy.migrations >= 118, `마이그레이션 ${snap.deploy.migrations}`)
   assert.deepEqual(snap.scripts.chain, ['typecheck', 'lint', 'test'])
-  assert.deepEqual(snap.scripts.missing, ['coverage', 'e2e', 'security', 'performance'])
+  // 실물 저장소는 게이트 스크립트가 늘어난다(2026-09-06 test:security·test:perf 추가 실측) — 정확값 대신 「4종의 부분집합」으로 문다
+  assert.ok(snap.scripts.missing.every((k) => ['coverage', 'e2e', 'security', 'performance'].includes(k)), `missing ${snap.scripts.missing}`)
 
   const d = diagnose(snap)
   assert.ok(d.counts.storiesTotal >= 84, 'storiesTotal 84 이상(실물 저장소는 매일 자란다)')

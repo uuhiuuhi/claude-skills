@@ -92,6 +92,8 @@ import { storyRisk, storyDifficulty } from '../assign.mjs';
 import { readEvidenceFor } from './providers/codex.mjs';
 import { deepRedact } from './providers/redact.mjs';
 import { parseFileList } from '../runner-rules.mjs';
+import { countReviewRounds } from '../story-ledger.mjs';
+import { applyReviewTail, applyReviewTailBlock } from './review-tail.mjs';
 import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendDecisionsInbox, appendCompletionNotes, countOpenFindings } from "./story-writes.mjs";
 import { detectGates, parseQaChain, classifyQaFailure, repairDecision, buildVerificationManifest, escalationReport } from "./quality-rules.mjs";
 
@@ -145,6 +147,8 @@ const routingPath = opt('routing-config', '');
 // 러너가 넘기는 배치 종류(new|recovery|closeout) — 한도 강등 정책의 재료(👤 2026-09-07). 없으면 new(가장 보수적).
 const batchKind = ['new', 'recovery', 'closeout'].includes(opt('batch-kind', '')) ? opt('batch-kind', '') : 'new';
 const routingConfig = routingPath ? JSON.parse(readFileSync(routingPath, 'utf8')) : {};
+// 리뷰 꼬리 정책(👤 2026-09-07 「리뷰 횟수 최적화」): N차 리뷰부터 high 가 아닌 열린 Patch 를 ⏭️ Defer 로 닫는다(review-tail.mjs). 0 = 끔.
+const deferTailFromRound = Number(routingConfig?.autonomy?.deferTailFromRound ?? 3);
 const routingEnabled = routingConfig.modelPolicy?.enabled === true;
 const modelStateDir = opt('model-state-dir', process.env.AUTO_BATCH_STATE_DIR || '');
 if (routingEnabled && !modelStateDir) throw new Error('routing requires an explicit model-state-dir');
@@ -244,6 +248,8 @@ const runLog = resolve(logDir, "run-summary.log");
 const stateFile = resolve(logDir, "state.json");
 const sprintStatusFile = resolve(artDir, "sprint-status.yaml");
 const deferredWorkFile = resolve(artDir, "deferred-work.md");
+// 이월 원장이 없으면 골격을 만든다 — 없다고 이월 항목을 조용히 버리면 「이관」이라 적은 줄이 거짓이 된다(Codex 교차리뷰 1차 M5)
+const deferredWorkBase = () => (existsSync(deferredWorkFile) ? readFileSync(deferredWorkFile, "utf8") : "# Deferred Work\n\n");
 const decisionsInboxFile = resolve(artDir, "DECISIONS-INBOX.md");
 const exitInfoFile = resolve(logDir, "exit-info.json"); // 러너가 읽는 마지막 STOP 사유(프로바이더·종류) — 성공 종료 시 없음
 const stamp = () => new Date().toISOString();
@@ -776,10 +782,21 @@ const GUARD = "[비대화형] 승인/질문 없이 합리적 기본값으로 끝
 // 결정은 「대기」가 아니라 「추천안 채택 + 근거 기록」이고, 사람은 인박스 「🔵 사후 확인」에서 되돌릴 수 있다.
 const AUTO_DEV = FULL ? " [자율운전] 열린 [Review][Decision] 이 있으면 결정 대기로 멈추지 말고 ⭐/추천 표시가 있는 안을(없으면 되돌리기 가장 싼 안을) 채택해 구현하고, 그 줄을 `- [x] ~~원문~~ — ✅ AI 결정(YYYY-MM-DD · 선택 · 사후 확인)` 로 닫은 뒤 _bmad-output/implementation-artifacts/DECISIONS-INBOX.md 의 H1 바로 아래에 `## 🔵 사후 확인 — AI 결정 <스토리 짧은키> (<날짜>)` 절로 무엇/선택/근거/대안/되돌리는 방법을 적어라(사람이 사후 확인한다). 사람 게이트(「사람 게이트」·「승인자」·👤 표기) Task 는 그대로 두고 나머지를 전부 끝내라." : "";
 const AUTO_REVIEW = FULL ? " [자율운전] Decision 을 남길 때는 각 Decision 에 ⭐추천안과 되돌리는 비용을 함께 적어라 — 다음 라운드(replan/dev)가 추천안을 채택하고 사람은 사후 확인한다." : "";
+// 리뷰 정책 문단(👤 2026-09-07 「리뷰 횟수 최적화」 · 09-01 리뷰 라운드 중단 지침 ②③④ 의 집행판 — Codex 지시문(providers/codex.mjs)과 같은 4원칙).
+// 종전 지시문은 「적대적으로」뿐이라 리뷰어가 매 라운드 취향·스타일 지적 10~20건을 만들었고(11-6 6차 · 11-7 11차), 심각도 표기가 없어
+// 엔진이 high 와 low 를 구분하지 못했다(열린 Patch 100건 중 표기 5건 실측).
+const REVIEW_POLICY = (s) => {
+  let n = 1;
+  try { const sf = findStoryFile(s); if (sf) n = countReviewRounds(readFileSync(sf, "utf8")).reviewsAll + 1; } catch { /* 스토리 없음 = 1차 */ }
+  const tail = deferTailFromRound > 0
+    ? `${deferTailFromRound}차부터 엔진이 high 가 아닌 Patch 를 자동 이월(⏭️ Defer · 이월 금지 5범주 제외)하고 done 을 허용한다 — ${n >= deferTailFromRound ? "지금이 그 라운드다: " : ""}정말 막아야 할 것만 high 로 낸다.`
+    : "꼬리 이월 정책은 꺼져 있다.";
+  return ` [리뷰 정책 · 2026-09-07] 이 스토리는 ${n}차 리뷰다. ① 정확성·명시 요구사항(AC·Dev Notes 제약)에 영향을 주는 것만 \`- [ ] [Review][Patch][high|medium|low] <제목> [file:line] — <상세>\` 또는 \`- [ ] [Review][Decision] …\` 으로 낸다 — 심각도 표기는 필수(high = AC 실패·데이터 오염·사용자 차단 · 표기 없는 Patch 는 medium 으로 본다). ② 취향·스타일·과잉 방어·리팩터링 제안은 \`- [x] [Review][Optional] <제목> — ⏭️ optional(정확성·명시 요구사항 영향 없음)\` 로 적는다. ③ 이번 diff 가 만든 회귀가 아닌 기존 문제는 \`- [x] [Review][Defer] <제목> [file:line] — ⏭️ deferred, pre-existing\` 으로 분리한다. ④ 보안·권한 / 개인정보 / 데이터 손실·복구 / 결제·청구 / 외부 발송·배포 안전장치는 심각도 무관 Patch/Decision 이다. ⑤ 발견 0건이면 억지로 만들지 말고 \`- ✅ Clean review — 발견 0건\` 한 줄만 남긴다. ⑥ ${tail} ⑦ 이번 라운드 기록은 스토리 파일 Tasks 절 안에 **반드시 새 헤딩 \`### Review Findings — ${n}차 (${today()} · bmad-code-review)\`** 을 열고 그 아래에 적는다 — 엔진이 이 헤딩으로 라운드를 세고 꼬리 정책을 적용한다(헤딩 없이 기존 절에 덧붙이면 라운드가 0 으로 남아 상한·이월이 작동하지 않는다 · 2-25 실사고).`;
+};
 const prompts = {
   create: (s) => `/bmad-create-story ${s}\n\n${GUARD} 스토리 스펙(AC·파일 그라운딩)을 작성·저장하고 종료.`,
   dev: (s) => `/bmad-dev-story ${s}\n\n${GUARD} 구현 후 검증까지 자동 실행.${AUTO_DEV}`,
-  review: (s) => `/bmad-code-review ${s}\n\n${GUARD} 다른 LLM 관점에서 적대적으로. findings 리포트만 작성(코드 자동수정·commit 금지). ⚠️ 판정은 발견 0건·재오픈 불요 결론이어도 **반드시 스토리 파일의 Review Findings 절에 라운드 기록으로 기재**하라 — stdout 채팅 보고만 하고 파일을 안 쓰면 엔진이 산출물 부재(NO-OP exit 4)로 실패 처리한다(실사고 3회).${AUTO_REVIEW}`,
+  review: (s) => `/bmad-code-review ${s}\n\n${GUARD} 다른 LLM 관점에서 적대적으로. findings 리포트만 작성(코드 자동수정·commit 금지).${REVIEW_POLICY(s)} ⚠️ 판정은 발견 0건·재오픈 불요 결론이어도 **반드시 스토리 파일의 Review Findings 절에 라운드 기록으로 기재**하라 — stdout 채팅 보고만 하고 파일을 안 쓰면 엔진이 산출물 부재(NO-OP exit 4)로 실패 처리한다(실사고 3회).${AUTO_REVIEW}`,
   // replan — 시니어 개발 기획자 재계획(자율운전 · 2026-09-03). 스토리 md·인박스·sprint-status 만 쓴다(코드 0줄).
   replan: (s) => [
     `[REPLAN] 스토리 ${s} 재계획 — 너는 시니어 개발 기획자다. 결정이 필요한 항목은 스스로 판단해 기록하고(사람은 인박스에서 사후 확인한다) 스토리 파일(_bmad-output/implementation-artifacts/${s}*.md)을 갱신하라. 코드는 고치지 않는다.`,
@@ -874,7 +891,7 @@ function prepareReviewDiff(story) {
   writeFileSync(diffFile, diff || "(변경 없음)\n");
   return { diffFile, files, targetRef, empty };
 }
-const reviewRoundOf = (md) => (String(md).match(/^### Review Findings/gm) || []).length;
+const reviewRoundOf = (md) => countReviewRounds(md).reviewsAll; // 모든 리뷰어 라운드(골격 앵커 제외 · RESET 무관) — 헤딩 번호가 이어진다
 
 /** (#13) 인박스가 없을 때 만드는 안전한 기본 형식 — 사람이 읽는 단일 창구의 최소 골격.
  *  절 제목은 현행 관례(「결정 대기」·「사후 확인」)를 따른다 — 편성기·브리핑이 이 문자열을 본다. */
@@ -908,13 +925,20 @@ function applyCodexReview(story, res, w) {
   const storyKey = basename(storyFile, ".md");
   const md = readFileSync(storyFile, "utf8");
   const r = renderReviewFindings({ story: storyKey, model: w.spec.model, date: today(), targetRef: w.targetRef, round: reviewRoundOf(md) + 1, result: json });
-  let next = insertReviewFindings(md, r.block);
+  // (👤 2026-09-07 리뷰 꼬리 정책) N차 이상이면 high 가 아닌 열린 Patch 를 ⏭️ Defer 로 닫는다(이월 금지 5범주 제외 · review-tail.mjs).
+  // **삽입 전 렌더 블록**에 적용한다 — insertReviewFindings 는 Tasks 절 끝에 넣으므로 파일 순서상 마지막 리뷰가 아닐 수 있다(Codex 교차리뷰 1차 M3).
+  const tail = applyReviewTailBlock(r.block, { round: reviewRoundOf(md) + 1, fromRound: deferTailFromRound, date: today(), story: storyKey });
+  if (tail.applied) note(`[${story}][CODEX][REVIEW] 리뷰 꼬리 정책 — ${tail.why}`);
+  let next = insertReviewFindings(md, tail.applied ? tail.text : r.block);
   // (F30) 이번 라운드 0건이어도 **이전 라운드의 열린 Patch/Decision** 이 남아 있으면 done 이 아니다
   let newStatus = r.newStatus;
   const openLeft = countOpenFindings(next, "Patch") + countOpenFindings(next, "Decision");
   if (newStatus === "done" && openLeft > 0) {
     newStatus = "in-progress";
     note(`[${story}][CODEX][REVIEW] 이번 라운드 0건 — 그러나 이전 라운드 열린 findings ${openLeft}건 잔존 ⇒ in-progress 유지(done 아님)`);
+  } else if (newStatus !== "done" && openLeft === 0 && tail.applied) {
+    newStatus = "done";
+    note(`[${story}][CODEX][REVIEW] 꼬리 이월 뒤 열린 findings 0 ⇒ done(완주 게이트가 최종 판정)`);
   }
   const st = setStoryStatus(next, newStatus);
   next = st.text;
@@ -936,14 +960,16 @@ function applyCodexReview(story, res, w) {
     } else inboxCreated = true;
     writes.push({ path: decisionsInboxFile, text: appendDecisionsInbox(base, { storyKey, date: today(), decisions: r.decisions, mode: FULL ? "post-hoc" : "wait" }), label: "인박스" });
   }
+  // 확정 순서 = 인박스 → 이월 원장 → 스토리 → sprint — 원장 기록이 실패하면 지적은 열린 채 남아야 한다(Codex 2차 H2)
+  const deferredAll = [...r.deferred, ...tail.deferred];
+  if (deferredAll.length) {
+    writes.push({ path: deferredWorkFile, text: appendDeferredWork(deferredWorkBase(), `Deferred from: Codex code review of ${storyKey} (${today()} · codex exec${tail.applied ? ` · 리뷰 꼬리 정책 ${tail.deferred.length}건` : ""})`, deferredAll), label: "deferred-work" });
+  }
   writes.push({ path: storyFile, text: next, label: "스토리" });
   if (existsSync(sprintStatusFile)) {
     const s = setSprintStatus(readFileSync(sprintStatusFile, "utf8"), storyKey, newStatus, today());
     if (s.changed) { writes.push({ path: sprintStatusFile, text: s.text, label: "sprint-status" }); sprintNote = `sprint-status ${storyKey}=${newStatus}`; }
     else sprintNote = `⚠ sprint-status 에 키 ${storyKey} 없음 — 스토리 파일만 갱신`;
-  }
-  if (r.deferred.length && existsSync(deferredWorkFile)) {
-    writes.push({ path: deferredWorkFile, text: appendDeferredWork(readFileSync(deferredWorkFile, "utf8"), `Deferred from: Codex code review of ${storyKey} (${today()} · codex exec)`, r.deferred), label: "deferred-work" });
   }
   const tmps = [];
   const cleanupTmps = () => { for (const t of tmps) { try { unlinkSync(t); } catch { /* 이미 없음 */ } } };
@@ -1081,6 +1107,9 @@ function runClaude(stage, story, variant = null) {
     return "ok";
   }
   const beforeMaxMtime = storyArtifactsMaxMtime(story); // 사후조건용 전-스냅샷
+  // 리뷰 꼬리 정책 가드 재료 — 리뷰 워커가 **새 라운드를 실제로 기재했을 때만** 적용한다(Codex 교차리뷰 1차 H1: exit 0 인데 아무것도 안 쓴 리뷰가 지난 라운드를 닫으면 안 된다)
+  const storyTextBefore = w.role === "review" ? (() => { const sf = findStoryFile(story); return sf ? readFileSync(sf, "utf8") : ""; })() : "";
+  const reviewRoundsBefore = w.role === "review" ? reviewRoundOf(storyTextBefore) : 0;
   stageSnapshot = stage === "replan" ? replanSignals(story) : stage === "mockup" ? { mockups: mockupKeys(story).length } : null;
   const headBefore = w.guardCommit ? headSha() : "";
   const branchBefore = w.guardCommit ? currentBranch() : "";
@@ -1193,6 +1222,25 @@ function runClaude(stage, story, variant = null) {
   }
 
   if (code === 0 && w.provider === 'claude' && w.role === 'review') {
+    // (👤 2026-09-07 리뷰 꼬리 정책) bmad-code-review 가 기재한 이번 라운드 블록에도 같은 규칙 — N차 이상이면 high 외 Patch 를 ⏭️ Defer 로 닫고,
+    // 열린 findings 가 0 이 되면 리뷰어의 clean 전이와 같은 자리(Status·sprint)를 done 으로 맞춘다(완주 게이트 T1~T8 이 최종 판정).
+    const sfTail = findStoryFile(story);
+    const mdTail = sfTail ? readFileSync(sfTail, 'utf8') : '';
+    if (sfTail && postOk && reviewRoundOf(mdTail) <= reviewRoundsBefore) note(`⚠ [${story}][CLAUDE][REVIEW] 이번 라운드 헤딩(### Review Findings — N차)이 새로 생기지 않았다 — 라운드 계수·꼬리 정책 미적용(리뷰 지시문 ⑦ 위반 · 다음 라운드에서 헤딩을 요구한다)`);
+    if (sfTail && postOk && reviewRoundOf(mdTail) > reviewRoundsBefore) {
+      // before 를 주면 이번에 새로 생긴 리뷰 헤딩을 블록으로 고른다 — 리뷰어가 Tasks 절에 끼워 넣어 파일 순서상 마지막이 아닐 수 있다(Codex 2차 M3)
+      const tail = applyReviewTail(mdTail, { round: reviewRoundOf(mdTail), fromRound: deferTailFromRound, date: today(), story: basename(sfTail, '.md'), before: storyTextBefore });
+      if (tail.applied) {
+        let nextTail = tail.text;
+        const openNow = countOpenFindings(nextTail, 'Patch') + countOpenFindings(nextTail, 'Decision');
+        if (openNow === 0) nextTail = setStoryStatus(nextTail, 'done').text;
+        // 쓰기 순서 = 이월 원장 → 스토리 → sprint — 원장 기록이 실패하면 지적은 열린 채 남아야 한다(Codex 2차 H2)
+        writeFileSync(deferredWorkFile, appendDeferredWork(deferredWorkBase(), `Deferred from: review-tail policy of ${basename(sfTail, '.md')} (${today()} · ${reviewRoundOf(mdTail)}차 · bmad-code-review)`, tail.deferred));
+        writeFileSync(sfTail, nextTail);
+        if (openNow === 0 && existsSync(sprintStatusFile)) { const s = setSprintStatus(readFileSync(sprintStatusFile, 'utf8'), basename(sfTail, '.md'), 'done', today()); if (s.changed) writeFileSync(sprintStatusFile, s.text); }
+        note(`[${story}][CLAUDE][REVIEW] 리뷰 꼬리 정책 — ${tail.why}${openNow === 0 ? ' · 열린 findings 0 ⇒ done(완주 게이트가 최종 판정)' : ` · 열린 findings ${openNow}건 잔존`}`);
+      }
+    }
     const required = [...new Set([w.reviewInputs.storyFile, w.reviewInputs.diffFile, ...w.reviewInputs.changedFiles])];
     const normalizeRead = path => resolve(path).replace(/\\/g, '/').toLowerCase();
     const readEvidence = required.filter(path => (res.events?.filePaths ?? []).some(read => normalizeRead(read) === normalizeRead(path)));
