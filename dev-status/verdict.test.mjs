@@ -60,7 +60,7 @@ describe('RED — 5경로', () => {
     const v = deployVerdict(i)
     assert.notEqual(v.level, RED)
     assert.equal(v.level, AMBER)
-    assert.ok(v.reasons.some((r) => /리뷰 대기(exit 8)/.test(r)), JSON.stringify(v.reasons))
+    assert.ok(v.reasons.some((r) => r.includes('리뷰 대기(exit 8)')), JSON.stringify(v.reasons))
   })
   test('④ 진단 우선순위 ①②③ 잔여 > 0', () => {
     const i = GREEN_INPUT()
