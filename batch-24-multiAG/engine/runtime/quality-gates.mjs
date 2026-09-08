@@ -95,7 +95,13 @@ export function changedCoverage({ diff, lcov, root = process.cwd() }) {
       const t = a.text.trim();
       // Structural/import/comment-only lines are not executable coverage targets.
       if (!t || /^(?:\/\/|\/\*|\*|import\b|export\s+(?:type|interface)\b|[{}()[\],;]+$)/.test(t)) continue;
-      if (!rec?.lines.has(a.line)) { unknown.push(`${path}:${a.line}`); continue; }
+      if (!rec) { unknown.push(`${path}:${a.line}`); continue; }
+      // V8 LCOV lists DA rows only for statement-carrying lines. In an instrumented file, an added
+      // line without a DA row is a non-statement line (method-chain continuation, type-only line,
+      // multi-line literal) — not an executable coverage target. A file with no LCOV record at all
+      // stays unknown above (never loaded/instrumented — fail closed). 2026-09-08 4-2 repair 2:
+      // every multi-line TypeScript statement edit was reported unknown, so no real change could pass.
+      if (!rec.lines.has(a.line)) continue;
       fileTotal++; if (rec.lines.get(a.line) > 0) fileCovered++;
     }
     const seenBranches = new Map();
