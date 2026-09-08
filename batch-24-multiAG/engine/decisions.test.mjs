@@ -270,10 +270,10 @@ test('실제 jng-os 결정 인박스를 읽기 전용으로 파싱한다(실물 
   const keys = [...new Set(p.map((x) => x.key))]
   // 실측(2026-09-03): 열린 절 17건 / 고유 스토리 12건. 형식이 바뀌면 이 수가 흔들린다 —
   // 정확한 수보다 「0 이 아니고, 전부 스토리 키로 풀린다」가 회귀 신호다.
-  assert.ok(p.length >= 10, `열린 결정이 ${p.length}건 — 파서가 실물 형식을 놓쳤을 수 있다`)
-  assert.ok(keys.length >= 8)
+  // 2026-09-08: 실물 인박스는 낮마다 닫힌다(오늘 2.10·4.6 등 낡은 🟠/🔴 헤더 4건을 ✅ 로 정정 → 이 테스트가 RED). 특정 키·건수를 고정하지 않는다 — 형식 회귀 신호는 「파싱된 것이 전부 스토리 키·유효 심각도」다.
+  assert.ok(p.length >= 1, `열린 결정이 ${p.length}건 — 파서가 실물 형식을 놓쳤을 수 있다`)
+  assert.ok(keys.length >= 1)
   assert.ok(keys.every((k) => /^\d+-\d+$/.test(k) || k === '(프로젝트 전체)'), keys.join(', '))
-  assert.ok(keys.includes('2-10') && keys.includes('4-6'), `실측 알려진 봉쇄가 빠졌다: ${keys.join(', ')}`)
   assert.ok(p.every((x) => x.severity === 'high' || x.severity === 'medium' || x.severity === 'low'))
   assert.equal(readFileSync(JNG_INBOX, 'utf8'), before, '읽기만 한다 — 1바이트도 쓰지 않는다')
   t.diagnostic(`jng-os 인박스 실측: 열린 절 ${p.length}건 · 고유 키 ${keys.length}건 (${keys.join(', ')})`)
