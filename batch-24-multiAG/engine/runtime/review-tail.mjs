@@ -20,18 +20,18 @@ const OPEN_PATCH_RE = /^([ \t]*- )\[ \] ([*_]{0,2}\[Review\]\[Patch\][*_]{0,2}[ 
 const GUARD_TAG_RE = /\[(5범주|guard|no-defer)\]/i
 // ② 경로 보호: 지적이 가리키는 **파일 경로**가 민감 영역이면 문구와 무관하게 유지. 엔진 기본(프로젝트 공통 어휘) + autonomy.noDeferPaths(프로젝트 정규식 문자열 배열).
 //    경로 토큰만 본다(본문 단어가 아니라) — "session" 같은 낱말이 산문에 있어도 경로가 아니면 안 잡힌다(과잉 유지로 꼬리 정책을 무력화하지 않게).
-export const NO_DEFER_PATH_DEFAULT_RE = /(^|[\/\\])(supabase|migrations?|auth|login|session|rls|polic(?:y|ies)|permissions?|roles?|billing|invoices?|payments?|charges?|청구|결제|vault|notify|notifications?|outbox|mail|sms|telegram|webhooks?|dispatch|deploy|wrangler|workflows|backup|restore|purge|secrets?|credentials?)(?=[\/\\.\-_]|$)|(^|[\/\\])\.env(?:\.|$)|\.(?:sql|pem|key)$/i
+export const NO_DEFER_PATH_DEFAULT_RE = /(^|[/\\])(supabase|migrations?|auth|login|session|rls|polic(?:y|ies)|permissions?|roles?|billing|invoices?|payments?|charges?|청구|결제|vault|notify|notifications?|outbox|mail|sms|telegram|webhooks?|dispatch|deploy|wrangler|workflows|backup|restore|purge|secrets?|credentials?)(?=[/\\.\-_]|$)|(^|[/\\])\.env(?:\.|$)|\.(?:sql|pem|key)$/i
 // 경로 토큰 — 허용 문자(유니코드 글자·숫자·_ . - / \)의 연속을 **한 번의 선형 스캔**으로 자른 뒤(Codex 2차 M1: 구분자 없는 4만 자에서 1.9초 → 선형),
 // ① 구분자(/ 또는 \)가 든 것은 경로 ② 구분자 없는 점 토큰은 **위치 표기 안([…]·백틱)** 이거나 점파일(.env)이거나 알려진 파일 확장자일 때만 경로다 —
 // `notifications.length`·`session.duration` 같은 산문 멤버식은 경로가 아니다(Codex 2차 M2). 따옴표·괄호·백틱은 문자 클래스 밖이라 자동 제외(1차 M3).
-const RUN_RE = /[\p{L}\p{N}_.\-\/\\]+/gu
+const RUN_RE = /[\p{L}\p{N}_.\-/\\]+/gu
 const FILE_EXT_RE = /^(?:[cm]?[jt]sx?|sql|toml|jsonc?|ya?ml|md|env|sh|ps1|bat|cmd|py|rb|go|rs|java|kt|cs|php|tsv|csv|txt|html?|css|scss|svg|pem|key|crt|cer|p12|pfx|lock|cfg|ini|conf|properties|xml|gradle|dockerfile)$/i
 export function pathTokens(text) {
   const src = String(text); const out = []
   for (const m of src.matchAll(RUN_RE)) {
     const raw = m[0]; const s = raw.replace(/[.,;:]+$/, '')
     if (s.length < 2 || /^\.{1,2}$/.test(s)) continue
-    if (/[\/\\]/.test(s)) { out.push(s); continue }
+    if (/[/\\]/.test(s)) { out.push(s); continue }
     const dot = s.lastIndexOf('.'); if (dot < 0) continue
     const before = src[m.index - 1] ?? '', after = src[m.index + raw.length] ?? ''
     const inRef = before === '[' || before === '`' || after === ']' || after === '`'
