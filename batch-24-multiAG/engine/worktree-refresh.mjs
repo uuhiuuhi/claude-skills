@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -200,9 +200,27 @@ function preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGi
   const denied = entries.filter((p) => isDeniedPath(p.replaceAll('\\', '/')))
   const paths = entries.filter((p) => !denied.includes(p))
   if (!paths.length) return { skipped: 'only-denied-paths', denied }
+  // 2026-09-08(같은 날 2회 실사고 · 18시간 + 2.5시간 정지): 스토리 워커가 엔진 사본(tools/auto/**)을 고치면 이 잔여물 커밋이 그 변경을
+  // 브랜치 HEAD 에 실어 다음 슬롯부터 런타임 핀 불일치(exit 3)로 러너가 선다. 엔진 사본 변경은 잔여물에 싣지 않는다 — 추적 파일은 HEAD 로
+  // 되돌리고 diff 를 로그 폴더에 patch 로 보존한다(아침에 정본 반영 여부는 사람이 판단). 미추적 파일은 그대로 둔다(핀 검사는 추적 파일만 본다).
+  const isEngine = (p) => /^tools\/auto\//.test(p.replaceAll('\\', '/'))
+  const engineTracked = paths.filter((p) => isEngine(p) && git(['ls-files', '--error-unmatch', '--', literalPathspec(p)]).status === 0)
+  let enginePatch = null
+  if (engineTracked.length) {
+    const diff = git(['diff', 'HEAD', '--', ...engineTracked.map(literalPathspec)])
+    const rel = join('_bmad-output', 'implementation-artifacts', 'auto-pipeline-logs')
+    mkdirSync(join(cwd, rel), { recursive: true })
+    enginePatch = join(rel, `engine-drift-${new Date().toISOString().replace(/[:.]/g, '-')}.patch`).replaceAll('\\', '/')
+    writeFileSync(join(cwd, enginePatch), `# 워커가 남긴 엔진 사본 변경 ${engineTracked.length}건 — ${label || '(배치)'}${exitCode == null ? '' : ` (exit ${exitCode})`} · 잔여물에서 제외하고 HEAD 로 되돌림 · 정본 반영 여부는 사람 판단
+` + (diff.stdout ?? ''))
+    const restore = git(['checkout', 'HEAD', '--', ...engineTracked.map(literalPathspec)])
+    if (restore.status !== 0) return { failed: `engine revert: ${(restore.stderr ?? '').trim()}`, denied }
+  }
+  const kept = paths.filter((p) => !engineTracked.includes(p)).concat(enginePatch ? [enginePatch] : [])
+  if (!kept.length) return { skipped: 'only-engine-paths', denied, engineReverted: engineTracked.length, enginePatch }
   // Sol-high round 14 H1: porcelain names go back to git as pathspecs — `:(literal)` disables glob/magic so a file named
   // `[ab].txt` or `:(top)*` can never widen the selection past the filtered list (even after `--`).
-  const specs = paths.map(literalPathspec)
+  const specs = kept.map(literalPathspec)
   const add = git(['add', '-A', '--', ...specs])
   if (add.status !== 0) return { failed: `add: ${(add.stderr ?? '').trim()}`, denied }
   const staged = git(['diff', '--cached', '--unified=0', '--', ...specs])
@@ -211,11 +229,11 @@ function preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGi
     git(['reset', '-q', '--', ...specs])
     return { failed: `secret pattern in leftovers (${secrets.length}) — left uncommitted for a human`, secrets: secrets.length, denied }
   }
-  const message = `chore(batch): STOP 잔여물 보존 — ${label || '(배치)'}${exitCode == null ? '' : ` (exit ${exitCode})`} · 워커가 본 트리에 남긴 미완 변경 ${paths.length}건 · 다음 라운드/사람 검토 대상`
+  const message = `chore(batch): STOP 잔여물 보존 — ${label || '(배치)'}${exitCode == null ? '' : ` (exit ${exitCode})`} · 워커가 본 트리에 남긴 미완 변경 ${kept.length}건${engineTracked.length ? ` · 엔진 사본 변경 ${engineTracked.length}건 되돌림(patch 보존)` : ''} · 다음 라운드/사람 검토 대상`
   const commit = git(['-c', 'core.editor=true', 'commit', '-q', '-m', message, '--', ...specs])
   if (commit.status !== 0) return { failed: `commit: ${(commit.stderr ?? commit.stdout ?? '').trim()}`, denied }
   const head = (git(['rev-parse', 'HEAD']).stdout ?? '').trim()
-  return { committed: head, entries: paths.length, denied, message }
+  return { committed: head, entries: kept.length, denied, message, engineReverted: engineTracked.length, enginePatch }
 }
 
 /** `git status --porcelain=v1 -z` → 경로 목록. rename/copy 레코드(`R  new\0old\0` · 대상 → 원본 순 — git-status 문서)는
