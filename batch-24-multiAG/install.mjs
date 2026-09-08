@@ -50,13 +50,13 @@ function whichBin(name) {
   }
   return ''
 }
-function safeExec(bin, args = []) {
+function safeExec(bin, args = [], timeout = 20_000) {
   const file = String(bin ?? '')
   const list = (args ?? []).map(String)
   if (file === '' || SHELL_META_RE.test(file) || list.some((a) => SHELL_META_RE.test(a))) {
     return { status: 1, stdout: '', stderr: `실행 거부 — 실행파일·인자에 셸 메타문자가 있다: ${file}` }
   }
-  const o = { encoding: 'utf8', timeout: 20_000, maxBuffer: 1024 * 1024, shell: false }
+  const o = { encoding: 'utf8', timeout, maxBuffer: 1024 * 1024, shell: false }
   // `/s` 는 바깥 따옴표 한 쌍만 벗긴다 — 그래서 전체를 한 번 더 감싼다(안 감싸면 공백 경로가 깨진다).
   const r = /\.(cmd|bat)$/i.test(file) && process.platform === 'win32'
     ? spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${file}" ${list.map((a) => `"${a}"`).join(' ')}"`], { ...o, windowsVerbatimArguments: true })
@@ -66,6 +66,7 @@ function safeExec(bin, args = []) {
 
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
 const notes = []
+const nlSep = String.fromCharCode(10)
 
 // 프로젝트 이름·상태 폴더는 **러너와 같은 3단계 우선순위**로 정한다(공유 계약 C3):
 //   이름  = 기존 auto.config.json 의 project → package.json name → 폴더명
@@ -120,6 +121,16 @@ if (existsSync(runtimeDst) && !has('force')) notes.push('· runtime 이미 있�
 else {
   cpSync(join(SELF, 'engine', 'runtime'), runtimeDst, { recursive: true, force: true, filter: src => !src.endsWith('.test.mjs') || ['quality-gates.test.mjs', 'authorization-matrix.test.mjs'].includes(basename(src)) })
   console.log('✔ tools/auto/runtime (프로젝트 고정 모델 런타임)')
+}
+// 👤 2026-09-08 동결 예외 ② — 설치본이 소비 프로젝트 eslint 에 걸리면 `npm run lint` 가 RED 가 되고, 워커가 엔진을 고치다 핀 불일치로
+// 러너가 선다(2026-09-07 review-tail.mjs no-useless-escape ×5 → 슬롯 36회 무음 정지). 프로젝트에 lint 스크립트와 eslint 가 있으면 설치본을 그 규칙으로 검사한다.
+const eslintJs = join(ROOT, 'node_modules', 'eslint', 'bin', 'eslint.js')
+if (pkg.scripts?.lint && existsSync(eslintJs)) {
+  const lint = safeExec(process.execPath, [eslintJs, join(dst, 'runtime'), join(dst, 'adapters'), '--no-error-on-unmatched-pattern'], 180_000)
+  if ((lint.status ?? 1) !== 0) {
+    notes.push('⚠️ 설치본이 프로젝트 eslint 에 걸린다 — npm run lint 가 RED 가 된다. 정본을 고쳐 재설치할 것(러너 핀을 올리지 말 것):' + nlSep + String(lint.stdout || lint.stderr).trim().split(nlSep).slice(0, 12).join(nlSep))
+    process.exitCode = 1
+  } else console.log('✔ 설치본 eslint(프로젝트 규칙) 통과')
 }
 mkdirSync(join(dst, 'fixtures'), { recursive: true });
 copyFileSync(join(SELF, 'engine/fixtures/strict-quality-fixture.mjs'), join(dst, 'fixtures/strict-quality-fixture.mjs'));
