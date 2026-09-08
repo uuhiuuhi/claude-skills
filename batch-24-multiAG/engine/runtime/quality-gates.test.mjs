@@ -43,7 +43,11 @@ test('coverage boundary exactly 90% passes; 80% fails', () => {
 test('coverage missing/excluded changed line is not verified', () => {
   assert.equal(changedCoverage({ diff: coverageDiff, lcov: '' }).result, 'not-verified');
   const c = changedCoverage({ diff: coverageDiff, lcov: lcov(10).replace('DA:10,1', '') });
-  assert.deepEqual(c.unknown, ['src/x.ts:10']);
+  // 2026-09-08 4-2: an instrumented file's added line without a DA row is a non-statement line (V8 LCOV lists DA only for statements) — excluded, not unknown
+  assert.deepEqual(c.unknown, []); assert.equal(c.result, 'pass');
+  // a file with no LCOV record at all stays unknown (never loaded/instrumented — fail closed)
+  const u = changedCoverage({ diff: coverageDiff, lcov: 'SF:src/other.ts\nDA:1,1\nend_of_record\n' });
+  assert.equal(u.unknown.length, 10); assert.equal(u.result, 'not-verified');
 });
 test('branch diff coverage cannot be hidden by full line coverage', () => {
   const c = changedCoverage({ diff: coverageDiff, lcov: lcov(10).replace('end_of_record', 'BRDA:1,0,0,1\nBRDA:1,0,1,-\nend_of_record') });
