@@ -50,7 +50,10 @@ export function deployVerdict({
     if (r === 'fail' || r === 'rollback') {
       red.push('배치 ' + (m.label || m.batchId || '?') + ' 의 통합 게이트가 ' + (r === 'rollback' ? '되돌림' : '실패') + '입니다')
     }
-    if (n(m?.worst) >= 7) red.push('배치 ' + (m.label || m.batchId || '?') + ' 이 exit ' + m.worst + ' 로 끝났습니다')
+    // exit 8 = 「리뷰 대기」(2026-09-07 👤 T6 규칙 · 회수 dev 배치가 qa GREEN 인데 review 단계가 없어 교차 검토만 미충족) — 고장이 아니다.
+    // 러너 차단기도 세지 않는다(runner-rules isReviewPendingExit). RED 로 그리면 정상인 밤이 통째로 「배포 불가」가 된다(2026-09-09 실측: 15배치 중 exit 8 여럿 → RED 28건).
+    if (n(m?.worst) === 8) amber.push('배치 ' + (m.label || m.batchId || '?') + ' 이 리뷰 대기(exit 8)로 끝났습니다 — 교차 검토만 미충족 · 다음 라운드가 review 를 잇습니다')
+    else if (n(m?.worst) >= 7) red.push('배치 ' + (m.label || m.batchId || '?') + ' 이 exit ' + m.worst + ' 로 끝났습니다')
   }
   const topTiers = tierRemaining(diagnosis, backlog, [1, 2, 3])
   if (topTiers.known && topTiers.count > 0) {

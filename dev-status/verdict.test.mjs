@@ -53,6 +53,15 @@ describe('RED — 5경로', () => {
     i.lastNight = i.manifests
     assert.equal(deployVerdict(i).level, RED)
   })
+  test('③-b exit 8(리뷰 대기)은 RED 가 아니다 — AMBER 로 내려가고 사유에 「리뷰 대기」가 적힌다(2026-09-07 T6 규칙)', () => {
+    const i = GREEN_INPUT()
+    i.manifests = [pass({ worst: 8 })]
+    i.lastNight = i.manifests
+    const v = deployVerdict(i)
+    assert.notEqual(v.level, RED)
+    assert.equal(v.level, AMBER)
+    assert.ok(v.reasons.some((r) => /리뷰 대기(exit 8)/.test(r)), JSON.stringify(v.reasons))
+  })
   test('④ 진단 우선순위 ①②③ 잔여 > 0', () => {
     const i = GREEN_INPUT()
     i.diagnosis = { counts: { findings: { 1: 0, 2: 0, 3: 2, 4: 0, 5: 0 } } }
