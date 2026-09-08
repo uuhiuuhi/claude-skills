@@ -1,0 +1,738 @@
+[
+  {
+    "legacy": "night-batch-ops/AUTOFINISH.md",
+    "canonical": "batch-24-multiAG/AUTOFINISH.md",
+    "originalSha256": "8929f6217a7caef63420ffab3f18906d6d4f4249292c564141d63a6a34b9b773",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "e8078115a7f934e791490bbc4e196180d1e65dc7ff0f8bd1e66d716764057ad6"
+  },
+  {
+    "legacy": "night-batch-ops/install.mjs",
+    "canonical": "batch-24-multiAG/install.mjs",
+    "originalSha256": "d2b6c8cfe2e260c16350efa097aa2f27797c3d6d134347c1b4999049afd1210d",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "54495c5c7094fa72c5bbbf6e6b4a8c3e4f963fef8ba5ea26b4554593a73fa0ab"
+  },
+  {
+    "legacy": "night-batch-ops/SKILL.md",
+    "canonical": "batch-24-multiAG/references/legacy-night-operations.md",
+    "originalSha256": "2d9ca706140b7df0529176d2cc64aeea50323fde0ae9f0be621cdfe6cbe5ed58",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "2d9ca706140b7df0529176d2cc64aeea50323fde0ae9f0be621cdfe6cbe5ed58"
+  },
+  {
+    "legacy": "night-batch-ops/engine/asf-resolve.mjs",
+    "canonical": "batch-24-multiAG/engine/asf-resolve.mjs",
+    "originalSha256": "5179d1f7b3b2b83bb0adcf5632a9e0c3f8d3938fa50db50470c389a1b7fc680f",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "e76f53d446e36a55cb115c48090b8fcd45ea37c67192c6400495c1486be4aa72"
+  },
+  {
+    "legacy": "night-batch-ops/engine/assign.mjs",
+    "canonical": "batch-24-multiAG/engine/assign.mjs",
+    "originalSha256": "6b43fa785c03547e4353b43a2d8c9740039dadc995ba2276dc7e112ae6476e2f",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "16322f6ed0ab2ef3003f05d1e6154bd6bc22f40e1466b25da09ef208ed53eb4b"
+  },
+  {
+    "legacy": "night-batch-ops/engine/assign.test.mjs",
+    "canonical": "batch-24-multiAG/engine/assign.test.mjs",
+    "originalSha256": "392d0b3772ec5df655595e34ad3161476d9fd318c6e17d53da31273adc5b7d1a",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "45a25663927fc64c70ac25cc9b9d8b8be5fa994c7710b7f6e8bf9b5572e39669"
+  },
+  {
+    "legacy": "night-batch-ops/engine/autofinish-e2e.test.mjs",
+    "canonical": "batch-24-multiAG/engine/autofinish-e2e.test.mjs",
+    "originalSha256": "91269628a3a92ff9ea517136bb5ac6680b01e4a82ae1623b8227bab697779f3a",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "49898ee3fb2bd2285df4374c8fbc2dbf45cd86ff0d79982f19b67d3142965b67"
+  },
+  {
+    "legacy": "night-batch-ops/engine/autofinish.mjs",
+    "canonical": "batch-24-multiAG/engine/autofinish.mjs",
+    "originalSha256": "50b2f397060bbdcbb04641a7cb21988a5f30546bde655ec0cf3bca673654c972",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "3a759bc83d35364db114334c7a6df1f8d20db39ee39111bf090b4609fc1aea5c"
+  },
+  {
+    "legacy": "night-batch-ops/engine/autofinish.test.mjs",
+    "canonical": "batch-24-multiAG/engine/autofinish.test.mjs",
+    "originalSha256": "f546a6575e390a519b1ac82dccafbb60c70db746806c9a2bacd1a1e2634eb641",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "2be8f57298ed8e6c26f4dde13b28964ec72b75835c4d35e03e4c6afb1629614e"
+  },
+  {
+    "legacy": "night-batch-ops/engine/autonomy.test.mjs",
+    "canonical": "batch-24-multiAG/engine/autonomy.test.mjs",
+    "originalSha256": "2cdc0286a791920e2fa0222b55717904eb8932dc30490e5cd4c736cada285cbf",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "68b8467b8be133939938a713de46b176f2b637d21915be39fe84153d50b1d538"
+  },
+  {
+    "legacy": "night-batch-ops/engine/backlog.mjs",
+    "canonical": "batch-24-multiAG/engine/backlog.mjs",
+    "originalSha256": "f97046235a5f464eec9b37951779b3ebff72a56821b7dfd0b65d941c22e31836",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "308c8d2e85b1c6036d746bfbdc37271f4d8539d050262b7114b6f7e4ddf65d75"
+  },
+  {
+    "legacy": "night-batch-ops/engine/backlog.test.mjs",
+    "canonical": "batch-24-multiAG/engine/backlog.test.mjs",
+    "originalSha256": "50180d98117dc7ebcd048cacaebb081c60351e38445955a1a671787a5c2a0449",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "50180d98117dc7ebcd048cacaebb081c60351e38445955a1a671787a5c2a0449"
+  },
+  {
+    "legacy": "night-batch-ops/engine/bench.mjs",
+    "canonical": "batch-24-multiAG/engine/bench.mjs",
+    "originalSha256": "0a045ce86db9caabf31f4d1d1d4b8a39f04284b62fa48a759109be40d1ae412c",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "b5fc326d338cc3cc63e8368bd3351766fe1db60e9e030d75ae8315db24418900"
+  },
+  {
+    "legacy": "night-batch-ops/engine/bench.test.mjs",
+    "canonical": "batch-24-multiAG/engine/bench.test.mjs",
+    "originalSha256": "abd2db2522a8c9800a8a0831448d2cd92db06bb15e662a2f4e69dee859d4be1f",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "b83532a62a3953defe1e83e930ef21acfd327ec5003e1d731fbcede6ec39532a"
+  },
+  {
+    "legacy": "night-batch-ops/engine/bmad-sync.mjs",
+    "canonical": "batch-24-multiAG/engine/bmad-sync.mjs",
+    "originalSha256": "3ac111972034e48a1b3d3353eb14b477ff3314c2df14c53bf21613329e17bc5f",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "d6c3446904713807b0a8e2382a9e74d5b71cf87d13855b769c233c85a84b9f4f"
+  },
+  {
+    "legacy": "night-batch-ops/engine/bmad-sync.test.mjs",
+    "canonical": "batch-24-multiAG/engine/bmad-sync.test.mjs",
+    "originalSha256": "e64849948271c008b08e0fa0a416a7ce4c75178e0f81aeba229ee973aca0e272",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "e64849948271c008b08e0fa0a416a7ce4c75178e0f81aeba229ee973aca0e272"
+  },
+  {
+    "legacy": "night-batch-ops/engine/conflicts.mjs",
+    "canonical": "batch-24-multiAG/engine/conflicts.mjs",
+    "originalSha256": "f0dbc325e782e49512791a6a6dda60af028ee6c48787df80c28ae3d8b1aabb40",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "f0dbc325e782e49512791a6a6dda60af028ee6c48787df80c28ae3d8b1aabb40"
+  },
+  {
+    "legacy": "night-batch-ops/engine/conflicts.test.mjs",
+    "canonical": "batch-24-multiAG/engine/conflicts.test.mjs",
+    "originalSha256": "cf9425c0638e8f37cdb2bac3884bc88d12ab6e08ebafc56bb60029df8c9cb54b",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "cf9425c0638e8f37cdb2bac3884bc88d12ab6e08ebafc56bb60029df8c9cb54b"
+  },
+  {
+    "legacy": "night-batch-ops/engine/decisions.mjs",
+    "canonical": "batch-24-multiAG/engine/decisions.mjs",
+    "originalSha256": "064c25c8d0fb191ba75398872f157346cb7fc0f237297f3371ccf1ba7f807d59",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "064c25c8d0fb191ba75398872f157346cb7fc0f237297f3371ccf1ba7f807d59"
+  },
+  {
+    "legacy": "night-batch-ops/engine/decisions.test.mjs",
+    "canonical": "batch-24-multiAG/engine/decisions.test.mjs",
+    "originalSha256": "4ed3ee4d8153818dde4baa76e9bd20a5b71f7d01c872d441dfef8a3353b7e252",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "4ed3ee4d8153818dde4baa76e9bd20a5b71f7d01c872d441dfef8a3353b7e252"
+  },
+  {
+    "legacy": "night-batch-ops/engine/diagnose.mjs",
+    "canonical": "batch-24-multiAG/engine/diagnose.mjs",
+    "originalSha256": "11d5b09b6451c5b3a2d0697affd0292aa5abe5cc1d477c94fb15986312055872",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "7cd9a4e27c68fa6c6cea2a3b3b5a7953a58cfc67b4e5c162fbd8696cbfac3e43"
+  },
+  {
+    "legacy": "night-batch-ops/engine/diagnose.test.mjs",
+    "canonical": "batch-24-multiAG/engine/diagnose.test.mjs",
+    "originalSha256": "894f68477838668bf6af243e8316d4c310262b2aaf309ae707a65c65a4003a83",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "b8086b63629da9db0da3577c1bac345ddc437563a38db117da3cde8617958525"
+  },
+  {
+    "legacy": "night-batch-ops/engine/e2e-parallel.test.mjs",
+    "canonical": "batch-24-multiAG/engine/e2e-parallel.test.mjs",
+    "originalSha256": "a30562fe0ce213cf6dc108d4a03c07e43d8a3e91a0086ee23af2bd885520ec43",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "9d87d7f10133b0906e801965af990242c0c8a034b9c8900fb468420cf1170c9c"
+  },
+  {
+    "legacy": "night-batch-ops/engine/metrics.mjs",
+    "canonical": "batch-24-multiAG/engine/metrics.mjs",
+    "originalSha256": "889dd92098775822edbae092cbda1bca913e0ab404764e06f17e11e5c1eba230",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "deb91a9f1d97f053661648abf35092dadc67cd048e2d8d349839a91c7ea41c55"
+  },
+  {
+    "legacy": "night-batch-ops/engine/metrics.test.mjs",
+    "canonical": "batch-24-multiAG/engine/metrics.test.mjs",
+    "originalSha256": "472ac6cb471f74a4628a10294620930e2e2180a3207a9933eb734061421cbfc2",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "472ac6cb471f74a4628a10294620930e2e2180a3207a9933eb734061421cbfc2"
+  },
+  {
+    "legacy": "night-batch-ops/engine/orchestrate.mjs",
+    "canonical": "batch-24-multiAG/engine/orchestrate.mjs",
+    "originalSha256": "fb95845663ce0641f4bad8b2ab9a64c9c7b11598f48dfc3f91c217171ab10092",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "687a876dfa1137d8c5f703effd082106acafc1cab3c3abbd9c32f69980c1c5c7"
+  },
+  {
+    "legacy": "night-batch-ops/engine/orchestrate.test.mjs",
+    "canonical": "batch-24-multiAG/engine/orchestrate.test.mjs",
+    "originalSha256": "6bafacb327d0ecc3454986de71301551c939341015230e69f33ab51c8ee47f16",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "6bafacb327d0ecc3454986de71301551c939341015230e69f33ab51c8ee47f16"
+  },
+  {
+    "legacy": "night-batch-ops/engine/plan-dag.mjs",
+    "canonical": "batch-24-multiAG/engine/plan-dag.mjs",
+    "originalSha256": "6e6faf210f79072b967803b69e31898d4daabcfc771747c0e0c902df92e68956",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "0a4b013048df2d6041eb80f42f295e30db3474597e6dd3c274570b0f0ef1c9b0"
+  },
+  {
+    "legacy": "night-batch-ops/engine/plan-dag.test.mjs",
+    "canonical": "batch-24-multiAG/engine/plan-dag.test.mjs",
+    "originalSha256": "eb4b53b28e7b8478591b3aa690d744b44dff3ae003ee128504133ca513c71226",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "eb4b53b28e7b8478591b3aa690d744b44dff3ae003ee128504133ca513c71226"
+  },
+  {
+    "legacy": "night-batch-ops/engine/plan-queue.mjs",
+    "canonical": "batch-24-multiAG/engine/plan-queue.mjs",
+    "originalSha256": "c46e8d5f560dcd27caafd8f352bcc09798ed2a8d5e05414f5ace3d79333443eb",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "e79f1d73fa0c1b06e00f7f43d29117e61e8172ff9b4511cdcfc1027685308e9e"
+  },
+  {
+    "legacy": "night-batch-ops/engine/plan-queue.test.mjs",
+    "canonical": "batch-24-multiAG/engine/plan-queue.test.mjs",
+    "originalSha256": "a26f345a748be18d2241cf6a0d97b0afde113932a945d2f97352a56e1d035fcb",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "a26f345a748be18d2241cf6a0d97b0afde113932a945d2f97352a56e1d035fcb"
+  },
+  {
+    "legacy": "night-batch-ops/engine/push-guard.mjs",
+    "canonical": "batch-24-multiAG/engine/push-guard.mjs",
+    "originalSha256": "1c41e01f3497e04321c9e7b4bb23af05d7ef5bac914f4bbf7c298efba98b81fa",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "6bc7064650ac63d0dbbc75f8e848459b7c8cb1622fd9af270074288b50ee8d06"
+  },
+  {
+    "legacy": "night-batch-ops/engine/readiness.mjs",
+    "canonical": "batch-24-multiAG/engine/readiness.mjs",
+    "originalSha256": "f585f27b21fb46a33c14a806b23a45c9592116ed7daa61e93b40bb8c6d340bd3",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "ff37816b76499be6cd3b882aea8a602c6de6f0fcf37a5305785e6286c3d64d32"
+  },
+  {
+    "legacy": "night-batch-ops/engine/readiness.test.mjs",
+    "canonical": "batch-24-multiAG/engine/readiness.test.mjs",
+    "originalSha256": "5044bd873ab2790c22f9ee1f7c0e4e4a0e0455b930469c0eaffcf0324b78eeaa",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "c9ca833992fd212011b2d31bae92b1837ea4bfdfa85df20fd6a1eb142b19ac9d"
+  },
+  {
+    "legacy": "night-batch-ops/engine/report.mjs",
+    "canonical": "batch-24-multiAG/engine/report.mjs",
+    "originalSha256": "9c0aac96e3701100989e9531b6ece8301d8a9df8590817e8a8ca4fb36359f050",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "bfae2b61727f5baff32197c46dc25b0873b519f380a63b8bebffc1b2eafd83f2"
+  },
+  {
+    "legacy": "night-batch-ops/engine/report.test.mjs",
+    "canonical": "batch-24-multiAG/engine/report.test.mjs",
+    "originalSha256": "0f6afe74c661b8832051d6364cbe12423827508883c4e8f39be2ff09c7173cb9",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "0f8508eafe8be5471adffb3b5997c92ecbf11322bdc899948cbe48303e0d4864"
+  },
+  {
+    "legacy": "night-batch-ops/engine/run-night.mjs",
+    "canonical": "batch-24-multiAG/engine/run-night.mjs",
+    "originalSha256": "f4ef785d357bcf3f7515148b029a391c3a6facd2abca669cedf357a4b75e694e",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "d83440d510cfd543503a1524af9680952de48ba1e55d30367b7d4069ee7313ce"
+  },
+  {
+    "legacy": "night-batch-ops/engine/runner-rules.mjs",
+    "canonical": "batch-24-multiAG/engine/runner-rules.mjs",
+    "originalSha256": "0ffa8d6907c65a14597a59e4b47409e5c4c3377e75274f060a6ef754e75b7674",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "fd36e16d9bc17a0abb179e1300d86762d62af53264161e7b9cb5fe59790cc410"
+  },
+  {
+    "legacy": "night-batch-ops/engine/runner-rules.test.mjs",
+    "canonical": "batch-24-multiAG/engine/runner-rules.test.mjs",
+    "originalSha256": "d1e47a5f3786f76473688536366275df7c41e524d186eb59ff5e69c59fc95572",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "d1e47a5f3786f76473688536366275df7c41e524d186eb59ff5e69c59fc95572"
+  },
+  {
+    "legacy": "night-batch-ops/engine/spawn-deadline.mjs",
+    "canonical": "batch-24-multiAG/engine/spawn-deadline.mjs",
+    "originalSha256": "9325d9127249820c09946eb9764c0a364850228bcf182cab474ea7b97a8566e3",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "9325d9127249820c09946eb9764c0a364850228bcf182cab474ea7b97a8566e3"
+  },
+  {
+    "legacy": "night-batch-ops/engine/spawn-deadline.test.mjs",
+    "canonical": "batch-24-multiAG/engine/spawn-deadline.test.mjs",
+    "originalSha256": "4d23cc16db43bfda7b2ea4b943e9fd1c04eb4bea7878210bdde21c723e768e68",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "4d23cc16db43bfda7b2ea4b943e9fd1c04eb4bea7878210bdde21c723e768e68"
+  },
+  {
+    "legacy": "night-batch-ops/engine/story-ledger.mjs",
+    "canonical": "batch-24-multiAG/engine/story-ledger.mjs",
+    "originalSha256": "f4fd309e90fcb5872f3fc9bd990d8c6b081a17f7ac19069bdc6fd4afe3024140",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "4954745faae18fc9f8a1d862629c832f2c6bd05b57765b7d6a9d1dc8bd5d760f"
+  },
+  {
+    "legacy": "night-batch-ops/engine/telegram-commands.mjs",
+    "canonical": "batch-24-multiAG/engine/telegram-commands.mjs",
+    "originalSha256": "f61a670f0d9434d86ce3416fa79c5835bbdb22eecd7d7e248ea3958f219db44a",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "d14709c9ed32f9e27f5a557cf0b301a288838709b229e8a1407bd56c13f1ea41"
+  },
+  {
+    "legacy": "night-batch-ops/engine/telegram-rules.mjs",
+    "canonical": "batch-24-multiAG/engine/telegram-rules.mjs",
+    "originalSha256": "7c6719fb4f14679130fcd56cf26c20236595a6d0a74a394a4a1bbf6c189b4c95",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "7c6719fb4f14679130fcd56cf26c20236595a6d0a74a394a4a1bbf6c189b4c95"
+  },
+  {
+    "legacy": "night-batch-ops/engine/telegram-rules.test.mjs",
+    "canonical": "batch-24-multiAG/engine/telegram-rules.test.mjs",
+    "originalSha256": "26d636e62710b5a2257bb12c373a9d9421ec81cd8348442e817127bdddee9010",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "26d636e62710b5a2257bb12c373a9d9421ec81cd8348442e817127bdddee9010"
+  },
+  {
+    "legacy": "night-batch-ops/engine/worker-pool.test.mjs",
+    "canonical": "batch-24-multiAG/engine/worker-pool.test.mjs",
+    "originalSha256": "6028f884081e4578ea282fa43a62fe441fd587ebb1a0e81f90df562e4f594aa7",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "3959d733ecc01ee998da9a35231e0c8629245daf05c108a6d071cce59cddff29"
+  },
+  {
+    "legacy": "night-batch-ops/references/multi-provider-design.md",
+    "canonical": "batch-24-multiAG/references/multi-provider-design.md",
+    "originalSha256": "9f334d3a051c09515b806ba14b427af98b8e713d7bf4d48859954865191215b5",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "9f334d3a051c09515b806ba14b427af98b8e713d7bf4d48859954865191215b5"
+  },
+  {
+    "legacy": "night-batch-ops/engine/fixtures/fake-bmad-project.mjs",
+    "canonical": "batch-24-multiAG/engine/fixtures/fake-bmad-project.mjs",
+    "originalSha256": "d10b0598bd8b102b2ef5ce9bac736f20cd4d7023996686aec1218f2f4bf5b863",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "b6dc6a05e10819c38e92299833e505f36ec65c689e3649da4423b4f15ac9226e"
+  },
+  {
+    "legacy": "night-batch-ops/engine/fixtures/stub-claude.mjs",
+    "canonical": "batch-24-multiAG/engine/fixtures/stub-claude.mjs",
+    "originalSha256": "0f7c1f48dcc3e12f026c2e58ee22d99d609694db2db06f3ec3d66cb9bbec6042",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "d2966387a610f6df22300506169cb666c213c9548dad63752e0276ab0e82c9af"
+  },
+  {
+    "legacy": "night-batch-ops/engine/fixtures/stub-codex.mjs",
+    "canonical": "batch-24-multiAG/engine/fixtures/stub-codex.mjs",
+    "originalSha256": "82cf8ad1327c99796613b199a87a418bf3a57a6d8112ee3c12d3dfdc5ea6ce36",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "82cf8ad1327c99796613b199a87a418bf3a57a6d8112ee3c12d3dfdc5ea6ce36"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/autofinish-jngos-report.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/autofinish-jngos-report.md",
+    "originalSha256": "99d171c332a8bf819f6052eb146393d8aabff4a3a13f2dde2864a4d9f7b23354",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "99d171c332a8bf819f6052eb146393d8aabff4a3a13f2dde2864a4d9f7b23354"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/AUTONOMOUS-FINISH-DESIGN.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/AUTONOMOUS-FINISH-DESIGN.md",
+    "originalSha256": "09c3982d5bcbb5e809ba6cc61ec9b1b794d226ba10ac65c5df55be5345252483",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "09c3982d5bcbb5e809ba6cc61ec9b1b794d226ba10ac65c5df55be5345252483"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/AUTONOMOUS-FINISH-SPEC.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/AUTONOMOUS-FINISH-SPEC.md",
+    "originalSha256": "7d4c767f5d1db1f7383cd96bcfd8715b43b560b5153ef0fa2497d02000989812",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "7d4c767f5d1db1f7383cd96bcfd8715b43b560b5153ef0fa2497d02000989812"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/bench-stub.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/bench-stub.md",
+    "originalSha256": "5b09172a11d26facfca116d13b56d1b45bb17c32ea8e4ead04fe0ecb62aa54c7",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "5b09172a11d26facfca116d13b56d1b45bb17c32ea8e4ead04fe0ecb62aa54c7"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/BRIEF.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/BRIEF.md",
+    "originalSha256": "39ce95127647200a3452f421aeedc73cf7a74a76889e4c5df935f4fe355b0e0c",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "39ce95127647200a3452f421aeedc73cf7a74a76889e4c5df935f4fe355b0e0c"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/cli-verification.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/cli-verification.md",
+    "originalSha256": "5fbc0946e68878ce4be26c6b5f4cbd10fc92db14af619e0b3232bc40907cc40c",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "5fbc0946e68878ce4be26c6b5f4cbd10fc92db14af619e0b3232bc40907cc40c"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/codex-review-r1.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/codex-review-r1.md",
+    "originalSha256": "ffd52f6e1fc7a6b1990d1a6d4f2515650bff5830330516922016addef10ee1cb",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "ffd52f6e1fc7a6b1990d1a6d4f2515650bff5830330516922016addef10ee1cb"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/codex-review-r2.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/codex-review-r2.md",
+    "originalSha256": "f0320f6362133dae2ab60c6a8234bb8a9ed77a2668538b7afe3633d2e6cf29a2",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "f0320f6362133dae2ab60c6a8234bb8a9ed77a2668538b7afe3633d2e6cf29a2"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/codex-review-r3.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/codex-review-r3.md",
+    "originalSha256": "174f8827a8761cf3536284d6f0021cdc0df99104eb4662942f5bdaf3bee76586",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "174f8827a8761cf3536284d6f0021cdc0df99104eb4662942f5bdaf3bee76586"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/codex-review-r4.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/codex-review-r4.md",
+    "originalSha256": "45b9c963b8ea32b5b30c315d5ef70f5679f94a2232eccb67ee9d1edf646789f7",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "45b9c963b8ea32b5b30c315d5ef70f5679f94a2232eccb67ee9d1edf646789f7"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/codex-review-r5.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/codex-review-r5.md",
+    "originalSha256": "b81246e7c702f88a049cb5b383e2f0db76e95989ab142e18fefb084e73f5590b",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "b81246e7c702f88a049cb5b383e2f0db76e95989ab142e18fefb084e73f5590b"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/codex-review-r6.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/codex-review-r6.md",
+    "originalSha256": "2fb9204716de02771ee3cccd143f3b281ad11ea6351968edbb60f98402c496ad",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "2fb9204716de02771ee3cccd143f3b281ad11ea6351968edbb60f98402c496ad"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/codex-review-r7.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/codex-review-r7.md",
+    "originalSha256": "2554db76a362d551cb6d2ef4a9c55a94d08b8bc74ad1ef2cf44e32bec892c63d",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "2554db76a362d551cb6d2ef4a9c55a94d08b8bc74ad1ef2cf44e32bec892c63d"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/codex-review-r8.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/codex-review-r8.md",
+    "originalSha256": "6a40b9eec0cb38be0983dca595e755f89be42618e0a29fdb945d722679df8ffe",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "6a40b9eec0cb38be0983dca595e755f89be42618e0a29fdb945d722679df8ffe"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/dashboard-mockup.html",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/dashboard-mockup.html",
+    "originalSha256": "d92a1bd8aed9a494c07cdf420e7bec1cd87a218e172987b1d736281a02000334",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "d92a1bd8aed9a494c07cdf420e7bec1cd87a218e172987b1d736281a02000334"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/DASHBOARD-REDESIGN-DESIGN.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/DASHBOARD-REDESIGN-DESIGN.md",
+    "originalSha256": "6a9b9ec57970a5cc842476097237226c33f721472f906ce8edff7cc7f51ff647",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "6a9b9ec57970a5cc842476097237226c33f721472f906ce8edff7cc7f51ff647"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/FINAL-REPORT.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/FINAL-REPORT.md",
+    "originalSha256": "a8a115b78aa0a1b6c0b8046f737aa871571ee388de6779a467a21396582956db",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "a8a115b78aa0a1b6c0b8046f737aa871571ee388de6779a467a21396582956db"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/INSTALL-ISOLATION.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/INSTALL-ISOLATION.md",
+    "originalSha256": "b2adc0b0bbdc2e857131914e893b501792da9c90d12978727c1d7a9ef093a45d",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "b2adc0b0bbdc2e857131914e893b501792da9c90d12978727c1d7a9ef093a45d"
+  },
+  {
+    "legacy": "night-batch-ops/references/hardening-2026-09-02/TEST-RUN-FINAL.md",
+    "canonical": "batch-24-multiAG/references/hardening-2026-09-02/TEST-RUN-FINAL.md",
+    "originalSha256": "7f98d4d344b478c0f1eb1b442d0e8bf17b325cec61333114eb621428bd1f24e7",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "7f98d4d344b478c0f1eb1b442d0e8bf17b325cec61333114eb621428bd1f24e7"
+  },
+  {
+    "legacy": "auto-story-finish/auto-story-pipeline.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/auto-story-pipeline.mjs",
+    "originalSha256": "307d2152a16cc039522ebb831bcfeb4c002073eaa557c670f136b057fad97d86",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "ae668b4f2e724f515d8e70cccfc66143a9851191e2843a724c615952486e42e6"
+  },
+  {
+    "legacy": "auto-story-finish/completion-rules.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/completion-rules.mjs",
+    "originalSha256": "691923bea5fa20359405ee2bfe74b859d0306c1cb0acfd4624dc1d48502425ec",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "0bdebf921e4505bc653a9dc0b7ff3527628a35cdbcd0e2eec7e09c8dbcc09780"
+  },
+  {
+    "legacy": "auto-story-finish/completion-rules.test.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/completion-rules.test.mjs",
+    "originalSha256": "b7813f3729bbffe3aa95aa2d85ad3abb750f64a0e750ae21cd592bbfa6fa1ba6",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "581c3768b3eac00ab436d80631e7c2024b49bb6768ba8f3988b5465b72c122ea"
+  },
+  {
+    "legacy": "auto-story-finish/engine-e2e.test.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/engine-e2e.test.mjs",
+    "originalSha256": "da6def8fe3a4d926c56dc1bf962047dd8a9171dfa6b94dc13df31bf1955af81e",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "e5f29fc68282a354fe408bbdbe26385110d6f7aa8d2a3672eb96e1ddc80a8d82"
+  },
+  {
+    "legacy": "auto-story-finish/engine-guards.test.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/engine-guards.test.mjs",
+    "originalSha256": "854531b6f3b158e503f1a83390f9e89d670dda833d85dca4d62f333f94ba3c0d",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "e453f753c5b560c7442d2b218f2217e5d4d5cae3cbe625d631277af54e289cce"
+  },
+  {
+    "legacy": "auto-story-finish/failure-classify.test.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/failure-classify.test.mjs",
+    "originalSha256": "a92dd4786720174605d2fada83430087b0f5c03d4d600a4a7109bde423ece53f",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "a92dd4786720174605d2fada83430087b0f5c03d4d600a4a7109bde423ece53f"
+  },
+  {
+    "legacy": "auto-story-finish/notify-push.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/notify-push.mjs",
+    "originalSha256": "5c100c740b5be4c7709820525cebddc24af56b5dc62de932b66eb5e8e93cc871",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "5c100c740b5be4c7709820525cebddc24af56b5dc62de932b66eb5e8e93cc871"
+  },
+  {
+    "legacy": "auto-story-finish/providers-hardening.test.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/providers-hardening.test.mjs",
+    "originalSha256": "bc4f0af3c3a2a19325c0047d7baeb9354d0838f8ebd2ad36406347f00a22d9bf",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "bcee02fdaa09000c1b36fae0c74cfa7311ce8b5f088d322e13620ca0836a166b"
+  },
+  {
+    "legacy": "auto-story-finish/providers.test.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/providers.test.mjs",
+    "originalSha256": "826d73b474dbc30f5c51c3d6fd52f698d2abfe2d152ff2ec694a2ea4c171ed14",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "680139a9acb434af7762589587ecc31cb5611b0aa83b26ca7aa170777d8c4cd6"
+  },
+  {
+    "legacy": "auto-story-finish/push-guard.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/push-guard.mjs",
+    "originalSha256": "1c41e01f3497e04321c9e7b4bb23af05d7ef5bac914f4bbf7c298efba98b81fa",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "1c41e01f3497e04321c9e7b4bb23af05d7ef5bac914f4bbf7c298efba98b81fa"
+  },
+  {
+    "legacy": "auto-story-finish/push-guard.test.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/push-guard.test.mjs",
+    "originalSha256": "9f3b30334d2d89e79a62cd875f6250cb7c337748f752ef60713319cdb2e18e9c",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "c921619df369de72e603029accb53d5c04d2d03776aa2c1f4be63e2b31593da8"
+  },
+  {
+    "legacy": "auto-story-finish/quality-rules.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/quality-rules.mjs",
+    "originalSha256": "1724a5582115d6f29f3ffd28ddaec7bb7050466a536ab711b9e9d858e8194e82",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "eaf73c92d5b483def3ac76105ee7c5dc0197f66d53a92c97e9ebc991d6c7240c"
+  },
+  {
+    "legacy": "auto-story-finish/quality-rules.test.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/quality-rules.test.mjs",
+    "originalSha256": "8f8317248dba88f63c47a3d85e381fea10554bd867fb3caac466bf4e9cbbd08c",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "9b8a36e3a8d96f477dc1d5d5a250bd2175500d5c16cdc4fd3274340dbb6055af"
+  },
+  {
+    "legacy": "auto-story-finish/SKILL.md",
+    "canonical": "batch-24-multiAG/references/legacy-story-workflow.md",
+    "originalSha256": "807d58ace6901c7c274654404bbe5ba2c7dad207820a245a18eedce48c88f346",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "807d58ace6901c7c274654404bbe5ba2c7dad207820a245a18eedce48c88f346"
+  },
+  {
+    "legacy": "auto-story-finish/story-writes.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/story-writes.mjs",
+    "originalSha256": "589a57b828f0edb3e06894e256b43cc3b3ca3e255b6380a9dfe877ae67943f53",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "589a57b828f0edb3e06894e256b43cc3b3ca3e255b6380a9dfe877ae67943f53"
+  },
+  {
+    "legacy": "auto-story-finish/story-writes.test.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/story-writes.test.mjs",
+    "originalSha256": "4985f10bd5ea1ed14cc308f7d96c0b4fd5e601d47f8fbd4ceb2ef082753fa30d",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "debd739f7253d351ba5730cee4c2b7d057402169e74c8620654f2c0d1764e670"
+  },
+  {
+    "legacy": "auto-story-finish/providers/claude.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/providers/claude.mjs",
+    "originalSha256": "b3960222a9a806b3bbc8e707f9961edbe2e2e844d1146512fde63b039eb1247c",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "57582835c52433dcd345f373be2129d886c40047ce43d2b54bb920d94319356a"
+  },
+  {
+    "legacy": "auto-story-finish/providers/codex-review.schema.json",
+    "canonical": "batch-24-multiAG/engine/runtime/providers/codex-review.schema.json",
+    "originalSha256": "a522725aa1d9257d4ad81f75a65e5badb9c33eecff04b8d0d2ed529941011e20",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "a522725aa1d9257d4ad81f75a65e5badb9c33eecff04b8d0d2ed529941011e20"
+  },
+  {
+    "legacy": "auto-story-finish/providers/codex.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/providers/codex.mjs",
+    "originalSha256": "9533e21148aad147259f8b29fcef94477062a8c7a8fa8aab1c70bfcf2e92df07",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "5007b9ee9d3b264079ec91a7636dbe51dd7ad26477106d42288cd20d4dd32932"
+  },
+  {
+    "legacy": "auto-story-finish/providers/git-guard.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/providers/git-guard.mjs",
+    "originalSha256": "9e14abf94a921b7fbb464554954774a06a818ca5ee7c5b9450756c359ac86430",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "9e14abf94a921b7fbb464554954774a06a818ca5ee7c5b9450756c359ac86430"
+  },
+  {
+    "legacy": "auto-story-finish/providers/index.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/providers/index.mjs",
+    "originalSha256": "780ba4fb3ff9298ef948736cb7f789003d05628c6a7afdaf87791e36c3984372",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "e232a9e0086315f07e4a7c2ef070f9a45f9c08c929da20161bfd5874d75683a5"
+  },
+  {
+    "legacy": "auto-story-finish/providers/redact.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/providers/redact.mjs",
+    "originalSha256": "9387d268108ed8f91d2323adf0bd29be9e5d2598b020c43153455d99da148ec8",
+    "status": "identical",
+    "verifiedExists": true,
+    "canonicalSha256": "9387d268108ed8f91d2323adf0bd29be9e5d2598b020c43153455d99da148ec8"
+  },
+  {
+    "legacy": "auto-story-finish/providers/spawn-safe.mjs",
+    "canonical": "batch-24-multiAG/engine/runtime/providers/spawn-safe.mjs",
+    "originalSha256": "ba2ea81f468717f9f68c57d595e79049b47fca90804829493d83d045fe428b24",
+    "status": "adapted",
+    "verifiedExists": true,
+    "canonicalSha256": "779b6440ba4f75f8df8cd3ef4f4446f58a1af2694be9566041b48d6e95c98893"
+  }
+]

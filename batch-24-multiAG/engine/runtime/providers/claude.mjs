@@ -13,14 +13,15 @@ import { assertSafeModel, assertSafePath, spawnSafe } from './spawn-safe.mjs'
 export const CLAUDE_PERM_MODE = 'acceptEdits'
 
 /** 반환 `{ file, argv, display }` — display 는 로그 전용(종전 한 줄 표기 보존). 실행은 file+argv 로만 한다. */
-export function buildClaudeCommand({ bin = 'claude', model = '', permMode = CLAUDE_PERM_MODE, settingsPath = null } = {}) {
+export function buildClaudeCommand({ bin = 'claude', model = '', permMode = CLAUDE_PERM_MODE, settingsPath = null, stream = false } = {}) {
   const file = assertSafePath(bin, 'CLAUDE_BIN')
   const argv = ['-p']
   if (model) argv.push('--model', assertSafeModel(model, '모델'))
   argv.push('--permission-mode', assertSafeModel(permMode, 'permission-mode'))
   if (settingsPath) argv.push('--settings', assertSafePath(settingsPath, 'settings 경로'))
+  if (stream) argv.push('--output-format', 'stream-json', '--verbose')
   const display = `${file} -p${model ? ` --model ${model}` : ''} --permission-mode ${permMode}${settingsPath ? ` --settings "${settingsPath}"` : ''}`
-  return { file, argv, display }
+  return { file, argv, display: display + (stream ? ' --output-format stream-json --verbose' : '') }
 }
 
 /** 실행 — stdin 프롬프트 · 타임아웃 · stdout/stderr 수집. 반환 형태는 codex 어댑터와 동일 계약.
@@ -38,11 +39,30 @@ export function runClaudeWorker({ cmd = null, file = null, argv = null, prompt, 
   }, spawn)
   return {
     provider: 'claude',
+    events: parseClaudeTrace(res.stdout || ''),
     code: res.status ?? 1,
     stdout: res.stdout || '',
     stderr: res.stderr || '',
     timedOut: Boolean(res.error && res.error.code === 'ETIMEDOUT'),
     lastMessage: null, // claude -p 는 stdout 전체가 응답이다
-    events: null,
   }
+}
+
+/** Only successful tool results establish reads; assistant prose is never evidence. */
+export function parseClaudeTrace(output) {
+  const pending=new Map(),commandList=[],filePaths=[];
+  for(const line of String(output).split(/\r?\n/)) {
+    let event;try {event=JSON.parse(line);} catch {continue;}
+    const content=event?.message?.content;
+    if(!Array.isArray(content)) continue;
+    for(const item of content) {
+      if(event.type==='assistant' && item.type==='tool_use' && typeof item.id==='string') pending.set(item.id,item);
+      if(event.type!=='user' || item.type!=='tool_result' || item.is_error===true) continue;
+      const tool=pending.get(item.tool_use_id);if(!tool)continue;
+      pending.delete(item.tool_use_id);
+      if(tool.name==='Read' && typeof tool.input?.file_path==='string') filePaths.push(tool.input.file_path);
+      if(tool.name==='Bash' && typeof tool.input?.command==='string') commandList.push(tool.input.command);
+    }
+  }
+  return {commandList,filePaths:[...new Set(filePaths)]};
 }

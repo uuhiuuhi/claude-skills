@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { setupStrictQualityFixture } from './fixtures/strict-quality-fixture.mjs';
+import { readRecord } from './runtime/schema-migration.mjs';
 // 하네스 벤치(스텁 실측) — 2026-09-02 「9점대 하네스」 (워커 F2)
 //
 // 무엇을 재나: **같은 스토리 세트**를 두 하네스로 각각 돌려 비교한다.
@@ -13,7 +15,7 @@
 // 게이트(qa GREEN · 리뷰 high 0 · 통합 pass · 워커 STOP 0)를 못 넘기면 비교표는 수치 대신
 // 「품질 미달 · 비교 제외」를 찍는다(metrics.compareRuns).
 //
-// 실행: node night-batch-ops/engine/bench.mjs --stub [--out <경로.md>] [--keep]
+// 실행: node batch-24-multiAG/engine/bench.mjs --stub [--out <경로.md>] [--keep]
 //   --stub  스텁 하네스로 실측(현재 유일한 모드 — 실 LLM 호출은 하지 않는다)
 //   --out   비교표 경로(기본 references/hardening-2026-09-02/bench-stub.md)
 //   --keep  임시 픽스처를 지우지 않는다(디버깅)
@@ -34,6 +36,8 @@ const must = (r, what) => { if (r.status !== 0) throw new Error(`${what}: ${r.st
 // ── 스텁 ─────────────────────────────────────────────────────────────────────
 // e2e 픽스처와 **같은 규약**(CLAUDE_BIN/CODEX_BIN · stdin 프롬프트 · JSON 리뷰)을 쓴다.
 const CLAUDE_STUB = String.raw`
+import { pathToFileURL as fixtureURL } from 'node:url';
+const { writeStoryTests } = await import(fixtureURL(process.cwd() + '/tools/quality-fixture.mjs').href);
 import { readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 const argv = process.argv.slice(2)
@@ -51,7 +55,8 @@ if (m) {
   let md = readFileSync(f, 'utf8')
   const BT = String.fromCharCode(96)
   const files = [...md.matchAll(new RegExp('^- ' + BT + '([^' + BT + ']+)' + BT, 'gm'))].map((x) => x[1])
-  for (const p of files) { mkdirSync(join(cwd, dirname(p)), { recursive: true }); writeFileSync(join(cwd, p), 'export const ' + key.replace(/-/g, '_') + ' = 1\n') }
+  for (const p of files) { mkdirSync(join(cwd, dirname(p)), { recursive: true }); writeFileSync(join(cwd, p), 'export const story_' + key.replace(/-/g, '_') + ' = 1\n') }
+  writeStoryTests(cwd, key, files);
   md = md.replace('- [ ] T1', '- [x] T1').replace(/^Status:\s*\S+/m, 'Status: review') + '\n### Dev Agent Record\n- stub dev done\n'
   writeFileSync(f, md)
   setSprint(key, 'review')
@@ -129,8 +134,8 @@ export function makeBenchFixture(arm, { root = tmpdir() } = {}) {
   const skill = join(home, '.claude', 'skills', 'auto-story-finish')
   mkdirSync(skill, { recursive: true })
   // 목록을 고정하지 않는다 — 엔진에 새 모듈(completion-rules…)이 생기면 픽스처만 구판이 되어 ERR_MODULE_NOT_FOUND 로 죽는다(2026-09-02 실측 2회).
-  for (const f of readdirSync(join(REPO, 'auto-story-finish')).filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs'))) cpSync(join(REPO, 'auto-story-finish', f), join(skill, f))
-  cpSync(join(REPO, 'auto-story-finish', 'providers'), join(skill, 'providers'), { recursive: true })
+  for (const f of readdirSync(join(HERE, 'runtime')).filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs'))) cpSync(join(HERE, 'runtime', f), join(skill, f))
+  cpSync(join(HERE, 'runtime', 'providers'), join(skill, 'providers'), { recursive: true })
   writeFileSync(join(bin, 'claude-stub.mjs'), CLAUDE_STUB)
   writeFileSync(join(bin, 'codex-stub.mjs'), CODEX_STUB)
   if (IS_WIN) {
@@ -142,13 +147,16 @@ export function makeBenchFixture(arm, { root = tmpdir() } = {}) {
   }
   const origin = join(T, 'origin.git')
   must(git(T, ['init', '-q', '--bare', origin]), 'bare')
-  must(git(T, ['clone', '-q', origin, proj]), 'clone')
+  const seed = join(T, 'seed');
+  must(git(T, ['clone', '-q', origin, seed]), 'clone');
+  must(git(seed, ['-c', 'user.name=benchmark', '-c', 'user.email=bench@test', 'commit', '--allow-empty', '-qm', 'seed']), 'seed');
+  must(git(seed, ['worktree', 'add', '-q', '-b', 'main', proj, 'HEAD']), 'worktree');
   for (const kv of [['user.email', 'bench@test'], ['user.name', 'bench'], ['core.autocrlf', 'false']]) must(git(proj, ['config', ...kv]), 'cfg')
   const art = join(proj, '_bmad-output', 'implementation-artifacts')
   mkdirSync(join(art, 'auto-pipeline-logs'), { recursive: true })
   mkdirSync(join(proj, 'tools', 'auto'), { recursive: true })
   mkdirSync(join(proj, 'src'), { recursive: true })
-  writeFileSync(join(proj, 'package.json'), JSON.stringify({ name: 'bench', type: 'module', scripts: { qa: 'node tools/qa.mjs' } }, null, 2))
+  writeFileSync(join(proj, 'package.json'), JSON.stringify({ name: 'bench', type: 'module', scripts: { qa: 'node tools/qa.mjs', lint: 'node -e 0' } }, null, 2))
   writeFileSync(join(proj, 'tools', 'qa.mjs'), QA_SCRIPT)
   writeFileSync(join(proj, '.gitignore'), 'node_modules\n.env*\n')
   // nested 워커의 commit/push deny 설정 — 엔진은 이게 없으면 시작조차 하지 않는다(2026-09-02 fail-closed).
@@ -162,11 +170,14 @@ export function makeBenchFixture(arm, { root = tmpdir() } = {}) {
   writeFileSync(join(art, 'DECISIONS-INBOX.md'), '# 결정 인박스\n')
   writeFileSync(join(art, 'auto-pipeline-logs', 'state.json'), '{"done":{}}\n')
   for (const f of readdirSync(HERE).filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs'))) cpSync(join(HERE, f), join(proj, 'tools', 'auto', f))
+  cpSync(join(HERE, 'runtime'), join(proj, 'tools', 'auto', 'runtime'), { recursive: true })
 
   const harness = arm === 'harness'
   writeFileSync(join(proj, 'tools', 'auto', 'auto.config.json'), JSON.stringify({
     project: 'bench', epicOrder: [2], dailyCap: 30, parallel: harness ? 2 : 1, stateDir: state,
     qa: 'node tools/qa.mjs', mockupGate: { marker: '' },
+    providers: { codex: { enabled: true, max: 1, roles: ['review'] } },
+    integrationGate: { enabled: true },
     ...(harness ? {
       workers: { max: 2, batchSize: 2 },
       providers: { codex: { enabled: true, max: 1, roles: ['review'] } },
@@ -179,9 +190,10 @@ export function makeBenchFixture(arm, { root = tmpdir() } = {}) {
     defaults: { commit: true, push: false, parallel: harness ? 2 : 1, stageTimeoutMin: 5, waitAuthMin: 0 },
     batches: [{
       label: `BENCH ${arm}`, enabled: true, stories: BENCH_STORIES.map((s) => s.key), stages: ['dev', 'review'],
-      models: harness ? { dev: 'fable', review: 'codex' } : { dev: 'fable', review: 'opus' },
+      models: { dev: 'fable', review: 'codex' },
     }],
   }, null, 2))
+  setupStrictQualityFixture(proj)
   must(git(proj, ['add', '-A']), 'add')
   must(git(proj, ['commit', '-q', '-m', 'bench init']), 'commit')
   must(git(proj, ['push', '-q', 'origin', 'HEAD:main']), 'push')
@@ -202,7 +214,7 @@ export function runArm(fx, { timeoutMs = 300_000 } = {}) {
   })
   const logs = join(fx.art, 'auto-pipeline-logs')
   const file = existsSync(logs) ? readdirSync(logs).filter((n) => /^metrics-.*\.json$/.test(n)).sort().pop() : null
-  const metrics = file ? JSON.parse(readFileSync(join(logs, file), 'utf8')) : null
+  const metrics = file ? readRecord(readFileSync(join(logs, file), 'utf8')) : null
   return { arm: fx.arm, exit: r.status, wallClockMs: Date.now() - startedAt, metrics, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }
 
@@ -218,7 +230,7 @@ const HEADER = [
   '> 실측하려면 같은 스토리 세트를 실제 야간 배치로 두 번 돌리고 `metrics-history.jsonl` 의',
   '> 두 줄을 `metrics.compareRuns` 로 비교한다(품질 게이트를 통과한 실행끼리만).',
   '',
-  '재현: `node night-batch-ops/engine/bench.mjs --stub`',
+  '재현: `node batch-24-multiAG/engine/bench.mjs --stub`',
   '',
 ].join('\n')
 
@@ -234,7 +246,7 @@ export function renderBenchDoc(baseline, candidate) {
     '',
     renderComparison(cmp),
     '',
-    '## 기준선(Claude-only · parallel 1)',
+    '## 기준선(교차 제공자 리뷰 · parallel 1)',
     '',
     baseline.metrics ? renderMetricsTable(baseline.metrics, { title: '' }).trim() : '(계측 없음 — 실행 실패)',
     '',
@@ -278,12 +290,12 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(resolve(proc
 if (isMain) {
   const argv = process.argv.slice(2)
   if (!argv.includes('--stub')) {
-    console.error('사용법: node night-batch-ops/engine/bench.mjs --stub [--out <경로.md>] [--keep]')
+    console.error('사용법: node batch-24-multiAG/engine/bench.mjs --stub [--out <경로.md>] [--keep]')
     console.error('  실 LLM 벤치는 이 도구가 하지 않는다 — 실제 야간 배치의 metrics-history.jsonl 을 비교할 것.')
     process.exit(2)
   }
   const oi = argv.indexOf('--out')
-  const out = oi >= 0 && argv[oi + 1] ? resolve(argv[oi + 1]) : join(REPO, 'night-batch-ops', 'references', 'hardening-2026-09-02', 'bench-stub.md')
+  const out = oi >= 0 && argv[oi + 1] ? resolve(argv[oi + 1]) : join(REPO, 'batch-24-multiAG', 'references', 'hardening-2026-09-02', 'bench-stub.md')
   const r = runBench({ out, keep: argv.includes('--keep') })
   console.log(`\n${renderComparison(compareRuns(r.baseline.metrics, r.candidate.metrics))}`)
   console.log(`\n✔ ${out}`)

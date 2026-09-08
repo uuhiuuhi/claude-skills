@@ -1,0 +1,12 @@
+✔ manual normal range resolves real keys, skips done and deduplicates sprint rows (1.2535ms)
+✔ manual failure and boundary: unknown/reversed range and all-done (0.3668ms)
+✔ installation normal: pinned runtime works after legacy globals disappear; config and queue survive force (4496.5261ms)
+✔ manual dependency normal ordering, failure external dependency, boundary done predecessor (0.842ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4613.9876

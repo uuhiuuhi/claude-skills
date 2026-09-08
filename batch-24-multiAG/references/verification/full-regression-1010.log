@@ -1,0 +1,1704 @@
+✔ capability checks dependencies without claiming execution and never leaks environment values (5.2365ms)
+✔ path containment rejects traversal and a junction escaping the project (11.508ms)
+✔ configuration requires explicit test scope and environment variable names (10.8196ms)
+✔ execution evidence rejects no tests, errors, interrupted run and strict integration skips (0.4016ms)
+✔ affected selection maps each source through Vitest and deduplicates shared tests (5.314ms)
+✔ missing coverage and missing integration environment stop before loading Vitest (20.963ms)
+✔ a stale LCOV cannot be accepted after a run that writes no coverage (412.6736ms)
+✔ real Vitest all excludes DB while strict integration rejects its skipped test (1838.6997ms)
+✔ real Vitest related runs the affected test once and creates actual LCOV (1637.65ms)
+ℹ real affected fixture: one test executed once; LCOV source math.js LF=1 LH=1 (100%)
+▶ [assign] 점수
+  ✔ 위험도 — 마이그레이션·auth 경로·보안 키워드가 쌓이면 고위험 (0.9709ms)
+  ✔ 난이도 — File List 크기·마이그레이션·테스트 파일·본문 길이 (0.3106ms)
+✔ [assign] 점수 (2.136ms)
+▶ [assign] 배정 불변식
+  ✔ 결정적 — 같은 입력이면 같은 출력(두 번 호출·순서 무관 필드 없음) (1.4203ms)
+  ✔ 고위험 스토리의 dev 는 Codex 에 주지 않는다(split 이 켜져 있어도) (0.2438ms)
+  ✔ review 는 dev 와 다른 눈 — 같은 프로바이더면 claude 로 교차, 같은 모델이면 다른 모델 (0.1983ms)
+  ✔ 같은 프로바이더 연속 실패 2회면 회피한다 (0.2721ms)
+  ✔ 가용성 0(미설치·미인증·꺼짐)이면 claude 만 배정한다 — 배정이 배치를 세우지 않는다 (0.1887ms)
+  ✔ codex.max 는 동시 실행 상한이며 대기 큐 총배정 상한이 아니다 (0.2817ms)
+  ✔ 모델 스펙 형식 위반은 배정 단계에서 걸러진다(argv 로 나가는 값이다) (0.1379ms)
+✔ [assign] 배정 불변식 (2.9603ms)
+▶ [assign] 기록 저장소(assign-history.json)
+  ✔ 깨진 JSON·이상한 형태는 빈 기록으로 흡수한다(편성이 서면 안 된다) (0.2069ms)
+  ✔ 갱신은 순수 — 원본을 바꾸지 않고 평균 라운드를 계산한다 (0.155ms)
+✔ [assign] 기록 저장소(assign-history.json) (0.4657ms)
+▶ [assign] 편성기 어댑터(assignBatchModels)
+  ✔ 설정·기록이 없으면 base 를 그대로 돌려준다 — 종전 큐와 같다(하위 호환) (0.2941ms)
+  ✔ codex review 의도가 있어도 가용성 0 이면 claude 로 내려앉는다 (0.1025ms)
+✔ [assign] 편성기 어댑터(assignBatchModels) (0.4766ms)
+▶ 스텁 계약 — 심(shim)으로 부른 실제 프로세스가 약속대로 행동한다
+  ✔ claude 스텁: --version · argv/stdin 기록 · 계획 응답 4갈래 (791.9558ms)
+  ✔ codex 스텁: JSONL 이벤트 · `-o` 절대 경로 · 한도 사건 (298.2252ms)
+✔ 스텁 계약 — 심(shim)으로 부른 실제 프로세스가 약속대로 행동한다 (1091.1217ms)
+▶ E1 — 진단 전용은 대상 저장소를 한 바이트도 건드리지 않는다
+  ✔ 실제 CLI 로 돌려도 트리 지문·porcelain·HEAD 가 전부 그대로다 (7033.7906ms)
+✔ E1 — 진단 전용은 대상 저장소를 한 바이트도 건드리지 않는다 (7033.8947ms)
+▶ E2 · E11 — 1라운드 왕복과 게이트 예산
+  ✔ 라운드 2회를 돌고 · 큐가 검증기를 통과하고 · 전체 qa 는 landing 근거를 재사용하고 · build 는 1회 · 실제 dev/review 가 돈다 (276680.0578ms)
+✔ E2 · E11 — 1라운드 왕복과 게이트 예산 (276680.1562ms)
+▶ E3 · E4 — Fable 계획 채택과 거부 폴백
+  ✔ E3: 스텁 지휘 모델이 낸 계획이 검증을 통과하면 채택된다(plan.source=fable) (136117.7403ms)
+  ✔ E4: 후보에 없는 스토리를 지어내면 계획 전체를 버리고 규칙 계획으로 계속 돈다(밤이 서지 않는다) (131479.9798ms)
+  ✔ E4b: 계획 응답이 JSON 이 아니어도 · 실행기가 실패해도 같은 자리에서 규칙 계획으로 돈다 (107178.1172ms)
+✔ E3 · E4 — Fable 계획 채택과 거부 폴백 (374776.0525ms)
+▶ E5 — 보수 범주는 같은 배치에 들어가지 않는다
+  ✔ 마이그레이션·공유 핵심을 만지는 스토리는 배치가 나뉜다(자기 혼자여도 병렬 금지) (21873.9498ms)
+✔ E5 — 보수 범주는 같은 배치에 들어가지 않는다 (21874.0446ms)
+▶ E6 — 사람이 고친 파일을 덮어쓰지 않는다
+  ✔ E6a: `--bmad-writes on` 은 **덧붙이기만** 한다 — 원문의 모든 줄과 Status 가 그대로 남는다 (23057.9334ms)
+  ✔ E6b: 계획을 세운 뒤 사람이 그 파일을 고치면 계획 **전체**를 폐기하고 원문을 그대로 둔다 (28042.4428ms)
+✔ E6 — 사람이 고친 파일을 덮어쓰지 않는다 (51100.5326ms)
+▶ E7 — 새로 만든 스토리를 편성기가 후보로 읽는다
+  ✔ epics.md 에만 있던 스토리를 파일·원장에 등재하면 plan-queue 가 그 키를 본다 (44489.4621ms)
+✔ E7 — 새로 만든 스토리를 편성기가 후보로 읽는다 (44489.5461ms)
+▶ E8 — 봉쇄된 스토리만 멈추고 나머지는 계속 돈다
+  ✔ 결정 인박스에 대기 중인 스토리는 큐에서 빠지고 · 다른 스토리는 그대로 편성된다 (85135.5401ms)
+✔ E8 — 봉쇄된 스토리만 멈추고 나머지는 계속 돈다 (85135.6339ms)
+▶ E9 — 전체 QA는 최종 한 번 실행하고 RED를 보고·종료 코드에 반영한다
+  ✔ 라운드마다 전체 QA를 반복하지 않고 최종 RED이면 성공으로 끝내지 않는다 (148879.1869ms)
+✔ E9 — 전체 QA는 최종 한 번 실행하고 RED를 보고·종료 코드에 반영한다 (148879.3086ms)
+▶ E10 — 시크릿 원문은 산출물 어디에도 남지 않는다
+  ✔ .env 값·소스에 박힌 키·qa 로그로 새어 나온 값 전부 전수 grep 0 (153993.3438ms)
+✔ E10 — 시크릿 원문은 산출물 어디에도 남지 않는다 (153993.4696ms)
+▶ 교차 리뷰 — 만든 쪽과 다른 제공자가 검토한다
+  ✔ codex 를 켜면 리뷰 단계가 실제 codex 스텁 프로세스로 간다(구현자 ≠ 리뷰어) (145522.0879ms)
+  ✔ 허용 스위치가 없으면 본 트리에서는 codex 및 자체 리뷰를 차단한다(반출 방지 가드) (9148.9236ms)
+✔ 교차 리뷰 — 만든 쪽과 다른 제공자가 검토한다 (154671.3339ms)
+▶ E13 (NEW-H1) — 설정으로 push 를 다시 켤 수 없다
+  ✔ auto.config.json 의 autofinish.queueDefaults.push:true 는 무시가 아니라 거부다(exit 2 · 원격 ref 불변) (3924.8234ms)
+  ✔ 정상 실행에서는 큐의 push 가 false 이고 · 러너 argv 에 --push 가 붙지 않는다 (5230.9393ms)
+✔ E13 (NEW-H1) — 설정으로 push 를 다시 켤 수 없다 (9155.9754ms)
+▶ E14 (NEW-H2) — 진단 전용에 --gates 를 주면 거부한다
+  ✔ `--diagnose-only --gates qa` 는 exit 2 · npm 스크립트 0회 · porcelain 동일 (8475.6914ms)
+  ✔ `--gates qa --no-gates` 와 `--diagnose-only --gates qa --no-gates` 는 exit 2 · 실행 0 (11998.1014ms)
+  ✔ `--gates --no-gates`(값 없음) 와 `--gates` 단독은 exit 2 · 실행 0 (22980.0739ms)
+  ✔ `--diagnose-only` 단독은 종전처럼 돌되 게이트는 0 이다(기본 qa 도 접힌다) (20362.021ms)
+✔ E14 (NEW-H2) — 진단 전용에 --gates 를 주면 거부한다 (63816.1472ms)
+▶ E15 (NEW-H3) — state·out 은 대상 저장소 안에 둘 수 없다
+  ✔ --state <root>/src · --out <root>/README.md · 저장소를 가리키는 junction 을 전부 exit 2 로 거부한다 (29382.0694ms)
+✔ E15 (NEW-H3) — state·out 은 대상 저장소 안에 둘 수 없다 (29382.1742ms)
+▶ E16 (NEW-H4) — 지휘 모델 실패의 stderr 원문은 프로세스 출력에도 남지 않는다
+  ✔ 스텁이 stderr 로 Authorization 을 흘리며 실패해도 stdout/stderr·산출물 전수 grep 0 (65453.5562ms)
+✔ E16 (NEW-H4) — 지휘 모델 실패의 stderr 원문은 프로세스 출력에도 남지 않는다 (65453.6815ms)
+▶ E17 (NEW-M1) — --no-gates 여도 마지막에 다시 진단한다
+  ✔ 러너가 스토리 파일을 바꾼 뒤의 상태로 보고한다(실행 전 스냅숏이 아니다) (422685.6742ms)
+✔ E17 (NEW-M1) — --no-gates 여도 마지막에 다시 진단한다 (422685.7888ms)
+▶ E18 (NEW-M3) — BMAD 등재가 폐기되면 그 스토리는 이번 라운드에서 뺀다
+  ✔ 쓰기가 거부된 스토리는 러너 큐에 없고 · 계획에 쓰기가 없던 독립 스토리는 그대로 돈다 (40933.6533ms)
+✔ E18 (NEW-M3) — BMAD 등재가 폐기되면 그 스토리는 이번 라운드에서 뺀다 (40933.7478ms)
+▶ E12 — 하위 호환: 기존 경로는 그대로다
+  ✔ run-night 는 수동 큐 단독으로 종전처럼 돈다(autofinish 와 무관) (12599.3044ms)
+  ✔ plan-queue 의 판단은 autofinish 산출물이 있든 없든 같다 (6489.7133ms)
+✔ E12 — 하위 호환: 기존 경로는 그대로다 (19089.1863ms)
+▶ loopDecision — 계속·중단·사람 호출
+  ✔ 진전이 있으면 continue (1.0666ms)
+  ✔ 백로그 지문이 그대로면 stop(무진전) — 한 번 더 돌려도 같다 (0.1642ms)
+  ✔ 라운드 상한이면 stop(max-rounds) (0.106ms)
+  ✔ 상위 3단계가 늘면 escalate — 고치다 더 망가뜨린 것이라 라운드 상한보다 먼저 본다 (0.1913ms)
+  ✔ 같은 원인 3회면 escalate(무한 재시도 금지) (0.1304ms)
+  ✔ 예산을 넘기면 stop(budget) (0.096ms)
+  ✔ roundSummary 는 백로그(byTier)와 진단(counts.findings) 둘 다 같은 요약으로 읽는다 (0.0828ms)
+✔ loopDecision — 계속·중단·사람 호출 (4.047ms)
+▶ --diagnose-only — 대상 저장소에 한 바이트도 쓰지 않는다
+  ✔ 실제 git 저장소의 porcelain·트리 지문이 전후로 같다 · 게이트 0회 · 러너 0회 (1842.7011ms)
+  ✔ --diagnose-only 에 --gates 를 함께 주면 조용히 무시하지 않고 거부한다(실행 0) (609.1547ms)
+  ✔ --gates 와 --no-gates 를 함께 주면 모드와 무관하게 거부한다 (0.5957ms)
+  ✔ --diagnose-only 는 gates 기본값이 실려 있어도 게이트를 0회 돌린다 (1924.4224ms)
+✔ --diagnose-only — 대상 저장소에 한 바이트도 쓰지 않는다 (4377.1118ms)
+▶ 큐의 push 는 설정으로도 못 켠다
+  ✔ queueDefaults.push:true 는 무시가 아니라 거부다(exit 코드 2 를 지닌 오류) (0.3458ms)
+  ✔ buildQueueFromPlan 은 push:true 를 받으면 큐를 만들지 않고, 그 밖에는 언제나 false 를 싣는다 (0.519ms)
+  ✔ 설정 파일에 push:true 가 있으면 runAutoFinish 가 부작용 전에 끊는다(산출물 0) (1217.1998ms)
+✔ 큐의 push 는 설정으로도 못 켠다 (1218.2345ms)
+▶ state·out 경로 경계 — 대상 저장소 안이면 거부한다
+  ✔ 저장소 안 경로 · 저장소 자신 · 저장소 안을 가리키는 junction 을 전부 거부한다 (1008.7902ms)
+  ✔ runAutoFinish 는 --state·--out 이 저장소 안이면 부작용 전에 끊는다 (1088.8645ms)
+  ✔ 기본 상태 폴더(AUTO_BATCH_STATE_DIR)가 저장소 안이면 그것도 거부한다 (1219.7811ms)
+✔ state·out 경로 경계 — 대상 저장소 안이면 거부한다 (3317.6784ms)
+▶ 게이트 예산 — 전체 검사 최종 1회
+  ✔ qa 는 최종 1회 · build 는 마지막 1회뿐이다 (5557.7409ms)
+  ✔ --no-gates 는 게이트를 한 번도 돌리지 않는다 (4400.4027ms)
+✔ 게이트 예산 — 전체 검사 최종 1회 (9958.3485ms)
+▶ 예산 deadline — spawn timeout 을 잔여 시간으로 자르고, 다 쓰면 최종 게이트도 건너뛴다
+  ✔ --budget-min 이 짧고 스텁이 느리면 러너 timeout 이 잔여 시간으로 잘리고 · 예산 소진이 사유로 남는다 (5828.6282ms)
+  ✔ 러너를 실제 자식 프로세스로 띄우고 마감을 넘기면 timeout 으로 죽는다 — --no-gates 여도 예산 소진이 남는다 (9300.9163ms)
+  ✔ 예산이 다하면 BMAD 등재(대상 저장소 쓰기)를 하지 않는다 — 파일 지문이 그대로다 (6423.0712ms)
+  ✔ 시작 시점에 이미 마감이면 라운드를 한 번도 열지 않는다(스냅숏·게이트·러너 0) (5403.8324ms)
+  ✔ 예산이 넉넉하면 종전대로 최종 게이트까지 돈다(회귀 없음) (7810.9587ms)
+✔ 예산 deadline — spawn timeout 을 잔여 시간으로 자르고, 다 쓰면 최종 게이트도 건너뛴다 (34767.8365ms)
+▶ storiesOfBmadPlan — 쓰기 계획에 걸린 스토리 키를 뽑는다
+  ✔ story:·new:·done: 그룹만 스토리로 세고 inbox 는 세지 않는다 (0.4522ms)
+✔ storiesOfBmadPlan — 쓰기 계획에 걸린 스토리 키를 뽑는다 (0.5325ms)
+▶ 인자 — 셸 메타문자·형식 위반은 실행 전에 거부한다
+  ✔ 거부: --root C:/proj & git push origin main (0.2692ms)
+  ✔ 거부: --root C:/proj;rm -rf / (0.0571ms)
+  ✔ 거부: --state C:/s`whoami` (0.0982ms)
+  ✔ 거부: --out C:/o$(id) (0.0438ms)
+  ✔ 거부: --plan-model fable & git push (0.042ms)
+  ✔ 거부: --plan-model fable;rm (0.0326ms)
+  ✔ 거부: --gates qa;rm -rf / (0.0556ms)
+  ✔ 거부: --gates qa,build|sh (0.0438ms)
+  ✔ 거부: --bmad-writes yes (0.0377ms)
+  ✔ 거부: --max-rounds 0 (0.0366ms)
+  ✔ 거부: --max-rounds abc (0.0445ms)
+  ✔ 거부: --budget-min -3 (0.0343ms)
+  ✔ 정상 인자는 그대로 읽는다 (0.1238ms)
+  ✔ 기본값은 설계서와 같다(라운드 3 · 예산 480분 · 게이트 qa · 계획 모델 fable · bmad 쓰기는 계획만) (0.0762ms)
+  ✔ 상태 폴더 기본값은 대상 저장소 밖이다 (0.0943ms)
+✔ 인자 — 셸 메타문자·형식 위반은 실행 전에 거부한다 (1.609ms)
+▶ 큐 — run-night 스키마 그대로 · 검증기를 통과한다
+  ✔ 결정적 계획은 같은 파일을 만지는 스토리를 같은 배치에 넣지 않는다 (0.348ms)
+  ✔ buildQueueFromPlan 결과가 night-queue 스키마이고 validatePlan 을 통과한다 (0.3944ms)
+  ✔ 후보는 원장에 실재하고 md 가 있는 스토리만 · 자동 수리 금지 범주와 봉쇄는 사유와 함께 뺀다 (0.416ms)
+✔ 큐 — run-night 스키마 그대로 · 검증기를 통과한다 (1.2674ms)
+▶ [자율운전] 편성기 full 모드 — 사람 대기 대신 replan
+  ✔ 열린 [Review][Decision] → 제외가 아니라 replan→dev (AI 결정 채택) (30.2423ms)
+  ✔ 열린 Patch 만 있고 미완 Task 0 → replan 이 회수 라운드를 연다(규칙 4 대체) (42.7596ms)
+  ✔ review + 고칠 것 0 + 결정 0 은 종전대로 마감 재검수(closeout) (23.1582ms)
+  ✔ 무진전 편성 2회 → replan 을 앞세우고 힌트를 싣는다 · 회차(state.replans)는 편성기가 올리지 않는다(러너가 실행 기준으로 센다) (25.6173ms)
+  ✔ 「재투입 금지」 문구가 있어도 미완 기계 Task 가 있으면 replan 없이 dev(무한 replan 방지 · 리뷰 #1) (40.7771ms)
+  ✔ Tasks 절이 파일의 마지막 h2 여도 미완 Task 를 센다(엔진과 같은 잣대) (0.353ms)
+  ✔ replan 을 상한만큼 썼는데도 무진전 → 그 스토리만 「자율 한계」로 사람 질문(humanGates question) (39.3173ms)
+  ✔ 편성만 되고 실행이 안 된 슬롯이 이어져도 「자율 한계」로 빠지지 않는다(회차는 러너가 실행 기준으로 센다 · 리뷰 #2) (95.6584ms)
+  ✔ 진전이 나면 replan 회차는 0 으로 본다(스트릭 리셋과 같은 잣대) (30.6235ms)
+  ✔ BLOCKED-ON-HUMAN 표식은 사람 질문 대기 — 취소선(~~)이면 해소 (73.0565ms)
+  ✔ 사람 게이트 Task 만 남은 스토리는 gate 로 사람 몫(그 외 스토리는 계속) (16.1733ms)
+  ✔ 미머지 체인 3일이어도 신규 착수를 막지 않는다 · 상한 0 = 무제한 (18.2624ms)
+  ✔ epicOrder 밖 에픽은 뒤에 이어 붙고(epicScope all) ⏸ 이연 확정은 여전히 제외 (16.8926ms)
+  ✔ 선행이 review(코드 실재)면 후속을 허용하고, 선행이 계획 밖(사람 몫)이면 후속을 「선행」 사유로 미룬다 (100.5369ms)
+  ✔ 새 화면 스토리 — 목업 부재면 create→mockup→dev→review · pending 은 진행+사후 확인 · rejected 는 mockup 재작성 (86.7413ms)
+  ✔ replan/mockup 단계 모델은 최상위(fable) · fable 소진이면 opus (40.2589ms)
+  ✔ 같은 픽스처를 guarded 로 돌리면 결정 대기로 막힌다(대조) (22.8458ms)
+✔ [자율운전] 편성기 full 모드 — 사람 대기 대신 replan (705.158ms)
+▶ [자율운전] 원장 신호 · 검증기 · 오케스트레이터 · 러너 규칙
+  ✔ readStorySignals — humanGateTasks · blockedOnHuman · openDecisions (0.2456ms)
+  ✔ STAGE_NAMES 5종 — 검증기가 replan/mockup 을 받고 모르는 단계는 거부한다 (0.2744ms)
+  ✔ 오케스트레이터 스키마·형태 검사가 새 단계·모델 키를 받는다 (0.4056ms)
+  ✔ full 모드 프롬프트 — 시니어 기획자 역할 · 진행 에픽 댐 없음 · 병렬 폭 · notes/replanHint 실림 (0.5515ms)
+  ✔ 계획 실행기 — 잔여 예산이 null/0 이면 설정 상한(5분)을 쓴다 · 양수면 좁힌다(2026-09-04 1ms 마감 실사고) (0.5446ms)
+  ✔ 러너 규칙 — autonomy 정규화 · --autonomy full 플래그 · replan 은 병렬 가능, mockup 은 순차 (0.5139ms)
+✔ [자율운전] 원장 신호 · 검증기 · 오케스트레이터 · 러너 규칙 (2.7651ms)
+▶ [목업 게이트] marker 부정문 인식 — 2026-09-04 2.23 NO-OP STOP 실사고(「새 화면 0 이므로 목업 선행 대상이 아니다(UX-DR-27 단서)」)
+  ✔ 긍정 언급 = 대상 · 부정 꼬리(0 · 없음 · 아니) = 대상 아님 (0.1191ms)
+  ✔ 같은 절에 긍정 언급이 하나라도 있으면 대상 · ruleId 가 없으면 종전대로 대상 아님 · marker 없으면 false (0.078ms)
+✔ [목업 게이트] marker 부정문 인식 — 2026-09-04 2.23 NO-OP STOP 실사고(「새 화면 0 이므로 목업 선행 대상이 아니다(UX-DR-27 단서)」) (0.3138ms)
+✔ TIERS 는 1~7 단계가 빠짐없이·중복 없이 있다 (2.031ms)
+✔ tier 배정은 배타 — 진단이 내는 모든 kind 가 정확히 한 단계로 간다 (1720.4951ms)
+✔ 시크릿은 kind 가 무엇이든 항상 tier 1 로 올라간다 (0.2413ms)
+✔ score 는 tier 우선 · 같은 tier 면 심각도 · 봉쇄는 뒤로 민다 (0.1218ms)
+✔ 보수 범주 6종은 전부 mode any — 한 스토리만 만져도 병렬 불가 (0.1284ms)
+✔ 결제 경로가 한 건이라도 있으면 parallelOk=false (요구 시나리오) (1.5146ms)
+✔ 보수 범주별 대표 경로가 각각 단독으로 병렬을 막는다 (0.9524ms)
+✔ 평범한 화면 파일 한 건은 병렬 가능 · 마이그레이션은 db-change 하나로만 센다(중복 계상 금지) (0.1805ms)
+✔ 공유 장부(sprint-status·deferred·INBOX)는 겹침에서 뺀다 (0.141ms)
+✔ 스토리에 매인 지적은 스토리 단위로 묶고, 나머지는 kind 단위로 묶는다 (10.4636ms)
+✔ WorkItem 은 SPEC §2 의 12항목을 모두 채운다 (0.5268ms)
+✔ 구현자와 리뷰어는 서로 다른 제공자다(SPEC §4) (0.6198ms)
+✔ 자동 수리 금지 범주(이월 금지 5범주)는 autoFixAllowed=false 로 표시한다 (0.4475ms)
+✔ buildBacklog — tier 순 정렬 · 봉쇄 목록 · 병렬 판정이 붙는다 (1.7223ms)
+✔ id·fingerprint 는 같은 진단이면 완전히 같다(라운드 간 추적의 열쇠) (0.9739ms)
+✔ mergeBacklog — 사라진 항목은 closed 로 남기고 살아남은 항목은 id 를 승계한다 (1.0621ms)
+✔ selectRunnable — cap · 봉쇄 · 완료를 제외하고 우선순위대로 고른다 (0.8115ms)
+✔ classifyFailure — 6종 대표 로그를 각각 제 갈래로 보낸다 (1.7819ms)
+✔ classifyFailure — 자동 수리 여부와 처방이 설계 §4-3 대로 붙는다 (0.7536ms)
+✔ classifyFailure — 같은 원인이면 서명이 같고, 다른 파일이면 다르다 (0.3292ms)
+✔ classifyFailure — scope 는 로그·매니페스트에서 실제 파일 경로를 모은다 (0.2874ms)
+[BENCH] baseline 실행…
+[BENCH] harness 실행…
+✔ renderBenchDoc — 스텁 한계와 NOT VERIFIED 를 문서 머리에 못 박는다 (1.3242ms)
+✔ CLI — --stub 없이 부르면 거부한다(실 LLM 벤치를 이 도구가 하는 척하지 않는다) (132.956ms)
+✖ runBench — 두 팔이 같은 스토리 세트로 실제로 돌고 비교 가능한 계측을 낸다 (458805.1073ms)
+✔ nextStoryNumber 는 sprint ∪ epics ∪ md 파일 **세 출처의 합집합** 에서 max+1 을 낸다 (6415.6855ms)
+✔ storyKeyFor·slugify 는 한글을 살리고 40자로 자른다 · 결함은 접두사가 붙는다 (0.4405ms)
+✔ mapToStories — 원장에 있으면 기존 스토리에 붙이고, 없으면 새 스토리/결함, 에픽을 모르면 질문으로 뺀다 (7801.7988ms)
+✔ inferEpic 은 File List 에 그 파일을 선언한 스토리의 에픽을 쓴다 (7276.4122ms)
+✔ renderDefectBlock 이 만든 줄을 story-ledger.openFindings 가 센다(원장 줄 형식) (0.5072ms)
+✔ renderNewStory 출력은 readStorySignals·parseFileList 가 읽는 형식이다 (0.6695ms)
+✔ renderSprintEntry·renderEpicsEntry 는 파서가 읽는 실물 형식이다 (0.5177ms)
+✔ renderCompletionRecord 는 매니페스트 수치를 그대로 옮기고, 없으면 NOT VERIFIED 라고 적는다 (0.6964ms)
+✔ pathAllowed — `_bmad-output/` 밖·절대경로·상위참조를 거부한다 (0.2308ms)
+✔ anchorAllowed — append-only 목록 밖(`## Acceptance Criteria`)은 거부한다 (0.195ms)
+✔ lineLoss — 원문 줄이 사라지면 센다(덮어쓰기 탐지의 근거) (0.1134ms)
+✔ 앵커 밖 삽입은 계획 전체를 거부하고 파일을 0바이트도 바꾸지 않는다 (7804.5473ms)
+✔ `_bmad-output/` 밖 경로가 하나라도 있으면 나머지 정상 쓰기까지 전부 폐기한다 (9373.5698ms)
+✔ M3 — `_bmad-output/implementation-artifacts` 가 바깥 폴더 junction 이면 쓰기를 거부하고 밖에 파일 0건 (6060.2231ms)
+✔ M3 — 링크가 없는 정상 경로는 종전대로 쓴다(과잉 차단이 아님) (7261.4316ms)
+✔ Status 줄을 바꾸는 body 는 거부한다 — 상태 전이는 setStoryStatus 만 한다 (9352.8728ms)
+✔ 계획 도중 사람이 파일을 고치면 baseHash 불일치로 **전체 계획을 폐기**하고 0바이트도 안 바뀐다 (10810.1008ms)
+✔ sectionHash 만 어긋나도(그 절만 바뀌어도) 전체 폐기한다 (15739.8058ms)
+✔ sprint upsert 는 90KB 주석 파일에서 **딱 한 줄만** 바꾼다(재직렬화 금지) (142.3995ms)
+✔ 신규 스토리 등재 후 재진단에서 그 스토리가 잡힌다(missing 아님) · git 은 의도한 파일만 바뀐다 (31601.7137ms)
+✔ 기존 스토리에는 Review Findings 절에만 붙고 열린 Patch 수가 실제로 늘어난다 (26623.1253ms)
+✔ 라운드당 신규 스토리 상한을 넘으면 초과분은 deferred 후보로 돌아온다 (20865.0172ms)
+✔ 진단 → 백로그 → 매핑 → 계획이 실제 픽스처에서 끝까지 돈다(스모크) (29278.8615ms)
+✔ sectionBody·findHeadingLine 은 같은 이름 절이 여러 번 나와도 순번으로 짚는다 (0.2004ms)
+▶ [19] 범주별 충돌 → 순차화
+  ✔ 마이그레이션 — 둘 다 새 파일을 만들면 번호 경합(다른 파일이라 겹침 판정엔 안 걸린다) (1.9215ms)
+  ✔ 스키마 생성물 — database.ts · schema.sql · prisma/schema.prisma (0.7584ms)
+  ✔ API 계약 — 엣지 함수 · src/api · openapi · contract 타입은 다른 파일이어도 갈라진다 (0.144ms)
+  ✔ 테스트 환경 — tests/setup · tests/db 공유 픽스처 · GitHub 워크플로 (0.1316ms)
+  ✔ 공유 설정 — tsconfig · vite/vitest · eslint · .env.example · wrangler (0.1176ms)
+  ✔ 공유 툴체인(package.json/lock) — 한쪽만 만져도 병렬 불가(node_modules junction 공유) (0.1282ms)
+✔ [19] 범주별 충돌 → 순차화 (4.1673ms)
+▶ [19] 겹침이 없으면 병렬 유지 · 판정은 결정적
+  ✔ 서로소 File List 는 병렬 그대로 (0.2549ms)
+  ✔ 공유 장부(sprint-status·deferred-work·DECISIONS-INBOX)는 겹쳐도 충돌이 아니다 (0.1245ms)
+  ✔ 같은 파일 직접 겹침은 file-overlap 으로 잡고, 경로 표기(역슬래시·./)는 정규화한다 (0.1433ms)
+  ✔ 같은 입력이면 같은 출력(결정적) · 범주는 첫 일치 하나로만 계상 (0.4367ms)
+  ✔ 러너 주입 어댑터는 runner-rules.parallelHazards 와 같은 형태 { ok, why } 를 낸다 (0.1697ms)
+✔ [19] 겹침이 없으면 병렬 유지 · 판정은 결정적 (1.3081ms)
+✔ manual normal range resolves real keys, skips done and deduplicates sprint rows (1.3715ms)
+✔ manual failure and boundary: unknown/reversed range and all-done (0.4007ms)
+✔ installation normal: pinned runtime works after legacy globals disappear; config and queue survive force (95883.0353ms)
+✔ manual dependency normal ordering, failure external dependency, boundary done predecessor (1.2125ms)
+✔ QUESTION_CATEGORIES 는 8범주이고 전부 메타가 있다 (0.9495ms)
+✔ 8범주 각 1건이 전부 ask=true 로, 맞는 범주로 잡힌다 (1.33ms)
+✔ 기술 판단은 묻지 않는다 — 문장에 「배포」가 스쳐도 질문이 되지 않는다 (0.5614ms)
+✔ 되돌릴 수 없는 범주는 기술 kind 라도 이긴다(비밀·삭제·발송) (0.1486ms)
+✔ 인박스에 이미 확정된 결정이 있으면 다시 묻지 않고 근거를 인용한다 (12802.4013ms)
+✔ findConfirmed 는 ✅ 절만 본다 (0.3134ms)
+✔ plainKo 는 경로·함수 표기·확장자·코드 인용을 지운다 (0.6151ms)
+✔ renderQuestion 본문에는 파일 경로·함수명·확장자·빈 괄호가 없다(비개발자 언어 단언) (47.0079ms)
+✔ 같은 subject 는 같은 지문 · 다른 subject 는 다른 지문 (0.3535ms)
+✔ buildInboxBlock 은 공용 관례(절 제목·목록)를 그대로 쓰고 본문을 붙인다 (0.9413ms)
+✔ 같은 지문은 두 번 등재하지 않는다 (0.7492ms)
+✔ 인박스가 없으면 안전한 기본 형식으로 만든다(BRIEF 정책 15) · 만들 수 없으면 실패로 판정한다 (0.3812ms)
+✔ renderNewInbox 로 만든 파일은 다음 라운드의 pendingKeys 가 그대로 읽는다(왕복) (1.7196ms)
+✔ pendingKeys — ✅ 해소 절 **안의** 🟠 하위 항목은 세지 않고, 표지 문구가 있는 하위 절은 센다 (0.1915ms)
+✔ pendingKeys 는 sprint 키를 주면 전체 키로 풀어 준다(validatePlan blocked 형식) (0.1932ms)
+✔ 실제 jng-os 결정 인박스를 읽기 전용으로 파싱한다(실물 형식 회귀) (52.1627ms)
+ℹ jng-os 인박스 실측: 열린 절 17건 · 고유 키 11건 (11-5, 2-24, 2-12, 2-10, 4-2, 4-6, 11-6, 4-3, 4-4, 4-5, 4-7)
+✔ autoDefault — 기술 판단은 추천안으로 진행, 정책·비가역·비용·보안·법률·발송은 기본값을 만들지 않는다 (0.2524ms)
+✔ 실제 픽스처 스냅숏에서 뽑은 지적들은 대부분 질문이 되지 않는다(질문 최소화) (16757.8932ms)
+✔ readProject 는 대상 저장소에 1바이트도 쓰지 않는다(실제 git 워킹트리 비교) (19942.6603ms)
+✔ 소스 앵커: diagnose.mjs 는 node:fs 의 쓰기 API 를 import 하지 않는다 (8.9195ms)
+✔ 에픽 헤더는 ## 과 ### 가 혼재해도 전부 읽는다 (4604.1178ms)
+✔ sprint-status 는 2칸 들여쓰기 스토리 행만 읽는다 — 긴 주석 안의 가짜 키·epic 집계 행 제외 (4567.1722ms)
+✔ File List 는 한 줄에 백틱 경로가 여러 개여도 전부 읽는다(matchAll) (5611.7022ms)
+✔ 굵은 `**[Review][Patch]**` 도 열린 finding 으로 센다(2026-08-30 실사고) (5912.1968ms)
+✔ 미완 Task 에서 👤 사람 게이트 줄은 빠진다(2026-08-31 실사고) (7768.3133ms)
+✔ AC 식별자·Status 헤더·baseline_commit 을 읽는다 (6815.3852ms)
+✔ `N-M-slug` 형태지만 스토리가 아닌 문서는 고아 문서로만 경고한다 (31266.1226ms)
+✔ epics.md 의 마지막 스토리 절도 읽는다(종결 헤더가 없어 정규식이 빈 문자열을 주는 실물 함정) (6363.8098ms)
+✔ sectionOfStory 는 story-ledger 를 먼저 쓰고 마지막 절만 줄 번호로 보강한다 (0.5263ms)
+✔ evidenceRank — 실행(1) → 테스트(2) → 코드(3) → 스토리(4) → 계획(5) (0.1046ms)
+✔ 스토리 5종 판정 — qa 미실행이면 done 도 verified-done 이 못 된다(D11) (4913.9487ms)
+✔ qa GREEN 을 주입하면 정상 스토리만 verified-done 으로 올라간다(D10) (4792.7895ms)
+✔ D1 — qa RED 가 그 스토리 File List 파일을 가리키면 defect(다른 강등보다 먼저) (5134.2471ms)
+✔ D7 — Status 헤더와 sprint 상태가 어긋나면 partial + status-drift (18597.8026ms)
+✔ L1 — File List 파일 부재(D2·code)와 테스트 부재(D3·test)가 동시면 더 센 test 증거로 판정한다 (18020.1844ms)
+✔ classifyStoryCompletion 은 순수 — 같은 입력이면 같은 결과 (5773.1019ms)
+✔ D8 — sprint 키는 있는데 스토리 md 가 없으면 missing (15776.9166ms)
+✔ lineContextAt — 문자열/주석/코드를 가른다 (0.2511ms)
+✔ `.only` — 문자열·주석·가드 테스트 안이면 needs-review, 실코드면 차단급 (3469.1736ms)
+✔ `.skip` — 위 3줄 안에 사유 주석이 있으면 낮은 등급, 없으면 medium (3442.7897ms)
+✔ 임시 코드 — 대문자 마커·한국어 표현만 세고 JSX placeholder 속성은 안 센다(실측 오탐 65건) (0.4637ms)
+✔ 임시 코드가 비밀정보 경로에 있으면 tier 1 종류로 올라간다 (0.1147ms)
+✔ hasTestFor — basename 매칭과 tests/<도메인> 관례를 모두 인정한다 (0.1197ms)
+✔ 배포 차단 — DB 드리프트 대기 · preflight 부재 · 추적된 비밀 파일 (16629.83ms)
+✔ 문서 불일치 — 계획만/원장 밖/고아/파일 부재/File List 부재 (3218.2056ms)
+✔ 보안 — 코드에 박힌 열쇠는 findings, 미추적 .env 의 값은 정상으로 본다 (16392.7489ms)
+✔ `service_role` 낱말은 비밀이 아니다 — 값 대입 형태만 잡는다(실측 오탐 119건) (0.1907ms)
+✔ 진단의 maskSecrets·deepRedact 는 providers/redact.mjs 재수출이다 — 사본이 갈릴 여지 0 (0.1192ms)
+✔ R2 회귀 3형식(JSON 키·Authorization 헤더·인용값)을 마스커가 놓치지 않는다 (0.1344ms)
+✔ 시크릿 원문은 스냅숏·진단 어디에도 없다(전수 grep) (12344.9041ms)
+✔ package.json scripts·state.json·과거 verification.json 에 심은 토큰이 스냅숏·진단·보고서에 없다 (7820.7147ms)
+✔ runGateProbe 는 정확히 1회만 spawn 하고 결과 객체만 돌려준다(로그 파일 안 쓴다) (815.1159ms)
+✔ runGateProbe — 스크립트가 없으면 n/a(GREEN 아님) · 실행 0회 (0.2677ms)
+✔ runGateProbe — RED 면 실패 종류·서명을 붙이고 로그를 마스킹한다 (0.6892ms)
+✔ runGateProbe — 타임아웃은 exit 124 로 정직하게 기록한다 (0.3588ms)
+✔ runGateProbe — 출력 과다(ENOBUFS)는 timeout 이 아니다 · exit 124 금지 · 사유 「출력 과다」 (0.2029ms)
+✔ 셸 메타문자를 가진 스크립트·값은 거부한다(정책 8) (0.8121ms)
+✔ 게이트 총횟수 계약 — diagnose 는 스스로 게이트를 돌리지 않는다 (1865.0774ms)
+✔ 진단 스키마·지문 — 같은 스냅숏이면 지문이 같다(진전 판정의 열쇠) (2340.9218ms)
+✔ 실물 BaroOS 저장소 읽기 전용 스모크(있을 때만) (11277.8034ms)
+▶ [e2e] 병렬 워커 풀 → 엔진(claude dev · codex review) → landing → 통합 게이트
+  ✔ 러너 exit 0 · 워커 풀 2폭 · 두 스토리 모두 landing · 통합 게이트 PASS (199.4762ms)
+  ✔ 엔진: 프로바이더 감지 줄 · codex 리뷰가 원장 형식으로 기재 · 상태 전이(findings → in-progress · clean → done) · sprint-status 동기 (3.2381ms)
+  ✔ 검증 매니페스트 · .env 격리 후 복원 · transient 파일 0 · 워크트리 정리 · 시크릿이 로그에 없다 (3.613ms)
+  ✔ [N2] 워크트리 워커의 git 은 credential.helper 가 빈 값으로 강제된다(저장소 config 무접촉) (76.6551ms)
+✔ [e2e] 병렬 워커 풀 → 엔진(claude dev · codex review) → landing → 통합 게이트 (185569.3938ms)
+▶ [e2e] 통합 게이트 RED → landing 되돌림 · push 없음 · archive 태그 보존 · exit 1
+  ✔ 두 스토리는 각자 GREEN 이지만 합치면 RED — 브랜치는 landing 전으로 (81178.0508ms)
+✔ [e2e] 통합 게이트 RED → landing 되돌림 · push 없음 · archive 태그 보존 · exit 1 (81178.1827ms)
+▶ [e2e][#7] 통합 RED — pushOnFail 이 켜져 있어도 원격에 아무것도 올라가지 않는다
+  ✖ 폐지 경고 · rollback · 원격 ref 0건 · 로컬 landing 0건 · exit 1 (2.4462ms)
+  ✖ [#16] 배치 매니페스트에 rollback 이 남고 push=false (25.7701ms)
+  ✖ [#16/N6] rollback 이 각 스토리 매니페스트에 남는다 — 증거 사본 + batchId 붙은 미추적 sidecar (13.9096ms)
+✖ [e2e][#7] 통합 RED — pushOnFail 이 켜져 있어도 원격에 아무것도 올라가지 않는다 (269328.4282ms)
+▶ [e2e][#7 대조군] 통합 GREEN 이면 실제로 원격에 push 된다(= 위 테스트의 「0건」이 헛것이 아니다)
+  ✔ exit 0 · 원격에 auto/<날짜> 존재 · 배치 매니페스트 pass/pushed (359.9269ms)
+  ✔ [#16] 각 스토리 검증 매니페스트에 integration=pass 가 병합되고, 작업 트리는 깨끗하게 남는다 (152.7269ms)
+✔ [e2e][#7 대조군] 통합 GREEN 이면 실제로 원격에 push 된다(= 위 테스트의 「0건」이 헛것이 아니다) (294613.9048ms)
+▶ [e2e][N1] 순차 + 통합 게이트 RED — 원격 ref 불변 · landing 되돌림 · 엔진에 --push 를 넘기지 않는다
+  ✔ 원격에 auto/* 가 하나도 없다 · 로컬 landing 0건 · exit 1 (185.0285ms)
+  ✔ 엔진은 push 를 보류만 했다 — 원격에 나간 것은 0건 (0.1317ms)
+  ✔ 순차도 배치 매니페스트·rollback sidecar 를 남긴다(mode=sequential) (57.998ms)
+✔ [e2e][N1] 순차 + 통합 게이트 RED — 원격 ref 불변 · landing 되돌림 · 엔진에 --push 를 넘기지 않는다 (27714.2785ms)
+▶ [e2e][N1 대조군] 순차 + 통합 GREEN — 게이트 뒤 **한 번** push 되고 원격 tip 이 최종 HEAD 와 같다
+  ✔ exit 0 · 원격 auto/<날짜> 존재 · 원격 tip == 로컬 HEAD(통합 매니페스트 커밋 포함) (2446.2994ms)
+  ✔ [#16] 순차에서도 각 스토리 검증 매니페스트에 integration=pass 가 병합된다 (669.1573ms)
+✔ [e2e][N1 대조군] 순차 + 통합 GREEN — 게이트 뒤 **한 번** push 되고 원격 tip 이 최종 HEAD 와 같다 (81448.9499ms)
+▶ [e2e][N3] qa 가 흘린 시크릿이 통합 로그·증거·요약 어디에도 원문으로 남지 않는다
+  ✔ [배선] 통합 게이트 로그·증거 사본이 마스킹기를 거친다 (82.4725ms)
+  ✔ [N3] JSON 값 · Bearer 토큰 · 공백 포함 인용값이 통합 로그·증거·요약·stdout 어디에도 원문으로 없다 (139.1236ms)
+✔ [e2e][N3] qa 가 흘린 시크릿이 통합 로그·증거·요약 어디에도 원문으로 남지 않는다 (240810ms)
+▶ [e2e] Codex 한도에도 자체 리뷰·완료·push 금지
+  ✔ 독립 리뷰 제공자가 한도이면 산출물을 보존하고 landing과 push를 차단한다 (265592.7505ms)
+✔ [e2e] Codex 한도에도 자체 리뷰·완료·push 금지 (265592.9043ms)
+▶ [e2e] 워커 실패 격리 — 한 스토리가 죽어도 다른 스토리는 landing · 증거 보관 · 배치 STOP
+  ✔ 2-2-b dev 가 exit 1 → 2-1-a 만 landing · 요약에 중단 기록 · 상태 폴더 archive 에 증거 (144.1049ms)
+  ✔ [#13] 실패 워크트리의 코드 diff·미추적 산출물·엔진 로그·복구 절차가 남는다 (8.424ms)
+  ✔ [#13] 민감 파일은 diff 본문에도 untracked 복사본에도 없다 · 시크릿 값이 증거 폴더 어디에도 없다 (26.9028ms)
+  ✔ [#13] code.diff 로 실제 복구된다 — RESTORE.md 절차대로 base 에서 git apply 성공 · 내용 일치 (1406.1249ms)
+✔ [e2e] 워커 실패 격리 — 한 스토리가 죽어도 다른 스토리는 landing · 증거 보관 · 배치 STOP (67033.9898ms)
+▶ [e2e][OPS] 지출 한도 차단 — 실제 러너 경로에서 연속 카운트가 오르고 알림 판정이 쓰인다
+  ✔ 첫 차단 — 연속 1회 · 알림 발신 · 상태 파일에 최초 시각이 남는다 (17237.4746ms)
+  ✔ 반복 차단 — 연속 2회째는 같은 말을 하지 않는다(억제) (20336.1846ms)
+  ✔ 4회째는 다시 말한다 — 억제가 영구화되지 않는다 (18447.2902ms)
+✔ [e2e][OPS] 지출 한도 차단 — 실제 러너 경로에서 연속 카운트가 오르고 알림 판정이 쓰인다 (56021.1585ms)
+▶ [e2e][settings] nested deny 설정 — 절대경로 전달 · 없으면 배치 전에 멈춘다
+  ✔ .claude/ 가 gitignore 라 워크트리에 없어도 병렬 워커가 산다(러너가 --pipeline-settings 절대경로 전달) (200352.1985ms)
+  ✔ 셋 다 없으면 러너가 배치를 시작하기 **전에** exit 3 으로 멈춘다(밤새 exit 6 이 쌓이지 않게) (74583.4104ms)
+✔ [e2e][settings] nested deny 설정 — 절대경로 전달 · 없으면 배치 전에 멈춘다 (274935.963ms)
+▶ [e2e] dry-run — 워커 실행 0 · 워크트리 0 · 커밋 0
+  ✔ --dry-run 이면 스텁이 한 번도 불리지 않고 병렬 경로도 열리지 않는다 (54842.8634ms)
+✔ [e2e] dry-run — 워커 실행 0 · 워크트리 0 · 커밋 0 (54842.9978ms)
+▶ [e2e] Claude 전용(설정 없음) — 종전 명령줄 그대로 · codex 감지 0 · 통합 게이트 없음
+  ✔ 구 설정 키가 없어도 교차 리뷰와 필수 통합 게이트를 실행한다 (67465.0342ms)
+✔ [e2e] Claude 전용(설정 없음) — 종전 명령줄 그대로 · codex 감지 0 · 통합 게이트 없음 (67465.1769ms)
+▶ [e2e][#20] Claude-only 회귀 — 종전 큐·로그·exit 가 바이트 단위로 같다
+  ✔ --queue 수동 큐: 구 큐도 독립 리뷰와 통합 게이트 뒤에만 landing한다 (31191.4386ms)
+  ✔ --dry-run: 요약이 기준선과 같고 스텁 호출·워크트리·커밋이 0 이다 (3695.3834ms)
+  ✔ 계측 파일은 남기되(덧붙임) 종전 절은 건드리지 않는다 (46773.374ms)
+✔ [e2e][#20] Claude-only 회귀 — 종전 큐·로그·exit 가 바이트 단위로 같다 (81660.4031ms)
+▶ [e2e][#19] 마이그레이션 신규 2건 → 병렬 금지·순차 폴백
+  ✔ 겹침이 없어도 [PARALLEL][HAZARD] 로 순차 폴백하고 워크트리를 만들지 않는다 (82915.3495ms)
+  ✔ 겹치지 않는 평범한 File List 면 병렬을 유지한다(대조군 — 위 폴백이 헛것이 아니다) (142808.3941ms)
+✔ [e2e][#19] 마이그레이션 신규 2건 → 병렬 금지·순차 폴백 (225723.9323ms)
+▶ [e2e][#18] Fable 계획 — 채택 · 거부 폴백 · 기본 꺼짐
+  ✔ 유효 계획이면 채택되고 plan.source 가 run-summary 에 fable 로 남는다 (14357.1469ms)
+  ✔ 지어낸 스토리·비JSON 은 거부하고 규칙 큐로 되돌아간다(밤이 서지 않는다) (7779.7967ms)
+  ✔ 설정에 enabled:false 를 명시하면 실행기를 부르지 않고 종전 로그 그대로다 (3535.474ms)
+✔ [e2e][#18] Fable 계획 — 채택 · 거부 폴백 · 기본 꺼짐 (25672.6381ms)
+▶ [e2e][계획 캐시] 같은 후보면 다시 묻지 않는다 · 바뀌면 다시 묻는다
+  ✔ 같은 후보로 두 슬롯을 돌리면 실행기는 1회만 불린다(2회차 = cache hit) (6456.0517ms)
+  ✔ 후보가 바뀌면 지문이 달라져 다시 묻는다 (6788.7966ms)
+  ✔ 캐시가 유효 시간을 넘기면 다시 묻는다 (6950.1581ms)
+  ✔ 캐시된 계획이 지금 규칙을 통과하지 못하면 버리고 다시 묻는다 (6834.9874ms)
+  ✔ 폴백(규칙 큐)은 캐시하지 않는다 — 다음 슬롯이 다시 시도한다 (5525.7678ms)
+  ✔ 실행기 오류가 연속 3회면 그 뒤 유효 시간 동안 부르지 않는다(cooldown) (8730.8591ms)
+  ✔ 설치 템플릿의 orchestrator 기본값은 켜짐 + 캐시 12시간이다 (👤 2026-09-03 「(가)」) (0.5823ms)
+✔ [e2e][계획 캐시] 같은 후보면 다시 묻지 않는다 · 바뀌면 다시 묻는다 (41287.639ms)
+▶ [e2e][assign] 배정 기록 — 라운드 뒤 갱신 · 연속 실패 회피
+  ✔ 라운드가 끝나면 스토리·프로바이더·역할별 기록이 상태 폴더에 남는다 (28285.9796ms)
+  ✔ codex review 가 그 스토리에서 연속 2회 실패한 기록이어도 같은 제공자 자체 리뷰로 바꾸지 않는다 (29032.4466ms)
+✔ [e2e][assign] 배정 기록 — 라운드 뒤 갱신 · 연속 실패 회피 (57318.5903ms)
+▶ [e2e][M5] 통합 게이트 명령의 셸 결합 제거 — 두 번째 명령이 돌지 않고 push 도 없다
+  ✔ 두 번째 명령이 실행되지 않았다 — 셸 결합이 살아 있으면 여기서 파일이 생긴다 (0.3453ms)
+  ✔ 게이트는 실행 전에 거부되고, 원격에는 아무것도 나가지 않는다 (101.4761ms)
+  ✔ 스토리 단계(엔진 qa = `npm run qa`)는 정상으로 돌았다 — 과잉 차단이 아니다 (0.5226ms)
+✔ [e2e][M5] 통합 게이트 명령의 셸 결합 제거 — 두 번째 명령이 돌지 않고 push 도 없다 (15226.4481ms)
+▶ [e2e] review 전용 배치 병렬 — File List 겹침 무시 · 장부 union landing · 통합 게이트 PASS
+  ✔ review 전용 병렬에서도 구현자·품질 근거 없이 landing할 수 없다 (63.2197ms)
+  ✔ 검증되지 않은 두 스토리는 review 상태를 유지하고 코드도 만들지 않는다 (1.4787ms)
+  ✔ 검증되지 않은 review-only 배치는 원격 ref와 로컬 커밋을 남기지 않는다 (147.6833ms)
+✔ [e2e] review 전용 배치 병렬 — File List 겹침 무시 · 장부 union landing · 통합 게이트 PASS (5247.0051ms)
+✔ fixture plan normal and boundary: ordering, stages, malformed candidates, invented stories (1349.7733ms)
+✔ fixture plan failure: empty, invalid JSON, explicit error and secret stderr remain distinguishable (959.0759ms)
+✔ fixture CLI normal/failure: version, probe, unknown, repair and malformed call records (1770.6578ms)
+✔ fixture story normal/failure/boundary: missing story, declared files, human task and open review findings (1600.2867ms)
+✔ fixture Codex failure: limit and failed turns cannot resemble clean completion (600.05ms)
+✔ fixture Codex normal/boundary: findings, stdout events, relative and absolute result paths (741.1312ms)
+✔ cost normal: medians resist one slow outlier (1.0734ms)
+✔ cost failure: 31 percent requires investigation, failed runs are unverified (0.1568ms)
+✔ cost boundary: exactly 30 percent requires investigation and invalid baseline is rejected (0.277ms)
+✔ publication uses gate-verified fingerprint and rejects post-gate source mutation (1.3255ms)
+✔ missing, stale, wrong-phase and non-ready reports cannot authorize publication (0.2368ms)
+✔ legacy docs-only ready report still binds publication to verified code (0.1263ms)
+✔ actual runner integration gate rejects source mutation immediately after successful child and rolls back (11.3556ms)
+✔ manual CLI normal: dry range resolves real stories without marking work complete (2795.0701ms)
+✔ manual CLI failure: unresolved dependency prevents worker launch (900.709ms)
+✔ manual CLI boundary: completed range exits without runtime and invalid selection fails (947.0112ms)
+✔ parseEngineLog — 단계·프로바이더·역할·모델·exit·소요를 실제 로그 형식에서 뽑는다 (2.1141ms)
+✔ parseEngineLog — 닫히지 않은 단계는 지우지 않고 end=null 로 남긴다(죽은 워커를 숨기지 않는다) (0.1299ms)
+✔ percentile — nearest-rank(결정적) (0.1587ms)
+✔ summarizeTimeline — 유휴·병렬 효율 산식이 정의대로다(워커수×벽시계 − 점유) (1.0852ms)
+✔ summarizeTimeline — p50/p95 · 재시도 · 모델 호출량이 스토리 단위로 집계된다 (0.3994ms)
+✔ summarizeTimeline — 결정성: 같은 입력은 같은 출력 · 스토리 나열 순서는 결과를 바꾸지 않는다 (0.4135ms)
+✔ qualityGate — qa RED · high 잔여 · 통합 RED · 워커 STOP 을 각각 잡는다 (0.5578ms)
+✔ compareRuns — 한쪽이라도 품질 미달이면 비교 제외로 표시된다 (2.6805ms)
+✔ renderMetricsTable — 표 1개 · 품질 판정 포함 (0.3663ms)
+✔ parseCodexUsage — turn.completed 토큰 합산(다른 줄이 섞여도) (0.4049ms)
+✔ writeJsonAtomic — tmp→rename · 결과가 완전한 JSON (5.6524ms)
+✔ appendJsonl — 실제 프로세스 2개가 동시에 append 해도 줄이 섞이지 않는다 (533.8513ms)
+✔ Fable quota is shared across independent routers; Opus runs immediately; reset restores Fable (8.437ms)
+✔ auth/spend block that provider; quota blocks only the affected model (11.8956ms)
+✔ late success from an earlier in-flight request cannot reopen a failed model (8.9839ms)
+✔ a later-started success clears provider failures but never another model quota (55.3716ms)
+✔ a dependent story cannot execute in the same parallel batch as its prerequisite (2.3958ms)
+✔ duplicate sprint rows schedule a story once and keep the latest status (1.005ms)
+✔ health failure details are redacted at the persistence boundary (2.8661ms)
+✔ high-risk reviewer never falls to Opus/Sol/Terra; no same-provider self review (0.2112ms)
+✔ six catalog models form three cross-provider quality pairs (0.2234ms)
+✔ Codex max=1 queues multiple review assignments without consuming an assignment budget (1.4109ms)
+✔ unavailable providers do not get routed; empty scope does not qualify for cheap models (0.6101ms)
+✔ orchestrator cannot omit candidates, reduce stages, or assign identical dev/review models (1.7145ms)
+✔ guarded orchestration may choose a safe subset while full mode must cover all candidates (1.1048ms)
+✔ pinned runtime is selected ahead of global installation (0.6856ms)
+✔ Codex reasoning effort reaches argv as a config value (1.8563ms)
+✔ provider-level exhaustion blocks every model from that provider (1.8025ms)
+✔ failure classification separates model errors, quotas, provider spending, and transport errors (0.738ms)
+▶ [18] Fable 계획 — 유효하면 채택
+  ✔ 후보 부분집합 + 제약 준수 계획을 채택하고 source=fable 을 남긴다 (4.2401ms)
+  ✔ `claude -p --output-format json` 봉투·코드펜스·앞뒤 잡문을 벗겨 낸다 (0.6034ms)
+✔ [18] Fable 계획 — 유효하면 채택 (5.8834ms)
+▶ [18] Fable 계획 — 거부하고 규칙 계획으로 되돌아간다
+  ✔ 지어낸 스토리 키 → 계획 전체 폐기 (0.4644ms)
+  ✔ 셸 메타문자 모델 스펙 → 거부(argv 로 나가는 값이다) (0.3726ms)
+  ✔ 사이클 · 미해결 선행 → 검증기가 거부 (0.7867ms)
+  ✔ 같은 배치 안 File List 겹침 → 거부(순차화는 규칙 계획이 한다) (0.4694ms)
+  ✔ 실행기 예외 · 타임아웃 · 비JSON · 빈 응답 · 실행기 부재 → 전부 폴백 (0.7709ms)
+  ✔ 실행기 오류 원문은 source 에 절대 실리지 않고 · errorDetail 로만 간다 (0.6119ms)
+  ✔ 스키마 불일치(batches 없음 · stories 빈 배열 · 알 수 없는 단계) → 폴백 (0.378ms)
+✔ [18] Fable 계획 — 거부하고 규칙 계획으로 되돌아간다 (4.168ms)
+▶ [18] 프롬프트·스키마·기본 실행기
+  ✔ 프롬프트에 후보·의존 간선·제약·스키마가 실린다 (0.158ms)
+  ✔ parsePlanResponse / validatePlanShape 는 형식 위반을 이름으로 말한다 (0.3245ms)
+  ✔ 기본 실행기는 셸 문자열이 아니라 argv 로 spawn 하고, 메타문자 모델·경로는 거부한다 (2.4005ms)
+✔ [18] 프롬프트·스키마·기본 실행기 (3.0464ms)
+▶ [18] 계획 실행기 예산 — 설정 상한과 잔여 예산 중 짧은 쪽으로 자른다
+  ✔ 실제 자식 프로세스가 timeout 을 넘기면 죽고 · requestPlan 이 runner-timeout 으로 흡수한다 (1062.8053ms)
+  ✔ 잔여 예산이 짧으면 잔여가 이기고 · 길면 설정 상한이 이긴다 · 안 주면 종전 기본값 (0.5354ms)
+✔ [18] 계획 실행기 예산 — 설정 상한과 잔여 예산 중 짧은 쪽으로 자른다 (1063.6241ms)
+▶ [18] 실행 실패 분류 — 예산 초과와 출력 과다를 뒤섞지 않는다
+  ✔ maxBuffer 초과(ENOBUFS)는 runner-error 다 — 실제 프로세스가 8MB 를 넘겨 뱉는다 (888.4663ms)
+  ✔ 진짜 timeout 만 runner-timeout 이고 · 원인 없는 signal 은 종전대로 안전 폴백이다 (0.8353ms)
+✔ [18] 실행 실패 분류 — 예산 초과와 출력 과다를 뒤섞지 않는다 (889.4709ms)
+▶ [DAG] 위상 순서 · 간선
+  ✔ 선행 표기 · 같은 파일 · 같은 에픽 신규 순서로 간선을 만들고 위상 순서를 낸다 (1.6939ms)
+  ✔ 같은 파일을 만지는 스토리는 순서 간선으로 이어진다(병렬이 아니라 순차 근거) (0.1796ms)
+  ✔ 사이클은 order 에서 빠지고 cycles 에 이름으로 남는다(정렬 = 결정적) (0.1201ms)
+  ✔ 같은 입력이면 간선·순서가 같다(결정적) · 입력 순서를 바꿔도 같다 (0.1244ms)
+  ✔ 선행 표기는 줄머리 라벨만 인정한다 — 본문에 스친 「선행」은 의존이 아니다 (0.5762ms)
+✔ [DAG] 위상 순서 · 간선 (3.8709ms)
+▶ [DAG] 검증기 — 무엇을 거부하는가
+  ✔ 정상 계획은 ok (1.8385ms)
+  ✔ ④ 같은 배치 안 File List 겹침 — dev 배치는 batch-conflict · review 전용(마감 재검수) 배치는 코드 무접촉이라 통과 (👤 2026-09-04 리뷰 병렬) (0.3369ms)
+  ✔ 없는 스토리 키 · 중복 편성 · 빈 배치 · 배치 상한 초과 (0.18ms)
+  ✔ 모델 스펙 — opus·codex·codex:m 만 통과, 메타문자·공백은 거부 (0.1596ms)
+  ✔ 미해결 선행 — done 이면 통과, 아니면 거부. 같은 계획 안이면 순서를 본다 (0.2011ms)
+  ✔ 규칙 1·7·9 · 사람 게이트 봉쇄 (0.2454ms)
+  ✔ errors 는 결정적으로 정렬된다 — 같은 입력 두 번이면 같은 배열 (0.1957ms)
+✔ [DAG] 검증기 — 무엇을 거부하는가 (3.3933ms)
+▶ [DAG] plan() 산출 큐는 validator 를 통과한다
+  ✔ 회수 2건(서로소) 편성 결과가 ok · validation 필드가 큐에 실린다 (18.2609ms)
+  ✔ 선행이 done 이 아닌 스토리는 계획 검증에서 빠지고 사유가 남는다 (12.4752ms)
+✔ [DAG] plan() 산출 큐는 validator 를 통과한다 (30.8578ms)
+▶ [OPS-1] 편성 규칙 8종
+  ✔ 규칙 1 — 에픽 순서 2→3→11→4: 앞 에픽에 후보가 있으면 뒤는 「순서 대기」로 뺀다 (26.9702ms)
+  ✔ 규칙 1 개정(👤 08-28) — 앞 에픽에 후보가 남아도 뒤 에픽의 회수·마감은 통과, 신규 착수만 대기 (23.3564ms)
+  ✔ 규칙 1 — 앞 에픽이 전부 막히면 다음 에픽에 길을 내준다(막힌 사유는 excluded 에 남는다) (18.5552ms)
+  ✔ 규칙 1 — epics ⏸ 이연 확정 문언이 상태값보다 우선한다(2-18 실사례) (17.3444ms)
+  ✔ 규칙 2 — 열린 [Review][Decision] 은 제외 + 인박스 미등재면 의심 표기 (22.0582ms)
+  ✔ 규칙 3 — 재투입 금지 지시가 살아 있고 미완 Task 0 이면 제외(1회 해제 소진 — 3-1 실사례) (16.3361ms)
+  ✔ 규칙 3 단서 — 금지 지시가 있어도 미완 기계 Task 가 있으면(새 라운드 개방) 편성한다 (16.1027ms)
+  ✔ 규칙 4 — 열린 Patch 만 있고 미완 Task 0 이면 전제 미충족으로 제외(라운드 절은 사람이 연다) (17.0362ms)
+  ✔ 규칙 4 재료 — 사람 게이트 [ ] 는 기계 일감으로 세지 않는다(2-10 실사례) (0.3372ms)
+  ✔ 규칙 5 — 회수끼리 File List 가 겹치면 같은 배치에 묶지 않는다 (17.9542ms)
+  ✔ 규칙 5 — File List 서로소면 회수 2건을 한 배치로 묶는다(병렬 워크트리 안전) (22.5421ms)
+  ✔ 규칙 5 — 마감 재검수(closeout · review 만)는 File List 가 겹쳐도 같은 에픽끼리 한 배치로 묶는다 (👤 2026-09-04 리뷰 병렬) (21.3222ms)
+  ✔ 규칙 6 — 부정문 「새 화면 0 이므로 목업 선행 대상이 아니다(UX-DR-27 단서)」 는 게이트 대상이 아니다 (2026-09-04 2.23 NO-OP STOP 실사고) (29.1505ms)
+  ✔ 규칙 6 — 새 화면(UX-DR-27) backlog 는 승인 목업이 있어야 편성한다 (30.4531ms)
+  ✔ 규칙 7 — 하루 상한: 오늘 기편성 수를 빼고 남은 만큼만 고른다 (24.1021ms)
+  ✔ 규칙 8→10 — review + 고칠 것 0 = 마감 재검수 후보(review→done) · in-progress 0/0 만 헛돈다 제외 (👤 08-28) (32.7883ms)
+  ✔ 규칙 8 — 신규는 create,dev,review · 회수는 dev+force (32.0446ms)
+  ✔ 출력 계약 — planned=auto · night-queue 스키마(defaults·batches[].stories) · 근거 전건 기록 (74.6235ms)
+  ✔ 파서 극단값 방어 — sprint 빈 파일이면 후보 0 이지 예외가 아니다 · 키 없는 줄 무시 (14.4464ms)
+✔ [OPS-1] 편성 규칙 8종 (459.8922ms)
+▶ [OPS-2] 규칙 9 v2 · 모델 장부 (2026-08-27 원탁 · 2026-08-30 무정지 개정)
+  ✔ 규칙 9 v2 — 무진전 편성 2회 연속이면 제외(폭주 백스톱 — 11-3 실사고 클래스 그대로 잡힌다) (136.8483ms)
+  ✔ 규칙 9 v2 — 진전(스토리 md 커밋)이 있으면 스트릭 0 리셋: 24h 무정지에서 「평생 2회」 사형 선고를 없앤다 (22.3286ms)
+  ✔ 규칙 9 v2 — 그날 편성되지 않았어도 progressed 면 스트릭 0 리셋(👤 2026-09-02 재편성 승인 무효 사고) (24.2594ms)
+  ✔ 규칙 9 v2 — progressed 가 없는 날의 편성은 그대로 누적된다(폭주 백스톱 무손실) (21.2411ms)
+  ✔ 규칙 9 v2 — 마감 재검수(closeout)는 상한 1회: 무진전 재검수 재반복은 즉시 사람 판단으로 (23.703ms)
+  ✔ /extend 상한 보너스 — cap-extend-<오늘>.json 의 extra 를 읽기 전용 가산(원장 직접 수정 없음) (58.7508ms)
+  ✔ 체인 게이트 — 미머지 체인 2일+ 이면 신규 착수만 보류 · 회수는 계속 (발견 16 — ③류 무한 축조 상한) (45.2372ms)
+  ✔ 모델 장부 — 중요도 배정 + 교차검증(👤 2026-08-28): dev ≠ review 항상 · 소진 모델 미배정 (37.2099ms)
+✔ [OPS-2] 규칙 9 v2 · 모델 장부 (2026-08-27 원탁 · 2026-08-30 무정지 개정) (370.029ms)
+▶ [OPS] 소진 모델 회피 — 배정·사다리에서 빼고 대체를 쓴다
+  ✔ 소진 목록의 모델은 배정되지 않고 대체로 바뀐다 (0.169ms)
+  ✔ 실제 편성 산출물에 소진 모델이 한 건도 없다 — 리터럴이 아니라 결과를 문다 (41.5809ms)
+✔ [OPS] 소진 모델 회피 — 배정·사다리에서 빼고 대체를 쓴다 (41.8459ms)
+▶ [OPS] 열린 findings 판정 — 표기가 흔들려도 세야 한다
+  ✔ 굵게·밑줄굵게·들여쓴 표기의 열린 findings 를 센다 (0.1824ms)
+  ✔ 해소분(- [x])은 세지 않는다 — 회수한 항목이 다시 열린 것으로 잡히면 안 된다 (0.0587ms)
+  ✔ 결과 불변식 — 굵게 적힌 열린 Patch 가 있으면 done 후보(closeout)로 편성되지 않는다 (52.8452ms)
+✔ [OPS] 열린 findings 판정 — 표기가 흔들려도 세야 한다 (53.2083ms)
+▶ [OPS-F1] 계획 검증·배정 배선 — 큐 형식은 그대로
+  ✔ 정상 편성이면 validation.ok=true 이고 종전 필드(planned·defaults·batches)가 그대로다 (19.4277ms)
+  ✔ 선행(선행: N-M)이 done 이 아니면 그 스토리만 빠지고 나머지는 계속 나간다 (19.1234ms)
+  ✔ 선행이 done 이면 통과한다 — 「선행」 표기가 스토리를 영구 봉쇄하지 않는다 (19.9607ms)
+  ✔ 배정기 — cfg.models 의 형식 위반 스펙(셸 메타문자)은 큐에 실리지 않는다 (19.0321ms)
+  ✔ codex 교차 리뷰 의도는 보존된다(가용성 판정은 엔진 몫) · 꺼져 있으면 종전 그대로 (37.3473ms)
+✔ [OPS-F1] 계획 검증·배정 배선 — 큐 형식은 그대로 (115.1429ms)
+▶ readiness — 기준표 형태
+  ✔ 작업 8조건·프로젝트 8조건이 T1~T8 / P1~P8 로 빠짐없이 있고, 각 조건이 근거 출처를 들고 있다 (2.0613ms)
+  ✔ 전파 규칙: fail≥1 → not-ready / fail 0 & not-verified≥1 → not-verified / 전부 pass → ready (0.2747ms)
+✔ readiness — 기준표 형태 (4.3319ms)
+▶ readiness — 작업(스토리) 8조건
+  ✔ 여덟 조건이 전부 통과하면 ready 다(기준선) (1.3671ms)
+  ✔ 스크립트가 없어 n/a 인 게이트는 not-verified 이고, ready 는 절대 나오지 않는다 (0.4577ms)
+  ✔ required-missing·not-run·unknown 도 전부 not-verified 다(모르는 값은 통과가 아니다) (0.1362ms)
+  ✔ fail 1건 + not-verified 2건이면 not-verified 가 아니라 not-ready 다(더 나쁜 쪽이 이긴다) (0.6455ms)
+  ✔ T2: 완료 판정이 없어도 checks.unitKinds 가 있으면 정상·실패·경계 3유형을 요구한다 (0.486ms)
+  ✔ T6: 구현한 쪽과 검토한 쪽의 제공자가 같으면 교차 리뷰가 아니다 — fail (0.1546ms)
+  ✔ T6: 파일을 읽은 증거 없이 「아무 문제 없음」을 낸 리뷰는 fail(명령 개수만으로 통과시키지 않는다) (0.1651ms)
+  ✔ T6: 높음 지적이 남아 있으면 fail · 교차 리뷰 기록 자체가 없으면 not-verified (0.1756ms)
+  ✔ T6: dev·review 제공자 중 하나라도 기록이 없으면 PASS 가 아니라 not-verified 다 (0.256ms)
+  ✔ T5: 수리 라운드가 남긴 skip/only 는 경고가 아니라 차단이다 (0.5418ms)
+  ✔ T7: 실제 판정이 verified-done 이 아니면 문서의 done 을 믿지 않는다 (0.2307ms)
+  ✔ T2: 변경 파일 목록이 없으면 not-verified · 목록에 테스트가 없으면 fail (0.2357ms)
+  ✔ 진단이 「확인 못 한 것」을 하나라도 들고 있으면 여덟 조건이 전부 통과여도 ready 가 아니다 (0.1691ms)
+  ✔ 검증 기록 자체가 없으면(훅 미배선) 조건 다수가 not-verified 로 떨어지고 ready 는 못 된다 (0.1316ms)
+✔ readiness — 작업(스토리) 8조건 (5.7152ms)
+▶ readiness — 판정표 렌더
+  ✔ 여덟 줄 + 판정 + 근거가 나오고, 확인 못 한 것을 「통과」로 적지 않는다 (0.7759ms)
+✔ readiness — 판정표 렌더 (0.8456ms)
+▶ readiness — 프로젝트 8조건(실제 픽스처 진단)
+  ✔ 워커 A 픽스처를 실제로 읽어 진단하면 P2·P4·P5 가 근거와 함께 미달로 잡히고 판정은 not-ready 다 (585.0483ms)
+  ✔ 진단을 읽는 동안 대상 저장소에 아무것도 쓰지 않는다 (740.9203ms)
+  ✔ 전부 깨끗하면(지적 0 · 게이트 GREEN · 교차 리뷰 있음) ready 가 나온다 (0.3751ms)
+  ✔ 같은 재료라도 진단에 확인 못 한 것이 하나 있으면 ready 가 not-verified 로 내려간다 (0.1605ms)
+✔ readiness — 프로젝트 8조건(실제 픽스처 진단) (1527.8293ms)
+[실측] 스토리 85 · 문서상 완료 36 · 검사로 확인된 완료 0 · 지적 370
+[실측] 판정 not-ready — 미달 P1,P2,P4,P5,P6 · 확인 못 함 P3,P7,P8
+[실측] 백로그 89건(봉쇄 0) · 보고서 5121자
+▶ report — 항목 열 개와 순서
+  ✔ SPEC §10 의 열 항목이 정해진 번호·순서로 전부 있다 (4.9817ms)
+  ✔ 첫 화면(제목 바로 아래)에 배포 가능 여부와 모자란 것이 온다 (0.6135ms)
+✔ report — 항목 열 개와 순서 (6.4987ms)
+▶ report — 시크릿 재마스킹
+  ✔ 진단·백로그를 타고 들어온 시크릿 형태 문자열이 본문과 JSON 어디에도 남지 않는다 (2.2708ms)
+  ✔ R2 회귀 3형식(JSON 키·Authorization 헤더·인용값)도 본문·JSON 어디에도 원문이 없다 (1.3404ms)
+✔ report — 시크릿 재마스킹 (3.7642ms)
+▶ report — 게이트 조건이 다른 실행
+  ✔ 돌린 게이트가 다르면 「비교 불가」라고 적고 수치를 나란히 놓지 않는다 (0.7839ms)
+  ✔ 게이트 조건이 같고 두 실행 다 품질을 통과했으면 비교값이 나온다 (0.6014ms)
+  ✔ 한쪽이라도 품질 게이트를 통과하지 못했으면 게이트 조건이 같아도 비교하지 않는다 (0.9259ms)
+✔ report — 게이트 조건이 다른 실행 (2.4895ms)
+▶ report — 확인 못 한 것을 완료로 적지 않는다
+  ✔ 문서에 done 이라 적힌 not-verified 스토리는 ②「끝낸 것」이 아니라 ⑧「확인하지 못한 것」에 있다 (0.3833ms)
+  ✔ ①「할 수 있는 것」에도 검사로 확인된 것만 들어간다 (0.2913ms)
+  ✔ 화면을 직접 열어 본 흐름이 없으면 ④에 그렇게 적고 ⑧에도 남긴다 (0.2713ms)
+  ✔ ③은 「명령이 없다」와 「이번에 안 돌렸다」를 구분해 적고, 둘 다 통과로 적지 않는다 (0.7019ms)
+  ✔ 계측이 없으면 시간을 「0초」라고 적지 않고 「기록 없음」이라 적는다 (0.2894ms)
+  ✔ 판정이 ready 가 아니면 ⑨에 「배포하면 안 된다/확인 못 했다」가 오고 막는 것이 열거된다 (0.2531ms)
+✔ report — 확인 못 한 것을 완료로 적지 않는다 (2.3704ms)
+▶ report — 비개발자 언어
+  ✔ 본문에 모듈 파일명·경로·함수 호출 표기가 나오지 않는다 (0.3912ms)
+  ✔ plain: 경로·확장자·함수 표기를 지우고 기술 약어를 쉬운 말로 바꾼다 (0.0759ms)
+✔ report — 비개발자 언어 (0.5296ms)
+▶ report — 지표 7종
+  ✔ 계측이 첫 시도 통과율·반복 실패·절약을 주지 않으면 직접 세고 「근사」라고 적는다 (0.152ms)
+  ✔ 표에 일곱 지표가 전부 있고, 값이 없으면 「확인 못 함」이라 적는다 (0.3605ms)
+✔ report — 지표 7종 (0.5741ms)
+▶ report — 실제 jng-os 저장소(읽기 전용)
+  ✔ 실제 프로젝트를 읽어 진단→백로그→판정→보고서까지 돌리고, 그 저장소에는 한 글자도 쓰지 않는다 (3273.6164ms)
+✔ report — 실제 jng-os 저장소(읽기 전용) (3280.9387ms)
+▶ [OPS-2] 러너 판정 규칙
+  ✔ 한도 대기 — 슬롯 모드는 30분 고정(lock 인질 방지) · 수동은 배치값>기본값>480 (0.8506ms)
+  ✔ 차단기 — exit 5(한도)는 stops 에 세지 않는다 · 성공은 0 리셋 · 실패는 +1 (0.1357ms)
+  ✔ 연속 루프 — 완주+같은 날짜만 계속 · 자정 경과/STOP/편성 0/dry-run 은 종료 (0.1564ms)
+  ✔ 차단기 창 — 낮(06~18)과 밤(18~익일 06)을 가르고, 새벽은 전날 밤 창에 앵커된다 (4.7019ms)
+  ✔ 알림 채널 — 텔레그램 구성 시 정본 · 아니면 ntfy 폴백 · 둘 다 없으면 무음 (0.1487ms)
+  ✔ [OPS-4] 병렬 계획 — dev 포함 배치·2스토리+·parallel 옵트인 · 상한 3 하드캡 (👤 08-28 확장: dev+review 신규도 병렬) (0.2053ms)
+  ✔ [OPS-4] File List 파싱·겹침 — 공유 장부(sprint-status 등)는 제외, 실파일 겹침만 병렬 불가 (1.437ms)
+  ✔ 원장 환불 — 미실행 키만 1회씩 제거 · 없는 키 무시 · 원본 불변 (2026-08-27 14:00 exit 6 실사고) (0.1636ms)
+  ✔ landing 자동 해소 판정 — 로그 union·state ours·공유 장부 union, 그 외 1건이라도 섞이면 null (2026-08-28 11-4∥11-7 실사고) (0.3356ms)
+  ✔ [OPS-7] 공회전 — 라운드 실작업 0 이면 루프 종료 · 기존 판정은 불변 (2026-08-29 새벽 13회 재편성 실사고) (0.1829ms)
+  ✔ [OPS-7] 실작업 판정 — 로그 폴더 밖 파일 1건이라도 있으면 true · 로그뿐/커밋 0 은 false (0.2001ms)
+  ✔ 충돌 마커 union — 양쪽 순서대로 보존 · diff3 base 폐기 · 비정형 잔존은 null (0.8034ms)
+✔ [OPS-2] 러너 판정 규칙 (10.7178ms)
+▶ [무정지] Non-Stop 판정부 (2026-08-30 적대 리뷰 wf_b8f76633 확정 20건 반영)
+  ✔ lock v2 — pid 생존만 양보 · ESRCH 사망은 탈취 · 판정 불능(EPERM)은 심박 6h 로 가른다 (발견 2·5) (0.5476ms)
+  ✔ STOP 차단기 v2 — 같은 원인 서명 2회만 차단 · 다른 원인은 계속 · 창 누적 4회 백스톱 (발견 17) (0.5234ms)
+  ✔ 하향 동기 처분 — 로그·장부 충돌은 자동 해소 · 문서만 남으면 동기 보류(밤 계속) · 코드는 휴면 (발견 1·12·19) (0.4266ms)
+  ✔ 선형 승계 — 최신 날짜 브랜치 기준(원격 우선) · 체인 나이 = 최고령 미머지→오늘 (발견 6·16) (0.4506ms)
+  ✔ exit 5 환불 — 라운드 커밋이 스토리 md 를 안 만진 키만 환불 · 진전 키 추출은 로그 제외 (발견 3·4) (0.5896ms)
+  ✔ 진전 추출 — git 인용 경로(비ASCII 8진 이스케이프)는 매칭되지 않는다 · 그래서 파일 목록 git 호출은 core.quotepath=false 필수 (2.657ms)
+  ✔ [실동작] 한글 스토리 md 를 실제로 커밋해 본다 — quotePath 기본값이면 진전 0건, false 면 잡힌다 (1361.8961ms)
+✔ [무정지] Non-Stop 판정부 (2026-08-30 적대 리뷰 wf_b8f76633 확정 20건 반영) (1367.5585ms)
+▶ [OPS] 지출 한도 차단 알림 — 원인을 말하고, 반복하지 않고, 경과를 알린다
+  ✔ 첫 회는 반드시 말한다 — 그리고 원인·조치처·「사람만 풀 수 있다」가 본문에 있다 (0.5576ms)
+  ✔ 30분마다 같은 말을 하지 않는다 — 첫 회 뒤에는 2시간마다(슬롯 4회마다)만 (0.2029ms)
+  ✔ 경과 시간을 말한다 — 「N시간째」가 있어야 사람이 심각도를 안다 (0.0988ms)
+  ✔ 차단이 아니면 조용하다 — streak 0·음수·비정수는 speak=false (0.1598ms)
+  ✔ 러너가 이 판정을 실제로 쓴다 — 배선이 죽으면 알림이 종전 문구로 돌아간다 (앵커 · 실동작은 e2e-parallel.test.mjs 의 [OPS] 지출 한도 차단 describe) (3.1678ms)
+✔ [OPS] 지출 한도 차단 알림 — 원인을 말하고, 반복하지 않고, 경과를 알린다 (4.987ms)
+▶ [install] Codex 검사 — 공백 경로 실행 · 셸 메타문자 거부
+  ✔ PATH 의 공백 폴더에 있는 codex 심을 실제로 실행한다(버전·로그인 상태를 읽어 낸다) (13170.9299ms)
+  ✔ CODEX_BIN 이 공백 든 절대경로여도 실행된다(PATH 에 없어도) (15899.4777ms)
+  ✔ 셸 메타문자가 든 CODEX_BIN 은 실행 자체를 거부한다 — 두 번째 명령이 돌지 않는다 (15574.8357ms)
+✔ [install] Codex 검사 — 공백 경로 실행 · 셸 메타문자 거부 (44645.5286ms)
+▶ [M5] 통합 게이트 명령 정규화 — 셸 문자열 결합 제거
+  ✔ `npm run qa` 는 argv 로 쪼개지고, Windows 는 `.cmd` 심 전용 경로로 간다 (1.16ms)
+  ✔ `npm run qa` 가 Windows 에서 **실제로 실행된다**(계획이 종이 위에서만 맞는 것이 아니다) (7176.1933ms)
+  ✔ `node tools/qa.mjs` 같은 자유 형식도 실행파일+argv 로 정규화된다(과잉 차단이 아님) (0.1899ms)
+  ✔ 셸 메타문자가 든 게이트 이름·명령은 실행 계획을 만들지 못하고 거부된다 (0.5292ms)
+  ✔ 허용 실행파일 밖(curl·wget·sh)은 거부한다 — 게이트가 임의 실행 통로가 되지 않는다 (0.1665ms)
+✔ [M5] 통합 게이트 명령 정규화 — 셸 문자열 결합 제거 (7178.4196ms)
+▶ [사다리] 오케스트레이터 모델 사다리 — 👤 2026-09-04 「사다리(fable→opus)를 정본에 넣기」
+  ✔ 기본 사다리 = [설정 모델, fable, opus] 중복 제거 · 첫 칸은 항상 설정 모델 (0.274ms)
+  ✔ 설정 ladder 가 있으면 그것을 쓰되 형식 위반·중복은 버리고 설정 모델을 앞에 세운다 (0.0796ms)
+  ✔ 사다리는 실행기 사고(timeout·error·nonzero)에만 탄다 — 형식·검증 거부·지어낸 스토리는 규칙 계획으로 (0.1353ms)
+✔ [사다리] 오케스트레이터 모델 사다리 — 👤 2026-09-04 「사다리(fable→opus)를 정본에 넣기」 (0.5582ms)
+✔ runtime resolution normal and failure: explicit override, pinned sibling, missing module and invalid names (80.5538ms)
+✔ surface normal discovers every static method and route, deduplicates registrations (2.6848ms)
+✔ surface failure rejects partial method coverage in API and authorization reports (0.3599ms)
+✔ surface boundary distinguishes routes of the same method and rejects malformed scope (0.1283ms)
+✔ surface ignores comments and quoted fake handlers (0.1222ms)
+✔ surface Next normal maps root and dynamic route exports (0.23ms)
+✔ surface unknown or dynamic framework remains not-verified without inventory (0.1764ms)
+✔ surface explicit reviewed inventory covers unsupported dispatch without stale acceptance (0.3233ms)
+✔ surface inventory cannot omit a visible method even with a current source hash (0.2382ms)
+✔ surface HEAD OPTIONS and dynamic registration outside API directories still trigger the gate (2.4043ms)
+✔ surface mounted router requires explicit external route inventory (0.185ms)
+✔ normal real HTTP authorization: 401, 403, 204 and foreign tenant 404 (151.8711ms)
+✔ failure and boundary: missing case, denied allowed role, missing env (0.4042ms)
+✔ report is fresh and never stores supplied credentials (28.4279ms)
+✔ Claude trace normal: only matched successful Read and Bash calls are recorded (1407.6214ms)
+✔ Claude trace failure: error results, unmatched tools and assistant claims prove no reads (0.1576ms)
+✔ Claude trace boundary: malformed/plain output and empty input have no evidence; stream is review opt-in (0.3651ms)
+▶ completion-rules — 기준표
+  ✔ T1~T8 의 번호와 순서가 판정표(readiness) 와 정확히 같다 — 두 곳이 갈리면 같은 스토리를 다르게 읽는다 (1.2949ms)
+  ✔ 전부 통과하는 매니페스트 + 테스트 붙은 변경 + 완료 기록이면 verdict 가 ready 다 (2.821ms)
+  ✔ 원본 매니페스트를 건드리지 않는다(순수) — completion 은 호출부가 붙인다 (0.4818ms)
+✔ completion-rules — 기준표 (5.5336ms)
+▶ completion-rules — T2 새 테스트
+  ✔ 실제 diff 에서 테스트 파일의 새 테스트를 세고 정상·실패·경계 유형을 판별한다 (0.2768ms)
+  ✔ 테스트 없는 변경은 fail · diff 를 못 받았으면 fail 이 아니라 not-verified 다 (0.2655ms)
+  ✔ happy-path 한 건뿐이면 PASS 가 아니라 not-verified 다 — 빠진 유형을 사유에 적는다 (0.5894ms)
+  ✔ 유형 판별은 이름과 본문을 함께 본다 — 실패 > 경계 > 정상 우선순위로 한 건은 한 유형 (0.1346ms)
+  ✔ 3유형이 다 있으면 PASS 이고 사유에 유형별 건수를 적는다 (0.1947ms)
+✔ completion-rules — T2 새 테스트 (1.6456ms)
+▶ completion-rules — T5 수리 라운드가 만든 흔적
+  ✔ 수리 라운드가 새로 만든 skip 은 blocking 이다(수리 전 같은 경고는 아니다) (0.4915ms)
+  ✔ `(repair-introduced)` 로 이미 승격된 흔적은 수리 횟수와 무관하게 차단이고, 선재 흔적은 제외한다 (0.1697ms)
+✔ completion-rules — T5 수리 라운드가 만든 흔적 (0.753ms)
+▶ completion-rules — T6 교차 검토 제공자
+  ✔ 구현자와 검토자의 제공자가 같으면 미달이다 (0.1591ms)
+  ✔ 제공자가 다르고 높음 0 이며 열람 증거가 있으면 통과 · 증거 0 이면 미달 (0.1133ms)
+  ✔ 높음이 남아 있으면 미달 · 리뷰를 안 돌렸으면 미달이 아니라 not-verified (0.1005ms)
+  ✔ 두 provider 중 하나라도 없으면 열람 증거가 있어도 PASS 가 아니라 not-verified 다 (0.2949ms)
+✔ completion-rules — T6 교차 검토 제공자 (0.7874ms)
+▶ completion-rules — T7 BMAD 상태 = 코드 상태
+  ✔ 세 곳이 같으면 일치 · 원장과 문서가 다르면 불일치 (0.1475ms)
+  ✔ 열린 지적이 남았는데 done 이라고 적혀 있으면 불일치다(문서의 done 을 믿지 않는다) (0.1868ms)
+  ✔ Status 줄이 없거나 본문이 없으면 미달이 아니라 not-verified 다 (0.2635ms)
+✔ completion-rules — T7 BMAD 상태 = 코드 상태 (0.6928ms)
+▶ completion-rules — T8 완료 기록
+  ✔ 완료 기록이 매니페스트의 qa 수치를 인용값 그대로 적는다 (0.2634ms)
+  ✔ 매니페스트에 값이 없으면 지어내지 않고 NOT VERIFIED 라고 적는다 (0.1669ms)
+  ✔ 렌더한 완료 기록을 그대로 스토리에 넣으면 T8 이 통과한다(왕복) (0.1379ms)
+  ✔ 완료 기록 절이 없으면 미달 · 실측 인용이나 미검증 절이 빠져도 미달 · 본문이 없으면 not-verified (0.1488ms)
+✔ completion-rules — T8 완료 기록 (0.8236ms)
+▶ completion-rules — 게이트 판정
+  ✔ n/a·required-missing·unknown 은 전부 not-verified 이고 verdict 는 ready 가 못 된다 (0.2883ms)
+  ✔ 사슬 중간이 실패면 T3 가 fail 이고 어느 단계인지 적는다 (0.1877ms)
+✔ completion-rules — 게이트 판정 (1.0254ms)
+▶ [engine-e2e][#1] 추적된 민감 파일은 리뷰 diff·변경 파일 목록 어디에도 없다
+  ✔ .env.production · secrets/app.pem 을 고쳐도 diff 에는 코드만 실린다 (48973.4384ms)
+✔ [engine-e2e][#1] 추적된 민감 파일은 리뷰 diff·변경 파일 목록 어디에도 없다 (48974.5015ms)
+▶ [engine-e2e][#2] baseline 폴백 diff 도 마스킹된다 — 최종 diff 에 원문 0건
+  ✔ 워킹트리가 clean 이라 baseline..HEAD 로 떨어져도 sk-…·postgres://u:p@ 가 남지 않는다 (56077.9573ms)
+✔ [engine-e2e][#2] baseline 폴백 diff 도 마스킹된다 — 최종 diff 에 원문 0건 (56078.1176ms)
+▶ [engine-e2e][정책2] qa 로그·워커 로그에 자격증명 값이 남지 않는다
+  ✔ qa 스텁이 SERVICE_ROLE_KEY·DB URL 을 출력해도 로그에는 ***REDACTED*** (80614.2873ms)
+✔ [engine-e2e][정책2] qa 로그·워커 로그에 자격증명 값이 남지 않는다 (80614.4535ms)
+▶ [engine-e2e][#4] 워커의 직접 push 는 실행 단계에서 차단되고 배치가 STOP 한다
+  ✔ 스텁 dev 가 `git push origin HEAD:main` → exit 86 → 엔진 exit 6 · 원격 ref 불변 (64237.56ms)
+✔ [engine-e2e][#4] 워커의 직접 push 는 실행 단계에서 차단되고 배치가 STOP 한다 (64237.6838ms)
+▶ [engine-e2e][#4-b] Windows 워커 셸 고정 — shim 을 지나치는 bash 래퍼를 쓰지 못하게 env 를 못 박는다
+  ✔ 워커 env 의 SHELL·CLAUDE_CODE_GIT_BASH_PATH 가 Git\usr\bin\bash.exe 를 가리킨다(win32 한정) (123755.1966ms)
+✔ [engine-e2e][#4-b] Windows 워커 셸 고정 — shim 을 지나치는 bash 래퍼를 쓰지 못하게 env 를 못 박는다 (123755.3189ms)
+▶ [engine-e2e][#5] commit → reset 으로 원상복구하는 조작도 막힌다
+  ✔ 사후 비교로는 안 잡히는 net-zero 조작이 commit 단계에서 끊긴다 (60984.9145ms)
+✔ [engine-e2e][#5] commit → reset 으로 원상복구하는 조작도 막힌다 (60985.0519ms)
+▶ [engine-e2e][#6] `--commit` 은 auto/* 또는 detached 에서만
+  ✔ main 에서 --commit(브랜치 미지정) → exit 6 · 커밋 0건 (36010.691ms)
+  ✔ --branch auto/x → 브랜치 생성 후 스토리 커밋 1건 (91694.8879ms)
+  ✔ detached 워크트리(러너 landing 모드) → 종전대로 커밋된다 (20944.3514ms)
+✔ [engine-e2e][#6] `--commit` 은 auto/* 또는 detached 에서만 (148650.1953ms)
+▶ [engine-e2e][#10] Claude 불가·Codex 정상 — 동일 제공자 자체 리뷰 차단
+  ✔ Codex dev 는 Claude 프로브 없이 실행되지만 Codex 자체 리뷰는 차단한다 (9205.2024ms)
+✔ [engine-e2e][#10] Claude 불가·Codex 정상 — 동일 제공자 자체 리뷰 차단 (9205.3725ms)
+▶ [engine-e2e] Codex implementation with independently observed Claude review
+  ✔ actual source reads plus QA authorize completion; the configured Codex self-review is replaced (7846.9968ms)
+✔ [engine-e2e] Codex implementation with independently observed Claude review (7847.1078ms)
+▶ [engine-e2e][#11] 미추적 신규 테스트 파일의 .only/skip/항상-참 단언이 잡힌다
+  ✔ `tests/new.test.ts` 를 새로 만들며 describe.only 를 넣으면 무결성 차단 STOP (4343.6481ms)
+✔ [engine-e2e][#11] 미추적 신규 테스트 파일의 .only/skip/항상-참 단언이 잡힌다 (4343.8371ms)
+▶ [engine-e2e][#14] 트리거된 보안 게이트를 실제로 실행하고 실패는 RED 로 전파한다
+  ✔ auth 경로 변경 + test:security 실패 → 배치 STOP · 매니페스트에 fail 기록 (11923.4033ms)
+  ✔ 대조군 — 같은 변경에 게이트가 통과하면 완주하고 매니페스트는 pass (31413.7405ms)
+  ✔ 필수 security 스크립트가 없으면 required-missing 기록과 함께 완료를 차단한다 (14795.1376ms)
+✔ [engine-e2e][#14] 트리거된 보안 게이트를 실제로 실행하고 실패는 RED 로 전파한다 (58132.5658ms)
+▶ [engine-e2e][#16] DECISIONS-INBOX 가 없으면 만들고 등재한다 · 만들 수 없으면 실패다
+  ✔ 인박스 부재 → 기본 형식으로 생성 + Decision 등재 (39564.1034ms)
+  ✔ 인박스를 만들 수 없으면(같은 이름의 디렉터리) 리뷰 적용 실패로 멈춘다 (66332.156ms)
+✔ [engine-e2e][#16] DECISIONS-INBOX 가 없으면 만들고 등재한다 · 만들 수 없으면 실패다 (105896.4026ms)
+▶ [engine-e2e][검증표#2] 빈 diff 로 인한 codex→claude 전환도 전환 횟수에 든다
+  ✔ 볼 diff 가 없으면 claude 리뷰로 넘기고, 그 전환을 스토리당 상한 장부에 기록한다 (29300.551ms)
+✔ [engine-e2e][검증표#2] 빈 diff 로 인한 codex→claude 전환도 전환 횟수에 든다 (29300.6681ms)
+▶ [engine-e2e][#9] 셸 메타문자가 든 모델 스펙은 실행 전에 거부한다
+  ✔ `--dev-model "opus & git push origin HEAD:main"` → exit 2 · 워커 0회 · 원격 불변 (26691.1405ms)
+✔ [engine-e2e][#9] 셸 메타문자가 든 모델 스펙은 실행 전에 거부한다 (26691.2497ms)
+▶ [engine-e2e][N1] `--push` + `--e2e` — 배치 e2e RED 면 원격 ref 가 움직이지 않는다
+  ✔ e2e RED → exit 1 · push 0회(원격 불변) · 커밋은 로컬 auto/* 에 남는다 (152925.283ms)
+  ✔ 대조군 — e2e GREEN 이면 전 스토리 완주 뒤 **한 번만** push 한다 (200474.0632ms)
+  ✔ `--e2e` 가 없으면 종전대로 스토리 단위로 push 한다(하위 호환) (61078.7182ms)
+✔ [engine-e2e][N1] `--push` + `--e2e` — 배치 e2e RED 면 원격 ref 가 움직이지 않는다 (414478.3092ms)
+▶ [engine-e2e][N3] 배치 e2e 로그의 JSON key/value·Bearer 토큰이 원문으로 남지 않는다
+  ✔ e2e 스텁이 api_key JSON 과 Authorization 헤더를 찍어도 batch-e2e.log 에는 ***REDACTED*** (8902.0363ms)
+✔ [engine-e2e][N3] 배치 e2e 로그의 JSON key/value·Bearer 토큰이 원문으로 남지 않는다 (8902.1607ms)
+▶ [engine-e2e][N2] git 차단 shim 을 만들지 못하면 워커를 실행하지 않는다(fail-closed)
+  ✔ PATH 에서 git 을 없애면 dev 워커 0회 · exit 6 (3487.524ms)
+✔ [engine-e2e][N2] git 차단 shim 을 만들지 못하면 워커를 실행하지 않는다(fail-closed) (3487.6672ms)
+▶ [engine-e2e][N2] nested deny 설정(pipeline-settings.json)이 없으면 배치를 시작하지 않는다
+  ✔ 프로젝트·전역 모두 없으면 exit 6 · 프로세스 0회 (3514.238ms)
+  ✔ `--pipeline-settings <경로>` 로 명시 지정하면 그것을 쓴다(러너·워크트리 배선용) (17998.5692ms)
+✔ [engine-e2e][N2] nested deny 설정(pipeline-settings.json)이 없으면 배치를 시작하지 않는다 (21513.0087ms)
+▶ [engine-e2e][N2] shim 우회(절대경로 git + GIT_ALLOW_PROTOCOL 재정의)도 사후에 잡아 STOP 한다
+  ✔ 워커가 절대경로 git 으로 push 하면 원격 ref 변화로 exit 6 (17304.1783ms)
+  ✔ 워커가 절대경로 git 으로 commit→reset 하면 HEAD 는 같아도 reflog 지문 변화로 exit 6 (13850.8934ms)
+✔ [engine-e2e][N2] shim 우회(절대경로 git + GIT_ALLOW_PROTOCOL 재정의)도 사후에 잡아 STOP 한다 (31155.2238ms)
+▶ [engine-e2e][N4/N5] Codex 실행 동안 민감 파일은 작업 디렉터리에서 보이지 않는다
+  ✔ `.env` 뿐 아니라 pem·auth.json·service-account·깊이 5 `.env.production` 까지 전부 격리되고 종료 후 복원된다 (41015.2346ms)
+  ✔ 워커가 격리된 자리에 같은 이름의 새 파일을 만들면 복원 충돌 → exit 6(fail-closed · 원본은 보관 폴더) (60367.6978ms)
+✔ [engine-e2e][N4/N5] Codex 실행 동안 민감 파일은 작업 디렉터리에서 보이지 않는다 (101383.0743ms)
+▶ [engine-e2e][N8] 리뷰 적용은 트랜잭션형 — 인박스 실패면 스토리·sprint 원상 유지
+  ✔ 인박스 경로가 디렉터리라 확정 실패 → exit 4 · 스토리/sprint 바이트 동일 (34534.6286ms)
+  ✔ 대조군 — 인박스가 정상이면 스토리·sprint·인박스가 함께 갱신된다 (49391.9055ms)
+✔ [engine-e2e][N8] 리뷰 적용은 트랜잭션형 — 인박스 실패면 스토리·sprint 원상 유지 (83926.7197ms)
+▶ [engine-e2e][완료판정] 검증 매니페스트에 completion.verdict 가 생기고 not-verified 를 완료로 세지 않는다
+  ✔ 스텁 dev(새 테스트 0건·완료 기록 부실)는 ready 가 아니라 not-ready/not-verified 로 남는다 (73080.9484ms)
+✔ [engine-e2e][완료판정] 검증 매니페스트에 completion.verdict 가 생기고 not-verified 를 완료로 세지 않는다 (73081.0837ms)
+▶ [engine-e2e][F6] 인증 프로브는 공백이 든 CLI 경로에서도 실행된다(셸 문자열 결합 없음)
+  ✔ `bin with space/claude.cmd` 로도 스토리 경계 프로브가 실제로 호출된다 (63773.1992ms)
+✔ [engine-e2e][F6] 인증 프로브는 공백이 든 CLI 경로에서도 실행된다(셸 문자열 결합 없음) (63773.3984ms)
+▶ [engine-e2e][F8] 무결성 검사는 기본 on — `--integrity` 없이도 신규 `.only` 를 잡는다
+  ✔ 플래그 없이 실행해도 미추적 신규 테스트의 describe.only 가 차단된다 (35667.1227ms)
+  ✔ `--integrity off` 여도 필수 우회 탐지를 끌 수 없다 (15180.5705ms)
+✔ [engine-e2e][F8] 무결성 검사는 기본 on — `--integrity` 없이도 신규 `.only` 를 잡는다 (50847.854ms)
+▶ [engine-e2e][H3] 원격 URL 에 박힌 자격증명은 배치 시작 전에 잡아 STOP 한다
+  ✔ 토큰이 박힌 원격이 있으면 exit 6 · 워커도 프로브도 뜨지 않는다 · 로그에 토큰 값이 남지 않는다 (5018.7373ms)
+  ✔ 토큰 없는 원격만 있으면 종전대로 완주한다 — 위 STOP 이 URL 때문임을 증명(자기 RED) (9594.4717ms)
+✔ [engine-e2e][H3] 원격 URL 에 박힌 자격증명은 배치 시작 전에 잡아 STOP 한다 (14613.3738ms)
+▶ [engine-e2e][H3] 실제 워커 프로세스의 env 에 원격 자격증명이 없다
+  ✔ GH_TOKEN·SSH_AUTH_SOCK·GIT_ASKPASS 를 켜고 돌려도 워커는 그 키를 받지 못한다 (4580.3196ms)
+✔ [engine-e2e][H3] 실제 워커 프로세스의 env 에 원격 자격증명이 없다 (4580.426ms)
+▶ [engine-e2e][M5] qa·e2e 명령의 셸 연산자는 실행되지 않고 STOP 한다
+  ✔ `--qa "… & node tools/leak.mjs"` 는 두 번째 명령을 실행하지 않고 exit 6 (1226.8491ms)
+  ✔ `--e2e "… && …"` 도 같은 규율 — 배치 e2e 자리에서 exit 6 (4632.1584ms)
+  ✔ 정상 형식(`node tools/batch-e2e.mjs`)은 종전대로 돈다 — 위 STOP 이 형식 때문임을 증명(자기 RED) (5456.5285ms)
+✔ [engine-e2e][M5] qa·e2e 명령의 셸 연산자는 실행되지 않고 STOP 한다 (11315.7492ms)
+▶ [engine-e2e][M6] 변경 구현 파일 미열람 clean 은 리뷰로 인정하지 않는다
+  ✔ 스토리·diff 만 읽고 clean 을 내면 STOP — 리뷰 결과가 스토리에 기재되지 않는다 (6258.7ms)
+  ✔ 구현 파일까지 읽으면 종전대로 완주한다 — 위 STOP 이 그 조건 때문임을 증명(자기 RED) (7743.519ms)
+✔ [engine-e2e][M6] 변경 구현 파일 미열람 clean 은 리뷰로 인정하지 않는다 (14002.3991ms)
+▶ [engine-e2e][push-guard] `--push --branch main` 은 시작조차 못 한다
+  ✔ exit ≠ 0 · 원격 ref 불변 · 워커 0회 · 로컬 커밋 0건 (1929.7741ms)
+  ✔ `--push --branch master`·`--branch release` 도 같다(보호 이름 전반) (4285.4282ms)
+  ✔ 대조군 — `--branch auto/2026-09-03` 은 종전대로 1회 push 한다(자기 RED) (8042.5587ms)
+✔ [engine-e2e][push-guard] `--push --branch main` 은 시작조차 못 한다 (14257.9804ms)
+▶ [engine-e2e][autonomy] replan 단계 — 결정 채택·회수 Task 개설·인박스 사후 확인
+  ✔ replan→dev→review 가 한 배치로 돌고 열린 Decision 이 AI 결정으로 닫힌다 (7518.1668ms)
+  ✔ replan 이 아무것도 바꾸지 않으면 NO-OP exit 4(무변경을 성공으로 세지 않는다) (2342.331ms)
+  ✔ replan 이 사람 질문 표식(BLOCKED-ON-HUMAN)만 남겨도 사후조건은 충족 — 다음 편성이 사람 몫으로 뺀다 (3374.9279ms)
+  ✔ 모르는 단계 이름은 시작 전에 exit 2 — 워커 0회 (2076.9152ms)
+  ✔ guarded(기본)에서는 dev 프롬프트에 자율운전 문단이 없다 · full 에서만 붙는다 (31159.3606ms)
+✔ [engine-e2e][autonomy] replan 단계 — 결정 채택·회수 Task 개설·인박스 사후 확인 (46472.0327ms)
+▶ [engine-e2e][autonomy] mockup 단계 — AI 초안 + 장부 pending
+  ✔ 장부에 pending 항목이 생기고, 커밋 화이트리스트에 목업 폴더를 주면 HTML 도 같은 커밋에 실린다 (44616.7236ms)
+  ✔ 장부에 항목이 늘지 않으면 NO-OP exit 4 (16246.3213ms)
+✔ [engine-e2e][autonomy] mockup 단계 — AI 초안 + 장부 pending (60863.1952ms)
+▶ [engine-guards] 현황판이 읽는 로그 줄 형식은 그대로다(dev-status scan.mjs reviewRuns/parseBatch)
+  ✔ `→ [story] <stage> (model=…, perm=…)` 템플릿과 `   exit=<code>` 줄이 그대로 있다 (0.8254ms)
+  ✔ 새 태그 줄은 `→` 로 시작하지 않는다(현황판 파서의 pending 을 리셋하지 않는다) (0.2085ms)
+  ✔ 종전 STOP 문구가 보존된다(브리핑·현황판이 exit 코드와 함께 읽는다) (0.1034ms)
+✔ [engine-guards] 현황판이 읽는 로그 줄 형식은 그대로다(dev-status scan.mjs reviewRuns/parseBatch) (2.0624ms)
+▶ [engine-guards] 하드코딩 가드레일 보존
+  ✔ 권한 모드 acceptEdits 고정 · 우회 플래그 없음 · nested deny 설정 경로 해석 유지 (0.3703ms)
+  ✔ 브랜치·푸시 가드(auto/ 접두사) · 커밋 화이트리스트·금지 경로·시크릿 스캔이 그대로 있다 (0.1031ms)
+  ✔ 허수 완주 방지(U1-b) · create 는 --force 로도 재생성 불가 · state.json skip 판정이 그대로 있다 (0.1153ms)
+  ✔ dry-run 은 워커를 실행하지 않는다 — `if (dryRun)` 반환이 `w.run()` 보다 앞에 있다 (0.1152ms)
+✔ [engine-guards] 하드코딩 가드레일 보존 (0.8609ms)
+▶ [engine-guards] v3 다중 프로바이더 규율
+  ✔ Codex 네트워크 기본 닫힘 · 동시 실행 상한 기본 1 · 프로바이더 전환은 스토리당 1회 (0.3055ms)
+  ✔ Codex 실패는 Claude 프로브로 복구를 판정하지 않는다(pollable=false) · spend 대기 제외 앵커 유지 (0.1257ms)
+  ✔ 워커 커밋 가드 — HEAD·브랜치·stash 변동 시 exit 6 · 수리 워커는 트리 지문으로 사후조건 (0.1077ms)
+  ✔ 리뷰 diff 는 env·키·시크릿 파일을 제외하고 본문을 가린다 — pathspec 제외 + 섹션 제거 + 최종 재마스킹 3중(#1) (0.1648ms)
+  ✔ 로그 마스킹은 프로바이더를 가리지 않는다(정책 2) — qa·워커·조건부 게이트 전부 scrubLog 경유 (0.1245ms)
+  ✔ 워커 git 은 실행 단계에서 막힌다(#3) — shim env 배선 · exit 86/차단 표식 · 원격 ref 스냅샷 · cleanup (0.1444ms)
+  ✔ 무인 커밋 자리 제한(#4) — detached 또는 auto/* 에서만 · 커밋 시점에도 재확인 (0.079ms)
+  ✔ Claude 프로브는 실제 실행할 프로바이더가 claude 일 때만(#7) · codex 전용이면 생략 (0.1102ms)
+  ✔ 조건부 게이트는 있으면 실제로 실행하고 실패는 RED 다(#10) · 인박스는 없으면 만든다(#13) (0.1212ms)
+  ✔ 민감 파일 격리·복원은 fail-closed(exit 6) — 복원 오류가 원 오류를 가리지 않는다 (0.0889ms)
+  ✔ 빌더는 문자열이 아니라 {file,argv,display} 를 돌려준다 — 로그는 display, 실행은 객체 (0.1527ms)
+  ✔ Codex 리뷰는 엔진이 기재한다 — 이전 라운드 열린 findings 잔존 시 done 금지 · 빈 diff 는 claude 전환 · .env 격리·시크릿 가리기 (0.1266ms)
+  ✔ 프로바이더 전환은 종류를 가리지 않고 한 장부에 센다(검증표 #2) · 수동 실행도 clean 이면 부분 산출물 폐기 (0.0988ms)
+  ✔ 자동 수리 기본 0(종전 동작) · 예산 판정은 repairDecision 하나 · 수리 라운드 신규 흔적 승격 (0.1698ms)
+  ✔ [N1] 통합 게이트가 있으면 스토리 push 를 보류하고 배치 GREEN 뒤 1회만 민다 (0.1558ms)
+  ✔ [N2] git 차단 shim 생성 실패·nested deny 설정 부재는 fail-closed(exit 6) (0.1789ms)
+  ✔ [N3] 배치 e2e 로그도 scrubLog 를 지난다 (0.048ms)
+  ✔ [N8] 리뷰 적용은 임시 파일 → 인박스 우선 확정 → rename 순서다 (0.0835ms)
+  ✔ [F6/F8] 인증 프로브는 spawnSafe(argv 분리) · 무결성 기본값은 on (0.0793ms)
+  ✔ claude 프로브는 codex 스펙을 `claude --model` 로 새지 않는다 (0.0436ms)
+  ✔ [M5] 엔진에 `shell: true` 가 0건이다 — 자유형 명령은 planCommand 로 argv 분리 (0.5668ms)
+  ✔ [H3] 워커 env 에서 원격 자격증명을 지우고, 원격 URL 에 박힌 토큰은 시작 전에 STOP (0.1379ms)
+  ✔ [M2] T2 유형 근거는 매니페스트에 구조화해 남긴다 · `checks.unit` 문자열 계약은 그대로 (0.1143ms)
+✔ [engine-guards] v3 다중 프로바이더 규율 (3.7379ms)
+── ① 문구 분류 ──
+  ✔ 실제 CLI 문구(2026-08-30 실측) → spend
+  ✔ spending limit 변형도 spend
+  ✔ 사용량 한도는 종전대로 limit
+  ✔ rate limit 도 limit
+  ✔ 401 은 auth (spend 보다 우선)
+  ✔ 무관한 실패는 other
+  ✔ 모델별 한도 문구 → limit(사다리로 opus 전환)
+  ✔ 「Switch to another model」 단독도 limit
+  ✔ 모델별 한도가 spend 를 가로채지 않는다
+── ② 안내 문구 ──
+  ✔ spend 안내가 존재한다
+  ✔ spend 안내에 「기다리」가 없다
+  ✔ spend 안내가 설정 경로를 알려 준다
+── ③ 대기·사다리 경로 ──
+  ✔ handleFailure 가 spend 를 대기에서 제외
+  ✔ 사다리는 limit 에만 걸린다(runStage)
+  ✔ 사다리는 limit 에만 걸린다(프로브)
+── ④ LIMIT_RE 오염 방지 ──
+  ✔ LIMIT_RE 에 spend 가 다시 들어가지 않았다
+
+전건 통과
+✔ batch-24-multiAG\engine\runtime\failure-classify.test.mjs (179.5614ms)
+▶ [3] Codex 슬롯은 고정 파일 wx 원자 선점 — 실제 동시 프로세스에서 상호배제된다(#2)
+  ✔ max=1 · 실제 자식 4개 동시 → 정확히 1개만 획득(나머지는 거부) · 점유 겹침 0 (1910.7557ms)
+  ✔ max=2 · 실제 자식 4개 동시 → 동시 점유는 2를 넘지 않고 같은 슬롯을 둘이 쥐지 않는다 (1952.7433ms)
+  ✔ 죽은 pid 의 stale 슬롯은 rename 으로 치우고 재선점한다(사람 개입 없이 풀린다) (66.6487ms)
+  ✔ 기록 중(방금 생긴 빈 lock)을 손상으로 오판해 회수하지 않는다 — 유예 지난 빈 lock 만 회수 (63.5113ms)
+  ✔ 살아 있는 슬롯(현재 프로세스 pid)은 치우지 않는다 — 오탐 회수 금지 (51.2116ms)
+✔ [3] Codex 슬롯은 고정 파일 wx 원자 선점 — 실제 동시 프로세스에서 상호배제된다(#2) (4046.3939ms)
+▶ [8] 공백 포함 경로의 CLI 를 실제로 실행한다 — 인자가 온전히 전달된다(#6)
+  ✔ Windows `.cmd` 심 + 공백 경로 → codex argv 가 그대로 도착 (win32 전용) (376.3211ms)
+  ✔ Windows `.cmd` 심 + 공백 경로 → claude argv 가 그대로 도착 (win32 전용) (322.6055ms)
+  ✔ POSIX 분기(sh 스크립트) — cmd.exe 를 거치지 않는 직접 spawn 으로도 공백 인자가 온전하다 (327.7871ms)
+  ✔ planSpawn: `.cmd` 만 cmd.exe 전용 경로 · POSIX 플랫폼은 언제나 직접 실행 · 인용 규칙 (0.4284ms)
+  ✔ planSpawn: PATH 의 bare `.cmd` 는 절대경로로 바꿔 실행한다 — 심 안 `%~dp0` 가 살아 있다 (3549.6283ms)
+  ✔ planSpawn: PATH 에 없는 bare `.cmd` 는 인용해서 넘기지 않고 실행 전에 거부한다 (1381.2327ms)
+  ✔ planSpawn: 확장자 없는 bare 이름도 PATH 의 `.cmd` 심을 찾아 cmd.exe 절대경로 경로로 간다 (5354.4741ms)
+✔ [8] 공백 포함 경로의 CLI 를 실제로 실행한다 — 인자가 온전히 전달된다(#6) (11312.9996ms)
+▶ [9] 셸 메타문자는 실행 전에 거부된다 — 부작용 파일이 생기지 않는다(#6)
+  ✔ parseModelSpec 이 첫 관문 — 큐/설정의 악성 모델 값은 여기서 죽는다 (0.7333ms)
+  ✔ 빌더도 독립적으로 거부한다 — model · bin · config · 경로 (0.3377ms)
+  ✔ 실제 실행 시도 — 거부 예외가 나고 셸이었다면 만들어졌을 카나리아 파일이 없다 (1303.6335ms)
+✔ [9] 셸 메타문자는 실행 전에 거부된다 — 부작용 파일이 생기지 않는다(#6) (1304.8728ms)
+▶ [12] .env 격리는 fail-closed — 하나라도 실패하면 되돌리고 던진다(#11)
+  ✔ 중첩 디렉터리까지 수집하고 node_modules·.env.example 은 제외한다 (263.748ms)
+  ✔ 격리·복원 정상 왕복 — 실행 중에는 작업 루트에 .env 가 하나도 없다 (554.9876ms)
+  ✔ 실제 rename 실패(대상 없음) → ENV_ISOLATION_FAILED throw + 이미 옮긴 파일 원상복구 (147.8293ms)
+  ✔ 실제 파일 잠금으로 rename 실패를 유발했을 때도 fail-closed (Windows 잠금이 실제로 걸릴 때만 판정) (359.641ms)
+  ℹ 이 플랫폼은 열린 파일의 rename 을 허용한다 — 잠금 경로는 이 환경에서 재현되지 않음(대상 없음 케이스로 검증됨)
+  ✔ 복원 충돌(워커가 같은 이름의 새 파일 생성) → ENV_RESTORE_FAILED throw + 원본은 보관 폴더에 보존 (362.9875ms)
+✔ [12] .env 격리는 fail-closed — 하나라도 실패하면 되돌리고 던진다(#11) (1689.6907ms)
+▶ [N4/N5] 민감 파일 격리 — 깊이 제한 없음 · isSensitivePath 전부 · 탐색 실패는 fail-closed
+  ✔ 깊이 5 `.env.production` · pem · auth.json 을 전부 수집하고 견본·node_modules 는 제외한다 (295.2763ms)
+  ✔ 실제 격리·복원 왕복 — 실행 중에는 하나도 남지 않는다 (539.0129ms)
+  ✔ 탐색 중 readdir 이 한 건이라도 실패하면 ENV_ISOLATION_FAILED — 빈 디렉터리처럼 삼키지 않는다(정책 3) (126.2463ms)
+  ✔ git ls-files 병행 — walk 가 못 본 목록의 민감 파일도 함께 집는다 (118.6166ms)
+✔ [N4/N5] 민감 파일 격리 — 깊이 제한 없음 · isSensitivePath 전부 · 탐색 실패는 fail-closed (1079.4393ms)
+(node:35992) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+▶ [N9] Codex 슬롯 심박 — 실제 자식이 hb 를 원자 갱신한다
+  ✔ 슬롯을 쥔 동안 hb 가 계속 전진하고, 낡은 at 기준이면 stale 인 시점에도 회수되지 않는다 (1628.5486ms)
+  ✔ withCodexSlot 이 실제로 심박을 배선한다 — fn 이 도는 동안 hb 가 전진한다 (1103.884ms)
+  ✔ slotStaleMsFor: 고정 3시간과 stage 타임아웃×1.5 중 큰 값 (0.1835ms)
+✔ [N9] Codex 슬롯 심박 — 실제 자식이 hb 를 원자 갱신한다 (2732.8371ms)
+▶ [15] 「파일을 읽지 않은 clean」은 무효 — 명령 개수가 아니라 열람 증거로 판정한다(#12)
+  ✔ parseCodexEvents 가 명령 문자열을 보존하고 중복 계상하지 않는다 (0.4284ms)
+  ✔ `pwd` 한 번 + findings 0 → 무효(종전 판정은 commands>0 이라 통과했다) (0.7977ms)
+  ✔ 스토리는 읽었지만 diff 를 안 읽었으면 무효 (0.2113ms)
+  ✔ 스토리 + diff + 구현 파일을 읽었으면 유효 — 경로 구분자(\)와 대소문자를 정규화해 비교한다 (0.2734ms)
+  ✔ [N7] 스토리 + 구현 파일만 읽고 diff 를 안 열었으면 무효 (0.0941ms)
+  ✔ [N7] 스토리 파일은 target 목록에서 제외된다 — 스토리만 읽은 clean 은 거부 (0.093ms)
+  ✔ findings 가 있으면 열람 증거를 요구하지 않는다(무언가 봤다는 뜻) · file_change 이벤트도 증거로 인정 (0.2052ms)
+  ▶ git C-인용 경로(비ASCII 스토리명)도 같은 경로로 대조한다
+    ✔ C-인용 형태를 그대로 되돌린다(quotePath=false 출력은 손대지 않는다) (0.4121ms)
+    ✔ 스토리는 C-인용 changedFiles 에서도 제외된다 — 스토리만 읽은 clean 은 거부 (0.373ms)
+    ✔ 스토리 + diff + 구현 파일을 C-인용 이벤트로 읽었으면 유효 (0.2809ms)
+  ✔ git C-인용 경로(비ASCII 스토리명)도 같은 경로로 대조한다 (1.2146ms)
+✔ [15] 「파일을 읽지 않은 clean」은 무효 — 명령 개수가 아니라 열람 증거로 판정한다(#12) (3.5249ms)
+▶ [#8] 마스킹 강화 · 민감 파일 diff 섹션 제거 — 워커 E 가 diff 생성·로그 기록에 쓴다
+  ✔ [N3] 구조 인식 마스킹 — JSON key/value · Bearer 토큰 · 공백 포함 인용값이 원문 0건 (0.8647ms)
+  ✔ redactSecrets: URL credential · PEM · OAuth client secret · gh/xox/AKIA/JWT/sk- · KEY=VALUE (0.4726ms)
+  ✔ SENSITIVE_PATH_RE: env·키·인증서·시크릿 자료 파일은 민감 · 소스 파일과 .env.example 은 아니다 (0.1269ms)
+  ✔ stripSensitiveFileSections: 민감 파일 섹션은 본문째 사라지고 나머지는 그대로 (0.2318ms)
+✔ [#8] 마스킹 강화 · 민감 파일 diff 섹션 제거 — 워커 E 가 diff 생성·로그 기록에 쓴다 (1.794ms)
+▶ [git-guard] 워커의 git 상태 변경을 실행 단계에서 막는다(#3)
+  ✔ shim 본문은 진짜 git 절대경로와 허용 목록을 담고, 차단 시 exit 86 + [GIT-GUARD] blocked (0.3926ms)
+  ✔ Windows cmd 심: 읽기 전용은 통과 · 상태 변경은 exit 86 · HEAD 불변 (win32 전용) (9563.7415ms)
+  ✔ POSIX sh 심: 같은 판정 · HEAD 불변 (9644.2879ms)
+  ✔ 2차 방어: PATH shim 을 우회당해도 GIT_ALLOW_PROTOCOL=none 이 원격 통신을 끊는다(실제 push 실패) (6177.7684ms)
+  ✔ 알려진 우회(문서화): Git for Windows 래퍼 bash 는 PATH 앞에 /mingw64/bin 을 끼워 shim 을 지나친다 (1615.1702ms)
+  ✔ cleanup() 은 shim 디렉터리를 지운다 · env 는 원본 PATH 를 보존한 채 shim 을 맨 앞에 둔다 (26.9196ms)
+✔ [git-guard] 워커의 git 상태 변경을 실행 단계에서 막는다(#3) (27028.559ms)
+▶ [H1] 공용 마스커 — R2 회귀 3형식 + 깊은 객체 마스킹
+  ✔ R2 3형식이 redact.mjs 에서 원문으로 남지 않는다 · 키 이름은 남는다 (0.2781ms)
+  ✔ codex.mjs 의 redactSecrets 는 재수출이다 — 같은 함수 객체(사본이 갈릴 여지 0) (0.0452ms)
+  ✔ deepRedact: scripts·manifests·engineState 주입을 객체 깊이에서 지운다(순환 안전) (0.914ms)
+  ✔ deepRedact: 배열·Map·Set·원시값을 형을 잃지 않고 옮긴다 (0.184ms)
+  ✔ redactSecrets: 서명부가 잘린 2조각 JWT 도 헤더째 지운다(로그·diff 는 줄을 자른다) (0.1413ms)
+  ✔ deepRedact: 자격증명 키는 배열·Set 안쪽까지 상속된다 — {"tokens":["원문"]} 도 가린다 (0.1922ms)
+✔ [H1] 공용 마스커 — R2 회귀 3형식 + 깊은 객체 마스킹 (1.8967ms)
+▶ [H3] 워커 env 원격 자격증명 제거 · 원격 URL 토큰 거부
+  ✔ 제거 목록·이름 규칙에 걸리는 키가 env 에서 사라지고 차단 값이 심긴다 (0.7525ms)
+  ✔ 실제 자식 프로세스가 받은 env 에 그 키들이 없다(스텁이 아니라 진짜 spawn) (405.926ms)
+  ✔ remoteUrlHasCredentials: user:pass@ 와 https 토큰 삽입은 잡고, SSH 사용자명은 자격증명이 아니다 (0.2883ms)
+  ✔ findCredentialRemotes: `git remote -v` 에서 원격 **이름만** 돌려준다(URL 값이 로그로 새지 않는다) (0.1832ms)
+✔ [H3] 워커 env 원격 자격증명 제거 · 원격 URL 토큰 거부 (407.2772ms)
+▶ [M5] 자유형 명령은 실행파일+argv 로 정규화된다(셸 없음)
+  ✔ tokenizeCommand: 공백 분리 · 따옴표 처리 · 빈 인자 보존 · 불균형 따옴표 거부 (0.2244ms)
+  ✔ normalizeCommand: `npm run qa` 는 npm(.cmd) run qa argv 로 · 메타문자 명령은 실행 전에 거부 (10960.0302ms)
+  ✔ 정규화한 계획을 spawnSafe 로 돌리면 실제로 shell:false 이고 인자가 셸 해석 없이 그대로 간다 (2376.7527ms)
+  ✔ notify-push.mjs 는 fetch 로 실제 전송한다(curl·셸 의존 0) — 로컬 HTTP 서버로 실측 (430.6878ms)
+✔ [M5] 자유형 명령은 실행파일+argv 로 정규화된다(셸 없음) (13768.1209ms)
+▶ [M6] clean 리뷰는 변경 구현 파일을 최소 1개 읽은 증거를 요구한다
+  ✔ 스토리·diff 는 읽었지만 구현 파일을 하나도 안 열었으면 clean 을 거부한다(ok:false) (0.4382ms)
+  ✔ 구현 파일을 하나라도 열었으면 통과한다 — 위 거부가 그 조건 때문임을 증명(자기 RED) (0.1386ms)
+  ✔ 변경 구현 파일이 스토리 문서뿐이면(구현 변경 0) 종전대로 story+diff 만으로 통과한다 (0.1319ms)
+  ✔ findings 가 있으면 이 조건은 걸리지 않는다(지적을 낸 리뷰는 열람한 것으로 본다) (0.101ms)
+✔ [M6] clean 리뷰는 변경 구현 파일을 최소 1개 읽은 증거를 요구한다 (0.9677ms)
+▶ [providers] 모델 스펙 — 접두사 없으면 종전 그대로 claude 별칭(하위 호환)
+  ✔ parse/format/shown (2.2309ms)
+✔ [providers] 모델 스펙 — 접두사 없으면 종전 그대로 claude 별칭(하위 호환) (3.4304ms)
+▶ [providers] 능력 감지 — 요청된 프로바이더만 찌르고, 불가 사유를 사람 말로
+  ✔ Claude-only 요청이면 codex 는 감지조차 하지 않는다(새 프로세스 0) (0.3481ms)
+  ✔ codex 미설치 → available=false + 「Claude 전용으로 진행」 사유(배치는 서지 않는다) (0.3002ms)
+  ✔ codex 설치됐지만 미인증 → available=false + codex login 안내 (0.178ms)
+  ✔ codex 설치 + ChatGPT 로그인 → available=true(실측 문구 "Logged in using ChatGPT") (0.2623ms)
+  ✔ CLAUDE_BIN/CODEX_BIN env 를 존중한다(테스트 스텁 오버라이드 종전 규약) (0.2063ms)
+✔ [providers] 능력 감지 — 요청된 프로바이더만 찌르고, 불가 사유를 사람 말로 (1.5226ms)
+▶ [providers] 스펙 확정 — codex 불가면 claude 대체(dev 와 다른 모델)로 폴백 · 배치 계속
+  ✔ codex 가용 + cwd 허용 → 그대로 (0.217ms)
+  ✔ codex 미설치 → claude 최상위, dev 가 그 모델이면 차순위 (0.132ms)
+  ✔ cwd 프라이버시 불허 → 폴백 + 사유 (0.0971ms)
+  ✔ claude 스펙은 손대지 않는다 (0.0494ms)
+✔ [providers] 스펙 확정 — codex 불가면 claude 대체(dev 와 다른 모델)로 폴백 · 배치 계속 (0.6015ms)
+▶ [providers] 한도 사다리 — 같은 프로바이더 차순위 → 다른 프로바이더(전환 1회 상한) → null
+  ✔ claude 사다리는 종전 그대로(fable→opus→sonnet · avoid 건너뜀) (0.2234ms)
+  ✔ claude 사다리 소진 + codex 허용·가용 → codex 로 전환(switched=true) (0.0689ms)
+  ✔ 전환 상한 소진(switchesUsed=1) → null — 무한 핑퐁 금지(08-29 설계 §5-3) (0.1129ms)
+  ✔ codex 한도 → claude 최상위(dev 모델 회피) · claude 불가면 null (0.1286ms)
+  ✔ codex 가 허용 역할이 아니면 전환하지 않는다 (0.0694ms)
+  ✔ avoid 가 codex(dev=codex) 이면 review 는 codex 로 전환하지 않는다(교차검증) (0.059ms)
+✔ [providers] 한도 사다리 — 같은 프로바이더 차순위 → 다른 프로바이더(전환 1회 상한) → null (0.8035ms)
+▶ [providers] 교차검증 — 같은 프로바이더·같은 모델이면 review 를 바꾼다
+  ✔ claude 동일 모델 → 사다리에서 dev 와 다른 첫 모델(종전 enforceCrossModel 과 동일) (0.2755ms)
+  ✔ codex↔codex 는 claude 최상위로 (0.1114ms)
+  ✔ 프로바이더가 다르면 이미 교차 — 손대지 않는다 (0.0535ms)
+✔ [providers] 교차검증 — 같은 프로바이더·같은 모델이면 review 를 바꾼다 (0.5443ms)
+▶ [codex] 명령 빌더 — 실측된 플래그만 · 역할이 샌드박스를 정한다 · 셸 문자열 결합 없음(#6)
+  ✔ review = read-only + 스키마 + -o · dev = workspace-write + 네트워크 · -a 플래그는 절대 없음 (0.4206ms)
+  ✔ networkAccess=false 면 네트워크 플래그 없음 · repair 도 workspace-write · skipGitCheck 옵트인 (0.0989ms)
+  ✔ CODEX_BIN 대체 · 공백 경로는 argv 원소 하나로 온전히 · 따옴표가 든 경로는 거부(#6) (0.401ms)
+✔ [codex] 명령 빌더 — 실측된 플래그만 · 역할이 샌드박스를 정한다 · 셸 문자열 결합 없음(#6) (1.0198ms)
+▶ [codex] JSONL 이벤트 파서 — 실측 이벤트 형태(2026-09-02 프로브)
+  ✔ 마지막 agent_message · usage · 명령/파일 변경 수 · 비JSON 줄 무시 (0.3401ms)
+  ✔ turn.failed / error 이벤트는 errors 에 모이고 failed=true (0.0902ms)
+  ✔ 빈 입력은 빈 결과(예외 없음) (0.0539ms)
+✔ [codex] JSONL 이벤트 파서 — 실측 이벤트 형태(2026-09-02 프로브) (0.5884ms)
+▶ [codex] 실패 분류 — auth > spend > limit > other (엔진 classifyFailure 와 같은 규율)
+  ✔ 바이너리 실측 문구 (0.9235ms)
+  ✔ Plus 사용량 한도 안내의 "purchase more credits" 는 spend 가 아니다(5시간 창이 지나면 풀린다) · 조직 크레딧 소진만 spend (0.1123ms)
+  ✔ auth 가 limit 보다 우선 (0.0441ms)
+✔ [codex] 실패 분류 — auth > spend > limit > other (엔진 classifyFailure 와 같은 규율) (1.1662ms)
+▶ [codex] cwd 프라이버시 가드 — 배치 워크트리에서만(👤 2026-08-29 설계 §2-1)
+  ✔ marker · linked worktree · env 명시 중 하나면 허용, 아니면 사유와 함께 거부 (0.1352ms)
+✔ [codex] cwd 프라이버시 가드 — 배치 워크트리에서만(👤 2026-08-29 설계 §2-1) (0.1825ms)
+▶ [codex] 리뷰 결과 렌더 — 원장 형식 계약(story-ledger 파서 · 래칫 · bmad-code-review step-04)
+  ✔ 열린 patch/decision 은 `- [ ]` · defer/optional 은 `- [x]` + ⏭️(래칫 통과) · 한 줄로 접힘 (0.2469ms)
+  ✔ preExisting 은 kind 와 무관하게 defer 로 분리(이번 스토리의 findings 가 아니다) · 집계·상태 전이 (0.0712ms)
+  ✔ 이월 금지 5범주(보안·권한/개인정보/데이터 손실/결제·청구/발송·배포)는 defer/optional 로 내도 patch 로 승격한다(👤 P0-④) (0.1729ms)
+  ✔ story-ledger 파서가 그대로 센다 — 열린 Patch 1 · Decision 1 · Tasks 절 안이면 미완 일감 2 (0.4041ms)
+  ✔ 0건이면 체크박스 없는 라운드 기록(NO-OP 방지)과 done (0.1088ms)
+✔ [codex] 리뷰 결과 렌더 — 원장 형식 계약(story-ledger 파서 · 래칫 · bmad-code-review step-04) (1.1094ms)
+▶ [codex] 구조화 응답 파서 — 스키마 강제 JSON · 코드펜스 변형 허용 · 불량은 null
+  ✔ parseReviewJson (0.2723ms)
+✔ [codex] 구조화 응답 파서 — 스키마 강제 JSON · 코드펜스 변형 허용 · 불량은 null (0.3099ms)
+▶ [codex] 자립형 프롬프트 — 슬래시 스킬 없이 계약을 담는다
+  ✔ review: 3렌즈 · 정확성/요구사항만 patch · pre-existing 분리 · 이월 금지 5범주 · 읽기 전용 · JSON 만 (0.2392ms)
+  ✔ dev: 미완 Task 순서 · TDD · 허용 절만 · Status→review · sprint-status · 꼼수 금지 · 커밋 금지 (0.1572ms)
+  ✔ repair: 실패 분류·서명·발췌·무결성 결과·수리 기록 의무 (0.1783ms)
+  ✔ 리뷰 스키마 파일은 strict 형(additionalProperties=false · 전 필드 required) (2.7729ms)
+✔ [codex] 자립형 프롬프트 — 슬래시 스킬 없이 계약을 담는다 (3.4414ms)
+▶ [codex] 방어 부품 — 실패 텍스트 선별 · 시크릿 가리기 · .env 격리 대상 · 슬롯 판정 · 리뷰 신뢰 판정
+  ✔ codexFailureText: 오류 이벤트+stderr 우선 · 둘 다 비면 stdout 꼬리(도구 출력 속 401 오판 방지 · F21) (0.2644ms)
+  ✔ redactSecrets: KEY=값·sb_secret_·JWT·sk-·AKIA 값을 가리고 이름은 남긴다 (0.7969ms)
+  ✔ envFilesToHide: .env·.env.local·.env.production 은 격리 · .env.example 은 제외 (0.1434ms)
+  ✔ isSlotStale: ESRCH 사망은 즉시 stale · 살아 있으면 심박과 무관하게 유효 · pid 없으면 심박 3h 초과가 기준 (20.121ms)
+  ✔ validateReviewRun: JSON 없음·빈 diff·「명령 0 + clean」은 무효 · 명령 0 + findings 는 경고 (0.4862ms)
+✔ [codex] 방어 부품 — 실패 텍스트 선별 · 시크릿 가리기 · .env 격리 대상 · 슬롯 판정 · 리뷰 신뢰 판정 (22.009ms)
+▶ [claude] 어댑터 — 인자 계약은 종전 그대로 · 우회 플래그 없음 · 셸 결합 없음(#6)
+  ✔ buildClaudeCommand 는 file+argv 를 분리해 돌려준다(로그용 display 는 종전 한 줄 표기) (0.2593ms)
+  ✔ runClaudeWorker 는 shell:false 로 file+argv 를 넘기고 ETIMEDOUT 을 timedOut 으로 매핑 (2517.7352ms)
+  ✔ env 를 주면 그대로 자식에 전달한다(git-guard shim PATH 배선 지점) (8.9231ms)
+✔ [claude] 어댑터 — 인자 계약은 종전 그대로 · 우회 플래그 없음 · 셸 결합 없음(#6) (2527.0578ms)
+▶ [push-guard] ref 판정 — 보호 이름·refspec·불일치는 전부 거부
+  ✔ main·master 등 보호 이름은 거부한다 (1.1683ms)
+  ✔ `HEAD:main` 형 refspec·와일드카드·공백은 브랜치명이 아니다 (0.2044ms)
+  ✔ auto/ 가 아닌 평범한 브랜치도 무인 push 대상이 아니다 · 빈 값·옵션형도 거부 (0.1479ms)
+  ✔ 현재 브랜치와 push 대상이 다르면 거부한다(파싱 이후의 전환을 잡는다) (0.132ms)
+  ✔ auto/* 이고 현재 브랜치와 같으면 통과(과잉 차단도 결함이다) (0.1198ms)
+✔ [push-guard] ref 판정 — 보호 이름·refspec·불일치는 전부 거부 (3.0818ms)
+▶ [push-guard] 실제 bare origin — 거부되면 원격 ref 가 움직이지 않는다
+  ✔ main 에 서서 ref=main 으로 밀면 거부 · 원격 main sha 불변 (14198.0449ms)
+  ✔ refspec(`HEAD:main`)은 애초에 만들 수 없다 — 거부 · 원격 ref 목록 불변 (15050.2314ms)
+  ✔ auto/* 로 서 있는데 ref 만 main 이면(설정 오류형) 거부 (17511.6353ms)
+  ✔ 정상 경로 — auto/2026-09-03 은 실제로 1개 ref 만 늘어난다(main 은 그대로) (34629.03ms)
+✔ [push-guard] 실제 bare origin — 거부되면 원격 ref 가 움직이지 않는다 (81389.1729ms)
+▶ [push-guard] push 전 내용 검사 — 금지 경로·시크릿은 원격에 나가지 않는다
+  ✔ secrets/app.pem 이 섞이면 거부 · 원격 불변 (25540.8123ms)
+  ✔ 추가 줄에 실제 값이 붙은 토큰이 있으면 거부 · 사유에 원문이 남지 않는다 (24093.6462ms)
+  ✔ `.env.example` 견본은 금지 경로가 아니다(화이트리스트 대상 — 과잉 차단도 결함) (35446.5228ms)
+  ✔ 검사 범위 = origin/main 과의 merge-base..HEAD — main 에서 내려온 몫은 이번 push 의 책임이 아니다 (24803.6498ms)
+✔ [push-guard] push 전 내용 검사 — 금지 경로·시크릿은 원격에 나가지 않는다 (109884.8857ms)
+▶ [push-guard] 두 설치 경로의 사본은 어긋나지 않는다 · 무인 경로에 날 push 가 없다
+  ✔ auto-story-finish/push-guard.mjs 와 night-batch-ops/engine/push-guard.mjs 는 내용이 같다 (13.2221ms)
+  ✔ 엔진·러너 소스에 `git push` 직접 호출이 없다(유일한 경로 = safeGitPush) (8.847ms)
+✔ [push-guard] 두 설치 경로의 사본은 어긋나지 않는다 · 무인 경로에 날 push 가 없다 (22.2236ms)
+✔ risk normal classification docs: README.md (2.3092ms)
+✔ risk normal classification docs: public/logo.svg (0.3173ms)
+✔ risk normal classification docs: src/math.ts (0.275ms)
+✔ risk normal classification fast: src/math.ts (0.9129ms)
+✔ risk normal classification api: src/api/item.ts (0.2589ms)
+✔ risk normal classification auth-db: db/migrations/a.sql (0.1902ms)
+✔ risk normal classification performance: src/cache/item.ts (0.0845ms)
+✔ risk normal classification standard: package.json (0.0775ms)
+✔ API uses affected integration; authorization/security only auth-db (0.2814ms)
+✔ ordinary batch/queue path does not trigger performance merely by name (0.0936ms)
+✔ removed auth/performance expressions still trigger required tests (0.1192ms)
+✔ coverage boundary exactly 90% passes; 80% fails (0.5747ms)
+✔ coverage missing/excluded changed line is not verified (0.1371ms)
+✔ branch diff coverage cannot be hidden by full line coverage (0.1149ms)
+✔ coverage comments and structural lines have no denominator; malformed counts fail (0.3478ms)
+✔ coverage uses diff lines instead of unrelated whole repository misses (0.0839ms)
+✔ authorization normal 401/403/2xx/tenant isolation contract passes (0.2062ms)
+✔ authorization failure blocks wrong anonymous (0.0642ms)
+✔ authorization failure blocks wrong forbidden (0.0287ms)
+✔ authorization failure blocks wrong allowed (0.0257ms)
+✔ authorization failure blocks wrong crossTenant (0.0483ms)
+✔ authorization boundary rejects missing, stale, incomplete, no-middleware reports (0.1588ms)
+✔ bypass failure blocks test-only (0.9937ms)
+✔ bypass failure blocks test-skip (0.2856ms)
+✔ bypass failure blocks empty-test (0.049ms)
+✔ bypass failure blocks trivial-assertion (0.0484ms)
+✔ bypass failure blocks assertion-weakened (0.1316ms)
+✔ bypass failure blocks coverage-exclude (0.0409ms)
+✔ bypass failure blocks gate-config-weakened (0.3088ms)
+✔ bypass failure blocks deleted-test-case (0.0765ms)
+✔ legacy migration preserves queue/ledger and unknown fields, changes only schema namespace (0.2263ms)
+✔ run normal: docs execute zero commands; cache reuses exact code and base (17095.6704ms)
+✔ run normal: mandatory gates, fresh changed coverage, fingerprint, cache then invalidation (25645.2885ms)
+✔ run failure: uncovered code prevents ready and is not cached (14798.7573ms)
+✔ run failure: missing script, missing test kinds and RED fast gate stop (12107.2734ms)
+✔ run boundary: stale LCOV cannot pass a command that emits no report (11003.0953ms)
+✔ run failure: command changes code after validation (11307.8155ms)
+✔ execute gate rejects missing commands and captures actual process failure (14757.6732ms)
+✔ collect changes includes committed branch diff and untracked additions (11967.5137ms)
+✔ comment normal: inline/block comments are docs while literal changes remain code (0.6198ms)
+✔ custom sensitivity can add required scopes; docs still require no code tests (0.3728ms)
+✔ executed tests failure: exit zero without passing cases and quoted fake cases are insufficient (0.3415ms)
+✔ API report boundary: explicit public reason, stale nonce, missing endpoint and missing authorization (0.3124ms)
+✔ run normal: commands shared by unit and coverage execute once; independent checks overlap (8164.2141ms)
+✔ run failure: API/security/performance required-missing, irrelevant optional commands absent (11814.9467ms)
+✔ run landing normal/full failure: one full and integration; no worker coverage or performance rerun (5090.2423ms)
+✔ run auth/API normal and failure: fresh complete reports plus changed coverage are mandatory (4425.32ms)
+✔ API handler outside conventional directory requires authorization evidence for that source (0.4496ms)
+✔ cache failure: a ready label with missing gate evidence forces verification again (4406.494ms)
+✔ cache failure matrix: incomplete, stale, failed, low-coverage and unexecuted evidence never authorizes reuse (10536.6522ms)
+✔ comment language boundary: SQL/Python/template comments are docs; quoted SQL and hash values remain code (0.7887ms)
+▶ [quality] 게이트 탐지 — package.json 에 실제로 있는 명령만
+  ✔ 있는 것은 available+cmd · 없는 것은 available=false(임의 가정 금지) (1.4214ms)
+  ✔ qa 사슬 파싱 (0.2984ms)
+✔ [quality] 게이트 탐지 — package.json 에 실제로 있는 명령만 (2.7668ms)
+▶ [quality] qa 실패 분류 — 종류 + 안정적 서명(줄 번호 제외) + 발췌
+  ✔ tsc: path(line,col): error TSxxxx → typecheck · 서명 = 파일:코드 (1.1036ms)
+  ✔ eslint(실측 2026-08-28 로그 형태): 파일 + 규칙 id (0.5281ms)
+  ✔ vitest: FAIL 줄 → test · 서명 = 파일 > 케이스 (0.239ms)
+  ✔ vite build 실패 → build · 정체불명 → unknown(마지막 오류 줄) (0.1853ms)
+  ✔ 테스트 이름 안의 "error TS" 문구는 typecheck 로 오분류하지 않는다(실측 로그 함정) (0.1621ms)
+  ✔ ANSI 색 코드·CR 은 제거하고 판정한다 (0.163ms)
+✔ [quality] qa 실패 분류 — 종류 + 안정적 서명(줄 번호 제외) + 발췌 (2.5975ms)
+▶ [quality] 수리 예산 — 같은 원인 N회 · 총 M회 · 꺼짐 · 무한루프 없음
+  ✔ 기본값 = 같은 원인 3 · 총 5 (0.1721ms)
+  ✔ 첫 실패 → 수리 · 같은 원인 3회 수리 후 4번째 관측 → 중단 · 총 5회 소진 → 중단 (0.3588ms)
+  ✔ autoRepair 0(종전 동작) → 절대 수리하지 않는다 · 설정으로 조정 (0.1161ms)
+  ✔ 종결성 — 어떤 서명 열이 와도 총 상한 안에서 반드시 false 에 닿는다 (0.1525ms)
+✔ [quality] 수리 예산 — 같은 원인 N회 · 총 M회 · 꺼짐 · 무한루프 없음 (0.9763ms)
+▶ [quality] 테스트 무결성 — 꼼수 탐지 · 정당한 삭제는 사유로 통과
+  ✔ block: .only · 사유 없는 테스트 삭제 / warn: skip · ts-ignore · eslint-disable · 항상 참 단언 · 단언 약화 · exclude (2.4952ms)
+  ✔ 스토리에 삭제 사유가 있으면 warn 으로 내려간다 (0.236ms)
+  ✔ 비테스트 파일 삭제·평범한 변경은 무소음 · 빈 입력 안전 (0.1352ms)
+  ✔ 게이트 설정 변조(package.json qa/lint/typecheck/test 스크립트 · tsconfig · eslint/vite 설정)는 경고 · 무관한 package.json 줄은 무소음(F32) (0.5956ms)
+  ✔ 수리 라운드가 새로 만든 warn 은 block 으로 승격 · 기준선에 있던 것은 그대로(F5) (0.2497ms)
+  ✔ 같은 파일·같은 rule 이어도 **새 줄**이면 신규다 — 줄 내용 지문까지 비교(리뷰 #8) (0.1553ms)
+  ✔ 무결성 findings 는 지문(fp)을 담는다 — 공백만 다른 줄은 같은 지문 (0.2067ms)
+  ✔ 빈 테스트 본문·node:assert 류 항상-참 단언도 잡는다 (0.3268ms)
+  ✔ splitDiffByFile 줄 번호 — hunk 헤더 기준 (0.1098ms)
+✔ [quality] 테스트 무결성 — 꼼수 탐지 · 정당한 삭제는 사유로 통과 (4.7808ms)
+▶ [quality] 조건부 게이트 트리거 — 변경 내용 기반
+  ✔ security: 경로(auth/rls/migrations/upload…) 또는 diff 키워드 (0.4788ms)
+  ✔ performance: 페이지네이션·캐시·배치·이미지 처리 (0.4161ms)
+✔ [quality] 조건부 게이트 트리거 — 변경 내용 기반 (0.9963ms)
+▶ [quality] 매니페스트 — qa 사슬에서 정직하게 채울 수 있는 것만
+  ✔ qa 통과 → 사슬 전부 pass · coverage/e2e 는 n/a(사유) · integration 은 unknown (0.852ms)
+  ✔ lint 실패 → typecheck pass · lint fail · test not-run (0.2471ms)
+  ✔ 보안 트리거 + 보안 스크립트 없음 → required-missing(거짓 통과 없음) · 있으면 not-run/결과 (0.4118ms)
+  ✔ 조건부 게이트를 실제로 돌렸으면 그 결과(pass/fail)와 실행 기록이 실린다(#10) (0.1757ms)
+  ✔ 보안 게이트 스크립트 이름은 흔한 것들을 본다(audit 포함) · 성능은 perf 계열 (0.0931ms)
+  ✔ 수리·무결성·리뷰·에스컬레이션 필드가 실린다 (0.1426ms)
+✔ [quality] 매니페스트 — qa 사슬에서 정직하게 채울 수 있는 것만 (2.1263ms)
+▶ [quality] 에스컬레이션 보고 — 6절 고정(「어떻게 할까요」 금지)
+  ✔ 상황·원인·시도·선택지·추천·위험 순서 (0.2552ms)
+✔ [quality] 에스컬레이션 보고 — 6절 고정(「어떻게 할까요」 금지) (0.3987ms)
+▶ [quality] Node native coverage bypass
+  ✔ coverage disabling and ignore-next comments are blocked; quoted documentation is allowed (0.4178ms)
+✔ [quality] Node native coverage bypass (0.5211ms)
+▶ [story-writes] Review Findings 삽입 — Tasks 절 끝(다음 ## 앞) · 편성기가 일감으로 센다
+  ✔ 블록이 Dev Notes 앞에 들어가고 미완 일감이 늘어난다 (1.3446ms)
+  ✔ Tasks 절이 없으면 파일 끝에 ### Review Findings 를 연다 (0.1807ms)
+  ✔ CRLF 파일이면 삽입 블록도 CRLF(Windows 파일 교훈) (0.1645ms)
+✔ [story-writes] Review Findings 삽입 — Tasks 절 끝(다음 ## 앞) · 편성기가 일감으로 센다 (2.6249ms)
+▶ [story-writes] 상태 줄 — 주석·다른 줄 보존
+  ✔ 스토리 Status: 첫 줄만 · 뒤 주석 보존 · 없으면 changed=false (0.2918ms)
+  ✔ sprint-status: 해당 키 한 줄 + last_updated 값만 · STATUS DEFINITIONS 등 주석 불변 · 없는 키는 changed=false (0.4683ms)
+✔ [story-writes] 상태 줄 — 주석·다른 줄 보존 (0.861ms)
+▶ [story-writes] 열린 findings 사본 — story-ledger.openFindings 와 결과가 같아야 한다(단일 소스 사본 동기)
+  ✔ 굵게·들여쓰기·[x] 제외 픽스처 전부 동일 (0.2503ms)
+✔ [story-writes] 열린 findings 사본 — story-ledger.openFindings 와 결과가 같아야 한다(단일 소스 사본 동기) (0.3275ms)
+▶ [story-writes] 결정 인박스 등재 — H1 아래 맨 위 · 스토리 번호(2.3) 포함(편성기 규칙 2 인박스 검사)
+  ✔ appendDecisionsInbox (0.4333ms)
+✔ [story-writes] 결정 인박스 등재 — H1 아래 맨 위 · 스토리 번호(2.3) 포함(편성기 규칙 2 인박스 검사) (0.4981ms)
+▶ [story-writes] deferred-work 추가 — step-04 제목 형식
+  ✔ 절 하나 append · 빈 목록이면 무변경 (0.1535ms)
+✔ [story-writes] deferred-work 추가 — step-04 제목 형식 (0.2152ms)
+▶ spawnWithDeadline — 마감은 프로세스 트리 전체에 걸린다
+  ✔ 손자가 파이프를 30초 쥐고 있어도 0.5초 마감이면 1초 안에 반환하고 · 손자 pid 가 죽는다 (981.256ms)
+  ✔ wrapper 가 먼저 죽어 **고아가 된 손자**도 마감에 죽는다(재귀 스윕) (1410.6234ms)
+  ✔ 정상 종료는 종전대로 status·stdout·stderr 를 그대로 준다(회귀 없음) (105.5197ms)
+  ✔ stdin 으로 준 input 이 자식에게 실제로 들어간다 (95.6677ms)
+  ✔ maxBuffer 초과는 timeout 이 아니라 ENOBUFS 다(진단 사유가 뒤바뀌면 안 된다) (270.9739ms)
+  ✔ 없는 실행 파일은 던지지 않고 error 로 접힌다(spawnSync 와 같은 계약) (1.9422ms)
+✔ spawnWithDeadline — 마감은 프로세스 트리 전체에 걸린다 (2867.4333ms)
+▶ killTree — 플랫폼별 종료 경로를 골라 쓴다
+  ✔ win32 는 taskkill /T /F **와** 고아 재귀 스윕을 같이 던진다 · POSIX 는 프로세스 그룹 SIGKILL (0.9916ms)
+  ✔ pid 가 없거나 종료 수단이 실패하면 자식 핸들로 직접 끊는다 (0.1606ms)
+  ✔ 스윕 스크립트는 정수 pid 만 받고 · 표식은 안전 문자만 싣는다(셸/PS 재해석 차단) (0.3707ms)
+✔ killTree — 플랫폼별 종료 경로를 골라 쓴다 (1.6323ms)
+✔ legacy Telegram offset normal migration preserves unknown data; foreign chat and missing credentials send nothing (142.2247ms)
+▶ [OPS-3] 명령 파서 — 허용 3개만 · 인자 거부(임의 ref 차단 · AC-4)
+  ✔ 정확한 명령·@봇 접미사만 인식하고, 인자·미등록 명령·일반 텍스트는 null (0.7605ms)
+✔ [OPS-3] 명령 파서 — 허용 3개만 · 인자 거부(임의 ref 차단 · AC-4) (1.6266ms)
+▶ [OPS-3] 발신자 검증 — chat_id 불일치는 명령 해석 없이 차단(AC-1)
+  ✔ 같은 chat_id(숫자/문자 혼재 허용)만 통과 (0.1955ms)
+  ✔ 외부 발신은 /status 라도 blocked — 회신 대상 아님 (0.8017ms)
+✔ [OPS-3] 발신자 검증 — chat_id 불일치는 명령 해석 없이 차단(AC-1) (1.1039ms)
+▶ [OPS-3] 확인 코드 상태기 — TTL 안 같은 chat 의 코드 답장만 실행(AC-2·3)
+  ✔ 코드는 4자리 0패딩 · 만료 = now+30분(👤 2026-08-28 Decision (a) — 폴링 주기 10분과의 경계 만료 방지) (0.1453ms)
+  ✔ match / mismatch / expired / null(코드 아님) (0.1873ms)
+  ✔ judgeMessage 흐름: /merge → challenge · 코드 → execute · 만료 → expired · /status 즉시 (0.3469ms)
+✔ [OPS-3] 확인 코드 상태기 — TTL 안 같은 chat 의 코드 답장만 실행(AC-2·3) (0.8024ms)
+▶ [OPS-3] ff 판정 — 원격 ff 전용 refspec · non-ff 는 강제 없음(AC-2)
+  ✔ 미머지 분류 — 원격은 머지 대상 · 로컬 미푸시는 구분(리뷰 3번 — 러너와 같은 재료) (0.3228ms)
+  ✔ refspec 은 origin/auto/X:main 뿐 · auto/ 외는 예외 (0.3122ms)
+  ✔ push 결과: 0=ok · non-fast-forward/rejected=non-ff · 그 외=error (0.1879ms)
+✔ [OPS-3] ff 판정 — 원격 ff 전용 refspec · non-ff 는 강제 없음(AC-2) (0.9225ms)
+▶ [OPS-3] 재개 — 이 창 stops 만 0 · 다른 창 불변(AC-3)
+  ✔ resetWindowStops (0.2552ms)
+  ✔ 차단기 v2 호환 — stops 만 지우면 sigs 가 남아 재개가 헛돈다: 서명 스트릭·창 누적도 0 (0.1044ms)
+✔ [OPS-3] 재개 — 이 창 stops 만 0 · 다른 창 불변(AC-3) (0.442ms)
+▶ [무정지 D5] /extend — 상한 연장(유일한 인자 명령 · 숫자 상한 잠금)
+  ✔ parseExtend — 「/extend N」(1~30)만 · 범위 밖·비정수·인자 없음은 null (0.0966ms)
+  ✔ judgeMessage — /extend N 은 N 을 담아 challenge(코드 확인 후 그 N 실행) · 형식 미달은 ignore (0.1048ms)
+✔ [무정지 D5] /extend — 상한 연장(유일한 인자 명령 · 숫자 상한 잠금) (0.2636ms)
+▶ [OPS-3] 폴러 통합 — 의존성 주입(네트워크·git 0) · 원장·offset·pending 실파일
+  ✔ 외부 발신 → 무응답 + 원장 「외부 발신 차단」 · offset 전진 (2.746ms)
+  ✔ /merge → 코드 되묻기(push 0) → 코드 답장 → 원격 ff push 만 · 배포 없음 (6.7003ms)
+  ✔ non-ff 거부 → 강제 없이 「사람 머지 필요」 회신 (6.1001ms)
+  ✔ 만료된 코드 → 재요청 안내 · 실행 없음 (4.9366ms)
+  ✔ /resume → 이 창 stops=0 · 기동 「요청」 문구(성공 단정 금지 — 리뷰 2번) · 미머지 잔존이면 「/merge 먼저」 (6.1184ms)
+  ✔ /resume 기동 실패(startRunner false) → 실패를 사실대로 회신(리뷰 2번) (6.1374ms)
+  ✔ /status → 읽기 전용 1메시지 · STOP 카운트는 state 실물을 읽는다(리뷰 6번 — 순서 의존 제거) (2.7549ms)
+  ✔ /status 에 로컬 미푸시 auto/* 구분 표기(리뷰 3번) · fetch 실패는 스테일 경고(리뷰 4번) (4.4801ms)
+  ✔ fetch 실패 시 /merge 는 머지하지 않는다(리뷰 4번 — 스테일 성공 보고 차단) (4.8791ms)
+  ✔ --dry-run 은 실행형(execute)에서도 offset·pending·state 무변 · 발신·lock 삭제 없음(리뷰 5번) (3.5676ms)
+  ✔ /resume 도 fetch 실패를 회신에 명시한다(재검수 N-1 — 스테일로 「/merge 먼저」 누락 방지) (6.3006ms)
+  ✔ 회신 1건 실패는 그 건만 격리 — offset 전진 유지 + 실패 통지 1회(리뷰 7번) (4.4951ms)
+✔ [OPS-3] 폴러 통합 — 의존성 주입(네트워크·git 0) · 원장·offset·pending 실파일 (79.9541ms)
+▶ [workers] 설정 정규화 — 없으면 종전 동작(configured=false · Claude 전용 · 하드캡 3)
+  ✔ 빈 설정 → configured=false · codex 꺼짐 · workers.max=3 · autoRepair 0 · 통합 게이트 꺼짐 (1.468ms)
+  ✔ 설정 → 절대 상한 6 클램프 · codex max>1 경고 · roles 검증 · autoRepair true=5/숫자/false (0.2135ms)
+  ✔ [#7] 폐지된 pushOnFail 은 정규화 결과에 남지 않고 경고만 남는다(조용히 먹지 않는다) (0.2258ms)
+✔ [workers] 설정 정규화 — 없으면 종전 동작(configured=false · Claude 전용 · 하드캡 3) (2.8178ms)
+▶ [workers] 병렬 폭 — 종전 parallelPlan 과 같은 값(기본) · 설정으로만 확장 · 절대 상한 6
+  ✔ maxWorkers 기본이면 parallelPlan 과 바이트 단위로 같다(하드캡 3 유지 — 기존 테스트 불변) (0.2278ms)
+  ✔ workers.max 로 확장 — 4폭 허용 · 6 초과는 6 · review 전용도 병렬(👤 2026-09-04) · mockup 만 있는 배치는 여전히 1 (0.094ms)
+✔ [workers] 병렬 폭 — 종전 parallelPlan 과 같은 값(기본) · 설정으로만 확장 · 절대 상한 6 (0.41ms)
+▶ [workers] 병렬 위험 — package.json/lock 은 한쪽만 만져도 병렬 불가(node_modules junction 공유)
+  ✔ parallelHazards (0.3286ms)
+  ✔ 외부 판정기 주입 — judges 가 막으면 그 사유로 병렬 금지 · 통과시키면 그대로 · 던지면 「모르는 것」으로 막는다 (0.2701ms)
+✔ [workers] 병렬 위험 — package.json/lock 은 한쪽만 만져도 병렬 불가(node_modules junction 공유) (0.6888ms)
+▶ [workers] 프로바이더 배정 — 설정 없으면 배치 models 그대로 · split 은 홀수 번째만 codex · 교차 유지 · 레인 차단 재배정
+  ✔ 기본(codex 꺼짐) → 입력 그대로 (0.367ms)
+  ✔ codex 가용 + dev 역할 + split → 두 번째 스토리는 codex dev / claude review(교차) (0.1372ms)
+  ✔ codex 불가(미설치·미인증) → 전부 claude(입력 그대로 · 엔진이 review=codex 는 스스로 폴백) (0.0857ms)
+  ✔ roles 에 dev 없음 또는 split 아님 → codex dev 배정 없음 (0.1038ms)
+  ✔ codex 레인 차단(한도) → codex dev 는 claude 로 · review=codex 는 빈 값(엔진 교차 기본) · claude 차단 → codex 로 (0.1418ms)
+✔ [workers] 프로바이더 배정 — 설정 없으면 배치 models 그대로 · split 은 홀수 번째만 codex · 교차 유지 · 레인 차단 재배정 (0.9891ms)
+▶ [workers] 풀 스케줄 — 프로바이더별 상한 · 총 상한 · 순서 보존 · 실패 격리는 호출부(한 워커의 종료가 다른 워커를 건드리지 않는다)
+  ✔ codex 1 · claude 2 · 총 3: codex 둘은 동시에 못 뜬다 · claude 는 둘까지 (0.2271ms)
+  ✔ 서로소 스토리 2개 · 총 2 → 둘 다 즉시 · 빈 pending 은 빈 결과 · caps 결손은 기본값 (0.0862ms)
+✔ [workers] 풀 스케줄 — 프로바이더별 상한 · 총 상한 · 순서 보존 · 실패 격리는 호출부(한 워커의 종료가 다른 워커를 건드리지 않는다) (0.3763ms)
+▶ [workers] 통합 게이트 판정 · 엔진 플래그 변환 · exit 정보
+  ✔ integrationGateDecision — 꺼짐/landing 0 은 실행 안 함 · GREEN push · RED 는 rollback (0.1615ms)
+  ✔ [#7] RED 는 **어떤 설정 조합으로도** push 로 바뀌지 않는다(pushOnFail·force·allowPush… 전부 무시) (0.8756ms)
+  ✔ [#17] applyIntegrationToManifest — pass/fail/rollback 병합 · 원본 불변 · 알 수 없는 값은 fail 로 닫는다 (1.8731ms)
+  ✔ engineFlagsFromConfig — 설정 없으면 [](종전 명령줄 그대로) · 있으면 수리·프로바이더 플래그 (0.2382ms)
+  ✔ blockedProviderFromExit — limit/auth/spend 만 · 프로바이더 이름 (0.0828ms)
+✔ [workers] 통합 게이트 판정 · 엔진 플래그 변환 · exit 정보 (3.3645ms)
+▶ [plan-queue] Codex 교차 리뷰 배정 — providers.codex.enabled 일 때만 · new/closeout · recovery 는 대상 아님 · exhausted "codex" 회피
+  ✔ 꺼짐 → 종전 배정(new dev=fable/review=opus · closeout review=opus · recovery dev only) (16.5668ms)
+  ✔ 켜짐 → new/closeout 의 review=codex · recovery 는 review 단계가 없어 그대로 (7.3923ms)
+  ✔ reviewKinds 로 좁힘 · roles 에 review 없으면 배정 없음 · exhausted 에 codex 면 짝 회피가 claude 로 돌린다 (19.3935ms)
+  ✔ workers.batchSize=3 이면 규칙 5 짝이 3개까지(기본 2 는 종전과 동일) (16.9442ms)
+✔ [plan-queue] Codex 교차 리뷰 배정 — providers.codex.enabled 일 때만 · new/closeout · recovery 는 대상 아님 · exhausted "codex" 회피 (60.4618ms)
+▶ [run-night] 배선 앵커 — 순수 규칙이 실제로 러너에 꽂혀 있다(배선이 죽으면 종전 동작으로 조용히 되돌아간다)
+  ✔ 워커 풀·위험·통합 게이트·엔진 플래그·exit 정보·증거 보관이 배선돼 있다 (0.3394ms)
+  ✔ [2026-09-02] 배정·계획·계측 배선이 살아 있다(하나라도 빠지면 하네스가 종전으로 되돌아간다) (0.228ms)
+  ✔ [#5] 러너는 pushOnFail 을 읽지 않는다 · reset 은 「불렀다」가 아니라 「되돌아갔다」를 확인한다 (0.2166ms)
+  ✔ [#16] 통합 결과가 스토리 매니페스트·배치 매니페스트로 간다 · 없는 매니페스트를 만들지 않는다 (0.3125ms)
+  ✔ [#9] 증거 보관은 로그뿐 아니라 코드 diff·미추적 산출물·복구 절차를 남긴다 · 민감 경로는 애초에 제외 (0.0923ms)
+  ✔ 능력 감지는 셸 문자열 결합을 쓰지 않는다(argv 분리 · 메타문자 거부) (0.0567ms)
+  ✔ 병렬 경로는 리허설(dry-run)에서 열리지 않는다 · 통합 게이트도 리허설이면 실행하지 않는다 (0.1078ms)
+  ✔ 통합 게이트 RED 는 push 를 막고 landing 을 되돌린다 · 성공분 태그 보존 (0.1892ms)
+✔ [run-night] 배선 앵커 — 순수 규칙이 실제로 러너에 꽂혀 있다(배선이 죽으면 종전 동작으로 조용히 되돌아간다) (1.6881ms)
+✔ dry-run and absent marker never call git (1.7811ms)
+✔ dirty source, Korean story, logs, staged changes and stash remain byte-for-byte in place (1381.796ms)
+✔ untracked marker alone permits safe detached refresh (2501.1537ms)
+✔ reviewed local tooling commit survives remote lag, next slot, and date rollover without push (6498.255ms)
+✔ remote source advance refreshes when no stale local today branch exists (2742.3166ms)
+✔ stale local today branch cannot undo selected remote tip in downstream switch (2607.5024ms)
+✔ divergent local and remote auto branches fail closed (2827.4235ms)
+✔ fetch and status failure stop before checkout (1901.8628ms)
+✔ target changing installed runtime stops before touching loaded code (2556.838ms)
+✔ ignored file collision is preserved and safe checkout fails (2619.4052ms)
+✔ runtime modification racing inspection is detected even when git ignores it (2186.4412ms)
+✔ run-night startup delegates dry-run and has no destructive git fallback (1.8529ms)
+✔ runtime pin boundary allows application descendants but rejects unreviewed tooling descendants (4311.24ms)
+  실물 인박스 파싱 — 대기 5 · 사람 게이트 9 · 사후 확인 83 · 확정(제외) 64 · 절 총 176
+▶ ① 배치 매니페스트
+  ✔ 정상 — 정규화해서 읽는다 (3.8764ms)
+  ✔ 부재 — kind=missing (0.5077ms)
+  ✔ 손상 — kind=broken + 원문 경로 (1.2582ms)
+  ✔ 예상 밖 schema — 추측 렌더 대신 kind=schema (1.4291ms)
+✔ ① 배치 매니페스트 (7.9868ms)
+▶ ② 스토리 검증 매니페스트
+  ✔ 정상 — workers 가 per-story LLM 정본 (1.7107ms)
+  ✔ checks 의 fail·required-missing 을 골라낸다 (1.1667ms)
+  ✔ completion 블록이 없으면 null — 지어내지 않는다 (1.1138ms)
+  ✔ 부재 · 손상 (1.1142ms)
+✔ ② 스토리 검증 매니페스트 (5.2858ms)
+▶ ③ 계측 · ④ 계측 이력
+  ✔ metrics 정상/스키마 위반 (2.4631ms)
+  ✔ history — 깨진 줄만 버리고 나머지는 살린다 (0.3434ms)
+  ✔ history 빈 텍스트 — 예외 없이 0행 (0.1045ms)
+✔ ③ 계측 · ④ 계측 이력 (3.022ms)
+▶ ⑤ 배정 기록
+  ✔ 정상 → 스토리별로 접기 · failStreak≥2 회피 (1.3481ms)
+  ✔ entries 없음 → kind=schema · 부재 → missing (1.3904ms)
+✔ ⑤ 배정 기록 (2.8428ms)
+▶ ⑥ 예정 큐
+  ✔ 정상 — validation·_편성·models 를 읽는다 (1.9573ms)
+  ✔ batches 없음 → schema · 부재 → missing · 손상 → broken (2.041ms)
+✔ ⑥ 예정 큐 (4.1273ms)
+▶ ⑦ 증거
+  ✔ 정상 · 스키마 위반 (3.2316ms)
+✔ ⑦ 증거 (3.3208ms)
+▶ ⑧ 결정 인박스
+  ✔ 실물 형식 — 대기/사후확인/확정을 가른다 (0.9362ms)
+  ✔ 사후 확인 절 안의 「함께 봐 주실 것」은 두 번 세지 않는다 (0.1584ms)
+  ✔ 부재 → missing · 빈 파일 → 0건(예외 없음) (0.087ms)
+  ✔ jng-os 실물 파일을 읽는다(읽기 전용 · 없으면 건너뜀) (10.1229ms)
+✔ ⑧ 결정 인박스 (11.4601ms)
+▶ ⑨ 자율 진단 · 폴더 탐색
+  ✔ readiness 정상 · 스키마 위반 (3.1144ms)
+  ✔ findAutofinishDir — stateDir 우선 · 없으면 logDir 폴백 · 둘 다 없으면 null (3.6338ms)
+✔ ⑨ 자율 진단 · 폴더 탐색 (6.8839ms)
+▶ 슬롯 심박
+  ✔ 4갈래 (0.2047ms)
+✔ 슬롯 심박 (0.2924ms)
+▶ 18:00 접기
+  ✔ 경계 — 17:59 는 전날 밤 · 18:00 은 그날 밤 (0.1841ms)
+  ✔ lastNightManifests — 지금이 속한 밤만 (0.4246ms)
+✔ 18:00 접기 (0.7406ms)
+▶ 상태 폴더 해석
+  ✔ 환경변수가 최우선 (0.2517ms)
+  ✔ auto.config.json 의 stateDir (3.6961ms)
+  ✔ 설정도 없고 폴더도 없으면 기본값 + 시도 경로 공시 (0.8886ms)
+✔ 상태 폴더 해석 (4.9696ms)
+▶ 수집기 — 전부 없어도 예외 0
+  ✔ 빈 프로젝트 (2.8174ms)
+  ✔ 풍족 — 매니페스트·검증·계측·큐·인박스를 모두 줍는다 (9.5403ms)
+  ✔ 손상 파일이 섞여도 나머지는 살고 errors 에 남는다 (5.1529ms)
+✔ 수집기 — 전부 없어도 예외 0 (17.6619ms)
+▶ 밤 키 · 18:00 경계
+  ✔ 지난 1/2/3일 키가 하루씩 뒤로 간다 (1.32ms)
+  ✔ 17:59 의 실행은 「지난 2일」로, 18:00 은 「지난 1일」로 간다 (0.8753ms)
+  ✔ 새벽 3시 실행은 어젯밤으로 붙는다 (0.1755ms)
+  ✔ 3일 밖의 실행은 아무 칸에도 안 들어간다 (0.1826ms)
+✔ 밤 키 · 18:00 경계 (3.4614ms)
+▶ 지표
+  ✔ 절약 = Σserial − Σwall · 병렬 효율 = Σserial / Σ(workers×wall) · 유휴 = Σidle / Σcapacity (0.1965ms)
+  ✔ 첫 시도 통과율 — 수리 라운드가 있으면 뺀다 (0.2897ms)
+  ✔ 통합 실패율 — 그날 배치 매니페스트가 분모 (0.224ms)
+  ✔ 리뷰 결함은 검증 매니페스트에서 센다(run-night 은 늘 0 을 넘긴다) (0.2221ms)
+  ✔ 모델 호출량은 프로바이더/모델별로 합친다 (7.7947ms)
+✔ 지표 (8.9244ms)
+▶ 품질 게이트 제외
+  ✔ 미통과 실행은 속도 지표에서 빼고 「제외 N」으로 남긴다 (0.2774ms)
+  ✔ 그날 전부 미통과면 속도 지표는 —(0 이 아니다) (0.2736ms)
+✔ 품질 게이트 제외 (0.6531ms)
+▶ 배치 0 인 날
+  ✔ empty=true 이고 표의 값이 전부 null (0.3951ms)
+  ✔ 빈 날은 추세도 — (0.1656ms)
+✔ 배치 0 인 날 (0.6718ms)
+▶ 추세
+  ✔ 값이 2개 미만이면 — (0.1213ms)
+  ✔ 높을수록 좋은 지표 — 최신이 크면 개선 (0.1724ms)
+  ✔ 낮을수록 좋은 지표 — 최신이 작으면 개선 (0.185ms)
+  ✔ 같으면 평평 (0.0855ms)
+  ✔ 표 전체에서 실제로 방향이 나온다 (0.2789ms)
+✔ 추세 (1.0483ms)
+▶ 서식
+  ✔ 값이 없으면 — (0.158ms)
+  ✔ 비율 · 시간 · 개수 (0.1503ms)
+✔ 서식 (0.4137ms)
+▶ 풍족 — 목업의 핵심 문자열이 실제로 나온다
+  ✔ ① 히어로 — 판정·심박·숫자·이유 한 줄 (1.2174ms)
+  ✔ ② 인박스 — 3일 이상이 맨 위 · 사후 확인은 접힘 (0.5607ms)
+  ✔ ④ 지난밤 배치 — 워커/모델·병렬·통합·되돌림 설명·증거 (16.1207ms)
+  ✔ ⑤ 오늘 예정 — 편성 방식·검증 경고·배정 이유·LLM·병렬 짝 (0.9541ms)
+  ✔ ⑥ 계측 — 지표 6 + 모델 호출량 · 3열 · 추세 (0.6852ms)
+  ✔ ⑦ 자율 진단 — 5분류 · 7단계 · 배포 차단 · 확인 못 함 (0.5616ms)
+  ✔ ⑧ 3열 재료 — 값이 있으면 on=true (0.304ms)
+  ✔ 티커 1칸 (0.1396ms)
+✔ 풍족 — 목업의 핵심 문자열이 실제로 나온다 (21.9944ms)
+▶ 빈손 — 예외 0 · 「없음」 · 「GREEN」 부재
+  ✔ 예외 없이 6블록이 다 나온다 (0.3375ms)
+  ✔ 판정은 「판정 불가」이고 어디에도 GREEN 이 없다 (0.1656ms)
+  ✔ 블록마다 「없음」 계열 문구가 있다 (0.2472ms)
+  ✔ 계측 표는 전 칸 —(배치 없음) (0.1954ms)
+  ✔ ⑧ 3열 재료가 없으면 on=false — 열을 안 그린다 (0.1252ms)
+✔ 빈손 — 예외 0 · 「없음」 · 「GREEN」 부재 (1.2776ms)
+▶ 손상 — 「읽지 못했습니다」 + 원문 경로 · 추측 렌더 없음
+  ✔ renderError 3종 (0.1516ms)
+  ✔ 인박스·큐가 손상이면 그 블록만 사유를 적고 나머지는 정상 (0.3365ms)
+  ✔ 깨진 이력 줄이 있으면 몇 줄을 건너뛰었는지 적는다 (0.1995ms)
+  ✔ 진단 파일만 손상이면 회색 안내 + 상한 문구 (0.0923ms)
+✔ 손상 — 「읽지 못했습니다」 + 원문 경로 · 추측 렌더 없음 (0.9249ms)
+▶ 안전
+  ✔ HTML 이스케이프 — 원장 문자열이 태그로 새지 않는다 (0.1448ms)
+  ✔ CSS 는 목업 토큰만 쓰고 빨강을 새로 만들지 않는다 (0.2814ms)
+✔ 안전 (0.5075ms)
+▶ M4 · 안전 읽기 — 경합에서 던지지 않는다
+  ✔ ① 읽기 직전 삭제(ENOENT) — 선택 원천은 조용한 빈 값, 필수 원천은 오류 기록 (12.1752ms)
+  ✔ ② 같은 이름의 폴더로 바꿔치기(EISDIR) — 던지지 않고 사유를 기록한다 (2.5629ms)
+  ✔ ③ 읽기 권한 없는 경로(존재하지 않는 드라이브·잘못된 이름)도 던지지 않는다 (0.5662ms)
+✔ M4 · 안전 읽기 — 경합에서 던지지 않는다 (16.1718ms)
+▶ M4 · import 는 프로세스를 죽이지 않는다
+  ✔ ④ BMad 원천이 없는 폴더에서 scan.mjs 를 import 해도 exit 0 · 구조화 오류를 돌려준다 (109.4122ms)
+  ✔ ⑤ CLI 로 직접 실행했을 때는 종전대로 exit 2 + 진단 출력 (112.1334ms)
+✔ M4 · import 는 프로세스를 죽이지 않는다 (221.729ms)
+▶ M4 · build 는 예외 없이 화면 한 장을 만든다
+  ✔ ⑥ 원천을 못 읽어도 「원천을 읽지 못했습니다」 HTML 이 생성된다 (114.8112ms)
+✔ M4 · build 는 예외 없이 화면 한 장을 만든다 (114.9657ms)
+▶ GREEN
+  ✔ 전부 통과하면 GREEN — 이유 문장이 붙는다 (1.6861ms)
+✔ GREEN (2.4815ms)
+▶ RED — 5경로
+  ✔ ① 통합 게이트 fail (0.3085ms)
+  ✔ ② 통합 게이트 rollback (0.119ms)
+  ✔ ③ worst ≥ 7 (0.0839ms)
+  ✔ ④ 진단 우선순위 ①②③ 잔여 > 0 (0.1013ms)
+  ✔ ⑤ readiness 가 not-ready (0.0775ms)
+  ✔ RED + GREEN 동시 → RED (0.0893ms)
+✔ RED — 5경로 (0.9659ms)
+▶ AMBER — 8경로
+  ✔ ① 품질 게이트 미통과 (0.265ms)
+  ✔ ② 큐 자기 검증 실패 (0.1344ms)
+  ✔ ③ 검증 매니페스트 checks 에 fail/required-missing (0.1579ms)
+  ✔ ④ 결정 대기 > 0 (0.0981ms)
+  ✔ ⑤ 사람 게이트 > 0 (0.0814ms)
+  ✔ ⑥ 미머지 auto/* ≥ 1일 (0.1077ms)
+  ✔ ⑦ 진단 ④⑤ 잔여 > 0 (0.0796ms)
+  ✔ ⑧ readiness 가 not-verified (0.0625ms)
+✔ AMBER — 8경로 (1.1652ms)
+▶ 상한 · 판정 불가
+  ✔ 자율 진단 산출물이 없으면 GREEN 이 못 되고 상한 AMBER (0.1092ms)
+  ✔ 재료 0 → 판정 불가 · GREEN 이 아니다 (0.1131ms)
+  ✔ 재료는 있는데 지난밤 배치가 0건 → GREEN 이 아니라 판정 불가 (0.0745ms)
+  ✔ 빈 입력의 이유 문장에 「GREEN」 이라는 낱말이 없다 (0.066ms)
+✔ 상한 · 판정 불가 (0.4587ms)
+▶ H2 · 증거 없는 GREEN 차단
+  ✔ 시나리오 1 — 통합 pass 뿐이고 계측·검증 0건 + 빈 진단이면 GREEN 이 아니다 (0.1978ms)
+  ✔ 시나리오 2 — 진단 없음 + backlog 있음 + 계측 1건이면 상한 AMBER(backlog 가 상한을 뚫지 못한다) (0.0927ms)
+  ✔ 진짜 GREEN 1경로 — 이유 문장에 실제로 센 건수가 들어간다 (0.0729ms)
+  ✔ 뮤테이션 ① 계측을 없앤다 → GREEN 탈락 (0.0845ms)
+  ✔ 뮤테이션 ② 계측의 qualityGate.passed 를 지운다 → GREEN 탈락 (0.0634ms)
+  ✔ 뮤테이션 ③ 검증 기록을 없앤다 → GREEN 탈락 (0.0716ms)
+  ✔ 뮤테이션 ④ 지난밤 배치가 돌린 스토리의 검증만 빠진다 → GREEN 탈락 (0.058ms)
+  ✔ 뮤테이션 ⑤ 진단을 없앤다 → GREEN 탈락 (0.048ms)
+  ✔ 뮤테이션 ⑥ readiness 를 없앤다 → GREEN 탈락 (0.049ms)
+  ✔ 뮤테이션 ⑦ readiness.verdict 가 ready 가 아니면 GREEN 탈락 (0.0809ms)
+  ✔ 뮤테이션 ⑧ 지난밤 배치의 통합 결과가 미실행(undefined)이면 GREEN 탈락 (0.0686ms)
+✔ H2 · 증거 없는 GREEN 차단 (1.0851ms)
+▶ tierRemaining
+  ✔ backlog.byTier 가 우선 · 없으면 diagnosis · 둘 다 없으면 known=false (0.1999ms)
+✔ tierRemaining (0.2382ms)
+▶ ⑨ 하네스 경고 3종
+  ✔ unknown-story · integration=fail · 완료로 보이는데 통합 unknown (0.4492ms)
+  ✔ 스토리 목록을 모르면 unknown-story 를 만들지 않는다(오경보 금지) (0.0764ms)
+  ✔ 재료 0 → 경고 0 (0.0522ms)
+✔ ⑨ 하네스 경고 3종 (0.7275ms)
+ℹ tests 1010
+ℹ suites 221
+ℹ pass 1006
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2895389.1546
+ℹ start of coverage report
+ℹ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ file                           | line % | branch % | funcs % | uncovered lines
+ℹ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ _verification                  |        |          |         |
+ℹ  capture-source.mjs            |  94.12 |    87.50 |  100.00 | 12
+ℹ batch-24-multiAG               |        |          |         |
+ℹ  adapters                      |        |          |         |
+ℹ   vitest-quality.mjs           |  97.45 |    84.09 |  100.00 | 145-149
+ℹ  engine                        |        |          |         |
+ℹ   asf-resolve.mjs              | 100.00 |   100.00 |  100.00 |
+ℹ   assign.mjs                   |  97.51 |    83.61 |   96.43 | 161 182-184 194-196
+ℹ   autofinish.mjs               |  95.73 |    82.49 |   94.32 | 523-525 587-594 674-687 930-932 945-954 970-972 974-976
+ℹ   backlog.mjs                  | 100.00 |    84.75 |   97.14 |
+ℹ   bench.mjs                    |  98.68 |    68.75 |  100.00 | 145-147 297
+ℹ   bmad-sync.mjs                |  96.91 |    70.77 |   93.15 | 127-128 144 542-544 587 608-616 622 734 820-827
+ℹ   conflicts.mjs                | 100.00 |    91.94 |  100.00 |
+ℹ   decisions.mjs                | 100.00 |    73.10 |  100.00 |
+ℹ   diagnose.mjs                 |  99.23 |    79.01 |   98.13 | 689-690 692-693 736-737 870
+ℹ   finish-stories.mjs           | 100.00 |    90.63 |  100.00 |
+ℹ   fixtures                     |        |          |         |
+ℹ    fake-bmad-project.mjs       | 100.00 |    88.24 |   90.91 |
+ℹ    strict-quality-fixture.mjs  | 100.00 |   100.00 |  100.00 |
+ℹ    stub-claude.mjs             |  98.59 |    89.19 |   95.24 | 41-43
+ℹ    stub-codex.mjs              | 100.00 |    95.83 |  100.00 |
+ℹ   gate-benchmark.mjs           |  42.11 |    95.00 |   87.50 | 17-38
+ℹ   landing-publication.mjs      | 100.00 |   100.00 |  100.00 |
+ℹ   metrics.mjs                  | 100.00 |    82.32 |   95.92 |
+ℹ   orchestrate.mjs              |  99.70 |    82.80 |   96.15 | 150
+ℹ   plan-dag.mjs                 | 100.00 |    89.80 |  100.00 |
+ℹ   plan-queue.mjs               |  93.69 |    87.80 |   93.55 | 52 93-94 509-539
+ℹ   readiness.mjs                |  99.30 |    86.13 |   95.38 | 127-129
+ℹ   report.mjs                   | 100.00 |    81.52 |   96.23 |
+ℹ   runner-rules.mjs             | 100.00 |    87.76 |  100.00 |
+ℹ   runtime                      |        |          |         |
+ℹ    api-surface.mjs             | 100.00 |   100.00 |  100.00 |
+ℹ    authorization-matrix.mjs    | 100.00 |   100.00 |  100.00 |
+ℹ    auto-story-pipeline.mjs     |  84.87 |    58.51 |   86.30 | 127-129 167-168 185-187 216-218 267-268 323-330 342-354 370-371 440-445 471-475 518-520 527-544 547-560 627-630 666-669 702-705 707-710 721-724 735-739 745-749 916-918 943 946-947 959-961 964-970 986-988 993-997 1143-1144 1213-1217 1222-1223 1225-1232 1234-1236 1260-1263 1265-1272 1299-1308 1310-1330 1365-1368 1375-1378 1381-1386 1394-1403 1406-1408 1503-1505 1532-1535 1578 1616-1617 1639 1645 1693-1713 1727-1729 1731-1732 1734-1741 1787 1813-1814
+ℹ    completion-rules.mjs        |  98.72 |    90.95 |   98.11 | 141-142 255-257
+ℹ    model-health.mjs            | 100.00 |    91.18 |  100.00 |
+ℹ    model-policy.mjs            |  98.15 |    87.14 |  100.00 | 53
+ℹ    notify-push.mjs             |  90.91 |    20.00 |  100.00 | 21-22
+ℹ    providers                   |        |          |         |
+ℹ     claude.mjs                 | 100.00 |    97.87 |  100.00 |
+ℹ     codex.mjs                  |  98.43 |    82.74 |   97.26 | 443-449 489-492
+ℹ     git-guard.mjs              | 100.00 |    78.85 |  100.00 |
+ℹ     index.mjs                  |  96.95 |    83.33 |  100.00 | 63-65 85 148
+ℹ     redact.mjs                 | 100.00 |    89.36 |   92.31 |
+ℹ     spawn-safe.mjs             |  95.24 |    86.42 |   95.00 | 169-172 177-181
+ℹ    push-guard.mjs              |  99.08 |    80.77 |  100.00 | 81
+ℹ    quality-gates.mjs           | 100.00 |    94.08 |   97.50 |
+ℹ    quality-rules.mjs           | 100.00 |    88.74 |   97.92 |
+ℹ    schema-migration.mjs        | 100.00 |   100.00 |  100.00 |
+ℹ    stage-router.mjs            | 100.00 |    88.24 |  100.00 |
+ℹ    story-writes.mjs            |  90.00 |    80.49 |   93.75 | 63-72
+ℹ   spawn-deadline.mjs           |  98.34 |    70.49 |   78.95 | 195-198
+ℹ   story-ledger.mjs             | 100.00 |    84.38 |   94.74 |
+ℹ   telegram-commands.mjs        |  78.50 |    68.00 |   80.00 | 79-124 141 150-152 188 200-212 317-321
+ℹ   telegram-rules.mjs           | 100.00 |    95.71 |  100.00 |
+ℹ   worktree-refresh.mjs         |  88.39 |    87.50 |   92.31 | 42-43 71-72 84-88 94-95 108-109
+ℹ  install.mjs                   |  93.12 |    49.33 |   90.48 | 51 225-234 337-338 341-343 346-349 357-359 367-368 378
+ℹ dev-status                     |        |          |         |
+ℹ  batch-sources.mjs             |  97.77 |    75.78 |   82.81 | 130-132 456-464
+ℹ  build.mjs                     |  80.18 |    20.37 |   25.00 | 395-398 403-466 477-515 521-529 558-561 564-565 569-570 574 577 585-587 664-666
+ℹ  daily-metrics.mjs             | 100.00 |    84.88 |  100.00 |
+ℹ  render-batch.mjs              | 100.00 |    76.06 |  100.00 |
+ℹ  scan.mjs                      |  39.04 |    48.72 |   44.44 | 85-88 91-93 104-107 113-117 152-156 186-193 198-254 257-289 292-305 310-331 350-352 372-391 394-432 450-517 531-540 556-678 688-689
+ℹ  verdict.mjs                   | 100.00 |    85.83 |  100.00 |
+ℹ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ all files                      |  93.29 |    80.75 |   92.98 |
+ℹ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ end of coverage report
+
+✖ failing tests:
+
+test at batch-24-multiAG\engine\bench.test.mjs:40:1
+✖ runBench — 두 팔이 같은 스토리 세트로 실제로 돌고 비교 가능한 계측을 낸다 (458805.1073ms)
+  AssertionError [ERR_ASSERTION]: quality.json
+  [2-2-b][QUALITY][PASS] qa GREEN
+  → [2-1-a] review (model=codex:default, perm=sandbox:read-only)
+  [2-1-a][CODEX][REVIEW] start model=codex:default cwd=C:\Users\user\AppData\Local\Temp\nbo-bench-root-jIfTzL\nbo-bench-harness-mnPXv9\proj-wt0 target=워킹트리 vs HEAD(e29cb21)
+  → [2-2-b] review (model=codex:default, perm=sandbox:read-only)
+  [2-2-b][CODEX][REVIEW] start model=codex:default cwd=C:\Users\user\AppData\Local\Temp\nbo-bench-root-jIfTzL\nbo-bench-harness-mnPXv9\proj-wt1 target=워킹트리 vs HEAD(e29cb21)
+     🔒 워커 env 에서 원격 인증 수단 2건 제거(GIT_CONFIG_COUNT, SUPABASE_ACCESS_TOKEN)
+     🔒 워커 env 에서 원격 인증 수단 2건 제거(GIT_CONFIG_COUNT, SUPABASE_ACCESS_TOKEN)
+  [2-2-b][CODEX][SLOT] 다른 codex 워커 실행 중(슬롯 1개 소진) — 최대 5분 대기
+     exit=0 log=C:\Users\user\AppData\Local\Temp\nbo-bench-root-jIfTzL\nbo-bench-harness-mnPXv9\proj-wt0\_bmad-output\implementation-artifacts\auto-pipeline-logs\2-1-a-review.log
+  [2-1-a][CODEX][REVIEW] usage in=1200 out=300 cmds=6 files=0
+  [2-1-a][CODEX][REVIEW] 기재 완료 — decision 0 · patch 0(high 0) · defer 0 · optional 0 → status=done · sprint-status 2-1-a=done
+     exit=0 log=C:\Users\user\AppData\Local\Temp\nbo-bench-root-jIfTzL\nbo-bench-harness-mnPXv9\proj-wt1\_bmad-output\implementation-artifacts\auto-pipeline-logs\2-2-b-review.log
+  [2-2-b][CODEX][REVIEW] usage in=1200 out=300 cmds=6 files=0
+  [2-2-b][CODEX][REVIEW] 기재 완료 — decision 0 · patch 0(high 0) · defer 0 · optional 0 → status=done · sprint-status 2-2-b=done
+     ✔ commit 74c1741 (15 files)
+  ✔ [2-1-a] 완료 (review 상태까지). 스토리 커밋 수행 — 정본 main 반영은 사람 머지.
+  === 배치 완료: 1 스토리. 스토리 단위 커밋 수행 — main 머지는 사람 승인. ===
+  [2-1-a][CLAUDE][DEV] exit=0 · 남은 대기 0 · 실행 중 1
+     ✔ commit 62e0cde (15 files)
+  ✔ [2-2-b] 완료 (review 상태까지). 스토리 커밋 수행 — 정본 main 반영은 사람 머지.
+  === 배치 완료: 1 스토리. 스토리 단위 커밋 수행 — main 머지는 사람 승인. ===
+  [2-2-b][CLAUDE][DEV] exit=0 · 남은 대기 0 · 실행 중 0
+  - 완주: 2-1-a (병렬 dev → landing)
+  - 완주: 2-2-b (병렬 dev → landing · 충돌 자동 해소 3파일)
+  [INTEGRATION][RUN] landing 2건 뒤 통합 게이트: batch-24-multiag landing: full unit + integration (deduplicated)
+
+
+  null !== 0
+
+      at TestContext.<anonymous> (file:///C:/Projects/claude-skills-quality-gates-9/batch-24-multiAG/engine/bench.test.mjs:46:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: null,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at batch-24-multiAG\engine\e2e-parallel.test.mjs:347:3
+✖ 폐지 경고 · rollback · 원격 ref 0건 · 로컬 landing 0건 · exit 1 (2.4462ms)
+  AssertionError [ERR_ASSERTION]: ocal\Temp\nbo-e2e-kOmKCd\proj-wt0
+  → [2-2-b] dev (model=fable, perm=acceptEdits)
+  [2-2-b][CLAUDE][DEV] start model=fable cwd=C:\Users\user\AppData\Local\Temp\nbo-e2e-kOmKCd\proj-wt1
+     🔒 워커 env 에서 원격 인증 수단 2건 제거(GIT_CONFIG_COUNT, SUPABASE_ACCESS_TOKEN)
+     🔒 워커 env 에서 원격 인증 수단 2건 제거(GIT_CONFIG_COUNT, SUPABASE_ACCESS_TOKEN)
+     exit=0 log=C:\Users\user\AppData\Local\Temp\nbo-e2e-kOmKCd\proj-wt0\_bmad-output\implementation-artifacts\auto-pipeline-logs\2-1-a-dev.log
+     exit=0 log=C:\Users\user\AppData\Local\Temp\nbo-e2e-kOmKCd\proj-wt1\_bmad-output\implementation-artifacts\auto-pipeline-logs\2-2-b-dev.log
+  → [2-1-a] qa-gate: batch-24-multiag scoped quality
+  → [2-2-b] qa-gate: batch-24-multiag scoped quality
+     qa exit=0 log=C:\Users\user\AppData\Local\Temp\nbo-e2e-kOmKCd\proj-wt0\_bmad-output\implementation-artifacts\auto-pipeline-logs\2-1-a-quality.json
+  [2-1-a][QUALITY][PASS] qa GREEN
+     qa exit=0 log=C:\Users\user\AppData\Local\Temp\nbo-e2e-kOmKCd\proj-wt1\_bmad-output\implementation-artifacts\auto-pipeline-logs\2-2-b-quality.json
+  [2-2-b][QUALITY][PASS] qa GREEN
+  → [2-1-a] review (model=codex:default, perm=sandbox:read-only)
+  [2-1-a][CODEX][REVIEW] start model=codex:default cwd=C:\Users\user\AppData\Local\Temp\nbo-e2e-kOmKCd\proj-wt0 target=워킹트리 vs HEAD(df5eda2)
+  → [2-2-b] review (model=codex:default, perm=sandbox:read-only)
+  [2-2-b][CODEX][REVIEW] start model=codex:default cwd=C:\Users\user\AppData\Local\Temp\nbo-e2e-kOmKCd\proj-wt1 target=워킹트리 vs HEAD(df5eda2)
+     🔒 워커 env 에서 원격 인증 수단 2건 제거(GIT_CONFIG_COUNT, SUPABASE_ACCESS_TOKEN)
+     🔒 워커 env 에서 원격 인증 수단 2건 제거(GIT_CONFIG_COUNT, SUPABASE_ACCESS_TOKEN)
+  [2-1-a][CODEX][REVIEW] 민감 파일 격리 2건(실행 동안만 · 종료 후 복원)
+  [2-2-b][CODEX][REVIEW] 민감 파일 격리 2건(실행 동안만 · 종료 후 복원)
+  [2-2-b][CODEX][SLOT] 다른 codex 워커 실행 중(슬롯 1개 소진) — 최대 5분 대기
+     exit=0 log=C:\Users\user\AppData\Local\Temp\nbo-e2e-kOmKCd\proj-wt0\_bmad-output\implementation-artifacts\auto-pipeline-logs\2-1-a-review.log
+  [2-1-a][CODEX][REVIEW] usage in=10 out=5 cmds=6 files=0
+  [2-1-a][CODEX][REVIEW] 기재 완료 — decision 0 · patch 0(high 0) · defer 0 · optional 0 → status=done · sprint-status 2-1-a=done
+     exit=0 log=C:\Users\user\AppData\Local\Temp\nbo-e2e-kOmKCd\proj-wt1\_bmad-output\implementation-artifacts\auto-pipeline-logs\2-2-b-review.log
+  [2-2-b][CODEX][REVIEW] usage in=10 out=5 cmds=6 files=0
+  [2-2-b][CODEX][REVIEW] 기재 완료 — decision 0 · patch 0(high 0) · defer 0 · optional 0 → status=done · sprint-status 2-2-b=done
+     ✔ commit a5f577c (14 files)
+  ✔ [2-1-a] 완료 (review 상태까지). 스토리 커밋 수행 — 정본 main 반영은 사람 머지.
+  === 배치 완료: 1 스토리. 스토리 단위 커밋 수행 — main 머지는 사람 승인. ===
+  [2-1-a][CLAUDE][DEV] exit=0 · 남은 대기 0 · 실행 중 1
+     ✔ commit 78a27fc (14 files)
+  ✔ [2-2-b] 완료 (review 상태까지). 스토리 커밋 수행 — 정본 main 반영은 사람 머지.
+  === 배치 완료: 1 스토리. 스토리 단위 커밋 수행 — main 머지는 사람 승인. ===
+  [2-2-b][CLAUDE][DEV] exit=0 · 남은 대기 0 · 실행 중 0
+  - 완주: 2-1-a (병렬 dev → landing)
+  - 완주: 2-2-b (병렬 dev → landing · 충돌 자동 해소 3파일)
+  [INTEGRATION][RUN] landing 2건 뒤 통합 게이트: batch-24-multiag landing: full unit + integration (deduplicated)
+
+
+
+  null !== 1
+
+      at TestContext.<anonymous> (file:///C:/Projects/claude-skills-quality-gates-9/batch-24-multiAG/engine/e2e-parallel.test.mjs:348:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1794:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: null,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at batch-24-multiAG\engine\e2e-parallel.test.mjs:358:3
+✖ [#16] 배치 매니페스트에 rollback 이 남고 push=false (25.7701ms)
+  AssertionError [ERR_ASSERTION]: 배치 매니페스트 없음
+      at TestContext.<anonymous> (file:///C:/Projects/claude-skills-quality-gates-9/batch-24-multiAG/engine/e2e-parallel.test.mjs:360:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: null,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at batch-24-multiAG\engine\e2e-parallel.test.mjs:378:3
+✖ [#16/N6] rollback 이 각 스토리 매니페스트에 남는다 — 증거 사본 + batchId 붙은 미추적 sidecar (13.9096ms)
+  AssertionError [ERR_ASSERTION]: rollback 이면 추적 매니페스트는 되돌아간다
+      at TestContext.<anonymous> (file:///C:/Projects/claude-skills-quality-gates-9/batch-24-multiAG/engine/e2e-parallel.test.mjs:381:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

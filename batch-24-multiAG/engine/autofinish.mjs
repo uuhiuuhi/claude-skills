@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { readRecord } from './runtime/schema-migration.mjs';
+import { collectChanges, classifyRisk, fingerprint } from './runtime/quality-gates.mjs';
 // autofinish.mjs — 자율 마무리(Autonomous Finish) **진입 CLI + 라운드 통제** (2026-09-02 · 설계서 §1-7·§4)
 //
 // 무엇인가: 「지금 상태를 파악하고 배포 가능한 수준까지 자율적으로 마무리해줘」 한 줄이 들어왔을 때
@@ -15,7 +17,7 @@
 //   ④ 산출물(JSON·보고서)은 쓰기 직전에 다시 마스킹한다 — 시크릿 원문은 어디에도 남기지 않는다.
 //   ⑤ 커밋·푸시·머지·배포는 하지 않는다. 「배포 가능한 상태」와 「배포」는 다른 말이다(SPEC 머리말).
 //
-// 게이트 예산(설계 §2-3): 라운드마다 qa 1회 + 마지막에 전 게이트 1회 = **qa 총 라운드+1회**.
+// 게이트 예산: worker 영향 검사, landing 전체 회귀, 최종 보고에서 동일 지문의 landing 근거 재사용.
 
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -40,7 +42,7 @@ const { assertSafeModel, assertSafePath } = await import(resolveAsf('providers/s
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
-export const AUTOFINISH_SCHEMA = 'night-batch-ops/autofinish/1'
+export const AUTOFINISH_SCHEMA = 'batch-24-multiag/autofinish/1'
 
 /** 기본값 — `auto.config.json` 의 `autofinish` 블록이 덮어쓴다(설계 §10 착수 전 확인). */
 export const DEFAULTS = Object.freeze({
@@ -508,7 +510,11 @@ export async function runAutoFinish(opts = {}) {
   const writeJson = (name, data) => { artifacts.push(name); return writeAtomic(join(outDir, name), JSON.stringify(maskDeep(data), null, 2) + '\n') }
   const writeText = (name, text) => { artifacts.push(name); return writeAtomic(join(outDir, name), maskSecrets(text)) }
 
-  const gateCalls = {}
+  let gateFailed = false;
+  const gateCalls = {};
+  const gateCache = new Map();
+  let qualityBase;
+  try { qualityBase = collectChanges(root).base; } catch { qualityBase = null; }
   const GATE_MAX_MS = 20 * 60_000
   const runGate = async (name, snapshot, tag) => {
     // spawn **직전**에 잔여 예산을 본다 — 0 이하면 돌리지 않고 `available:false` 로 접는다.
@@ -521,7 +527,26 @@ export async function runAutoFinish(opts = {}) {
     // `&&` 가 섞여 셸 메타문자 거부에 걸린다. 없는 게이트는 null 을 넘겨 `available:false` 로 만든다.
     const known = snapshot?.scripts?.gates?.[name]
     const script = known?.available ? (known.script ?? name) : (snapshot?.scripts?.all?.[name] ? name : null)
-    const g = await runGateProbe({ root, name, script, exec, logDir: outDir, timeoutMs: Math.min(GATE_MAX_MS, left) })
+    const codeFingerprint = fingerprint(root);
+    const scope = qualityBase ? classifyRisk(collectChanges(root, qualityBase)) : null;
+    const skipped = why => ({ name, script, available: false, exit: null, ms: 0, result: 'not-required', why, log: '' });
+    if (scope?.category === 'docs') return skipped('documents/comments/static resources only');
+    // Full regression already ran after landing; preserve its exact source evidence.
+    if (name === 'qa') {
+      try {
+        const landing = readRecord(readFileSync(join(root, '_bmad-output/implementation-artifacts/auto-pipeline-logs/landing-quality.json'), 'utf8'));
+        if (landing.phase === 'landing' && landing.verdict === 'ready' && landing.codeFingerprint === codeFingerprint) {
+          const cached = { name, script, available: true, exit: 0, ms: 0, cached: true, source: 'landing-quality', codeFingerprint, log: '' };
+          writeJson(`gate-${tag}-${name}.json`, cached); return cached;
+        }
+      } catch { /* no matching completed landing */ }
+    }
+    const commandKey = JSON.stringify([snapshot?.scripts?.all?.[script] ?? script, codeFingerprint]);
+    if (gateCache.has(commandKey)) return { ...await gateCache.get(commandKey), name, ms: 0, cached: true };
+    const pending = runGateProbe({ root, name, script, exec, logDir: outDir, timeoutMs: Math.min(GATE_MAX_MS, left) });
+    gateCache.set(commandKey, pending);
+    const g = await pending;
+    if (g.exit !== 0) { gateCache.delete(commandKey); if (g.available !== false) gateFailed = true; }
     gateCalls[name] = (gateCalls[name] ?? 0) + 1
     const { log: body, ...meta } = g
     writeJson(`gate-${tag}-${name}.json`, meta)
@@ -557,9 +582,7 @@ export async function runAutoFinish(opts = {}) {
     // 게이트 — 일반 실행은 라운드마다 qa 1회. `--diagnose-only` 는 **언제나 0회**(NEW-H2:
     // `npm run <게이트>` 는 코드젠·포맷으로 대상 저장소에 쓸 수 있어 읽기 전용 보증이 깨진다).
     const roundGates = {}
-    if (!diagnoseOnly && gates.includes('qa')) {
-      roundGates.qa = await runGate('qa', snapshot, `r${round}`)
-    }
+    // Worker manifests own scoped checks. Full regression is once after landing/finalization.
     for (const [name, g] of Object.entries(roundGates)) {
       rec.gates[name] = { exit: g.exit, ms: g.ms, available: g.available }
       stageEvents.push({ kind: 'stage', stage: name === 'qa' ? 'qa' : name, story: '', provider: 'local', ms: g.ms, exit: g.exit ?? 0 })
@@ -641,6 +664,7 @@ export async function runAutoFinish(opts = {}) {
     rounds.push(rec)
 
     // 예산이 라운드 도중에 다했다 — 다음 라운드는 통째로 마감 뒤라서 열지 않는다.
+    if (rec.runner?.exit != null && rec.runner.exit !== 0 && rec.runner.failure?.kind !== 'env') { log('[LOOP] runner RED — 자동 수리 예산 종료 후 재실행·push 차단'); break; }
     if (step.budgetStopped) { log('[LOOP] 예산 소진 — 라운드를 더 열지 않는다'); break }
 
     // 환경 실패(인증·한도·네트워크·권한)는 **재실행하지 않는다** — 같은 조건이면 결과도 같다(설계 §4-2).
@@ -735,14 +759,14 @@ export async function runAutoFinish(opts = {}) {
   })
 
   // 종료 코드 — 0 = 돌았다. 1 = 사람 호출(escalate). 판정 not-ready 자체는 실패가 아니다(그게 결론이다).
-  const exitCode = escalation ? 1 : 0
+  const exitCode = escalation || gateFailed || rounds.some(r => r.runner?.exit != null && r.runner.exit !== 0) ? 1 : 0
   log(`[AUTOFINISH] 판정 ${project.verdict} · 라운드 ${rounds.length} · 보고서 ${reportPath}`)
   return { exitCode, report: model, reportMd: md, rounds, outDir, reportPath, gateCalls, budget, readiness: { project, tasks }, backlog, diagnoses, escalation }
 }
 
 /** 설정 원문 — 스냅숏 없이(=부작용 전에) 읽는다. 없으면 `null`. */
 function rawConfigAt(root, rel = 'tools/auto/auto.config.json') {
-  try { return JSON.parse(readFileSync(join(root, rel), 'utf8')) } catch { return null }
+  try { return readRecord(readFileSync(join(root, rel), 'utf8')) } catch { return null }
 }
 
 const criticalOf = (d) => [1, 2, 3].reduce((a, t) => a + (Number(d?.counts?.findings?.[t]) || 0), 0)
@@ -755,7 +779,7 @@ const integrationOf = (manifests) => {
 }
 function rawConfig(snapshot) {
   const p = snapshot?.paths?.config ?? 'tools/auto/auto.config.json'
-  try { return JSON.parse(readFileSync(join(snapshot.root, p), 'utf8')) } catch { return snapshot?.config ?? null }
+  try { return readRecord(readFileSync(join(snapshot.root, p), 'utf8')) } catch { return snapshot?.config ?? null }
 }
 
 /**

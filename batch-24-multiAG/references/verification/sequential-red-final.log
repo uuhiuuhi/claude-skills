@@ -1,0 +1,13 @@
+▶ [e2e][N1] 순차 + 통합 게이트 RED — 원격 ref 불변 · landing 되돌림 · 엔진에 --push 를 넘기지 않는다
+  ✔ 원격에 auto/* 가 하나도 없다 · 로컬 landing 0건 · exit 1 (157.7536ms)
+  ✔ 엔진은 push 를 보류만 했다 — 원격에 나간 것은 0건 (0.1217ms)
+  ✔ 순차도 배치 매니페스트·rollback sidecar 를 남긴다(mode=sequential) (44.3448ms)
+✔ [e2e][N1] 순차 + 통합 게이트 RED — 원격 ref 불변 · landing 되돌림 · 엔진에 --push 를 넘기지 않는다 (17781.1776ms)
+ℹ tests 3
+ℹ suites 1
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 18109.2633

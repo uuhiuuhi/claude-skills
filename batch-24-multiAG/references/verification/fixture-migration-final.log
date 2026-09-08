@@ -1,0 +1,15 @@
+✔ fixture plan normal and boundary: ordering, stages, malformed candidates, invented stories (1089.3074ms)
+✔ fixture plan failure: empty, invalid JSON, explicit error and secret stderr remain distinguishable (928.2414ms)
+✔ fixture CLI normal/failure: version, probe, unknown, repair and malformed call records (1922.3213ms)
+✔ fixture story normal/failure/boundary: missing story, declared files, human task and open review findings (1816.0245ms)
+✔ fixture Codex failure: limit and failed turns cannot resemble clean completion (500.1802ms)
+✔ fixture Codex normal/boundary: findings, stdout events, relative and absolute result paths (710.0989ms)
+✔ legacy Telegram offset normal migration preserves unknown data; foreign chat and missing credentials send nothing (352.7783ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7181.9517

@@ -12,10 +12,10 @@
 //
 // 순수 모듈 — 파일·프로세스에 손대지 않는다. 파이프라인은 `finalizeManifest()` 끝에서 3줄로 부른다.
 
-import { TEST_FILE_RE, splitDiffByFile } from './quality-rules.mjs'
+import { TEST_FILE_RE, splitDiffByFile, maskJavaScript } from './quality-rules.mjs'
 import { countOpenFindings } from './story-writes.mjs'
 
-export const COMPLETION_SCHEMA = 'auto-story-finish/completion/1'
+export const COMPLETION_SCHEMA = 'batch-24-multiag/completion/1'
 
 export const PASS = 'pass'
 export const FAIL = 'fail'
@@ -29,7 +29,7 @@ export const NV = 'NOT VERIFIED'
 const NA_RE = /^(n\/a|required-missing|not-run|unknown)/i
 const REPAIR_INTRODUCED_RE = /repair-introduced/
 const REPAIR_SENSITIVE_RE = /^(test-skip|test-only|empty-test|trivial-assertion|assertion-weakened|ts-ignore|eslint-disable|coverage-exclude|gate-config-changed)/
-const TEST_CASE_RE = /\b(it|test)\s*\(|\bdescribe\s*\(/
+const TEST_CASE_RE = /\b(it|test)\s*\(/
 
 const arr = (x) => (Array.isArray(x) ? x : [])
 const str = (x) => String(x ?? '')
@@ -45,6 +45,7 @@ export const COMPLETION_CRITERIA = Object.freeze([
   { id: 'T6', label: '만든 쪽과 다른 쪽이 실제로 읽고 교차 검토했고 높음 지적이 0이다' },
   { id: 'T7', label: '문서에 적힌 상태와 실제 코드 상태가 같다' },
   { id: 'T8', label: '완료 기록이 실측 수치를 인용하고 확인 못 한 것을 적었다' },
+  { id: 'Q9', label: '위험도별 필수 게이트와 변경 코드 90% 커버리지' },
 ])
 
 const LABEL = Object.fromEntries(COMPLETION_CRITERIA.map((c) => [c.id, c.label]))
@@ -112,7 +113,10 @@ export function crossReviewResult(manifest) {
  */
 export function bmadStateAgreesWithCode({ storyText = '', sprintStatus = null, manifest = null } = {}) {
   const text = str(storyText)
-  const m = /^\s*(?:\*\*)?Status(?:\*\*)?\s*:\s*([A-Za-z가-힣\- ]+?)\s*$/m.exec(text)
+  // 워커가 `Status: review <!-- 회차 메모 -->` 처럼 상태 뒤에 HTML 주석을 붙여 두는 관례를 인정한다 — 주석은 상태값이 아니다.
+  // 주석 밖의 다른 꼬리(괄호 메모 등)는 종전대로 「Status 줄 없음」이다(상태값을 추측하지 않는다).
+  // 같은 줄의 주석 하나만(첫 `-->` 에서 닫힘 · 줄바꿈 불가(LF·CR·U+2028/2029) · 꼬리 공백은 공백·탭·CR 만 — Sol-high 10차 L2 · 11차 L1) — 다음 줄의 주석이나 두 번째 꼬리는 인정하지 않는다.
+  const m = /^\s*(?:\*\*)?Status(?:\*\*)?\s*:\s*([A-Za-z가-힣\- ]+?)[ \t\r]*(?:<!--(?:(?!-->)[^\r\n\u2028\u2029])*-->[ \t\r]*)?$/m.exec(text)
   const statusInFile = m ? m[1].trim() : null
   const inSprint = sprintStatus == null ? null : str(sprintStatus).trim()
   const openPatch = countOpenFindings(text, 'Patch')
@@ -140,6 +144,18 @@ export function bmadStateAgreesWithCode({ storyText = '', sprintStatus = null, m
     return { ok: null, why: '코드는 완료 조건을 채웠는데 문서는 아직 완료가 아니다 — 상태 전이가 남았다', statusInFile, statusInSprint: inSprint, expected, openPatch, openDecision }
   }
   return { ok: true, why: statusInFile === 'done' ? '문서·원장·코드가 모두 완료로 일치' : `문서·원장·코드가 모두 「${statusInFile}」로 일치`, statusInFile, statusInSprint: inSprint, expected, openPatch, openDecision }
+}
+
+/** 회수(dev 전용) 배치의 「리뷰 대기」 판정(👤 2026-09-07 · 동결 예외) — 이 배치엔 review 단계가 없어 T6(교차 검토)만 못 채웠고
+ *  T7 은 그 파생(「교차 검토가 성립하지 않았다」)뿐일 때 true. 열린 지적·사람 결정·검사 미통과가 섞이면 false(진짜 not-ready).
+ *  @param {Array<{id:string,result:string,why?:string}>} criteria 완주 게이트 판정 목록
+ *  @param {{hasReviewStage:boolean}} o 이 배치에 review 단계가 있었는가 */
+export function reviewPendingOnly(criteria, { hasReviewStage = false } = {}) {
+  if (hasReviewStage) return false
+  const failing = (Array.isArray(criteria) ? criteria : []).filter((c) => c && c.result !== PASS)
+  const t6 = failing.find((c) => c.id === 'T6')
+  if (!t6 || t6.result !== NOT_VERIFIED || !/교차 검토 기록이 없다|교차 검토를 돌리지 않았다/.test(str(t6.why))) return false
+  return failing.every((c) => c.id === 'T6' || (c.id === 'T7' && /교차 검토/.test(str(c.why)) && !/열린 지적|사람 결정|검사가 통과/.test(str(c.why))))
 }
 
 // ── 본체 ─────────────────────────────────────────────────────────────────────
@@ -170,7 +186,7 @@ export function strengthenCompletion({ manifest, storyText = '', diff = '', test
         kinds: Object.fromEntries(TEST_KINDS.map((kind) => [kind, Number.isFinite(Number(testEvidence.kinds?.[kind])) ? Number(testEvidence.kinds[kind]) : 0])),
       }
     : newTestsFromDiff(diff)
-  criteria.push(crit('T2', ...testKindsVerdict(tests)))
+  criteria.push(crit('T2', ...((m.quality?.risk?.category === 'docs' || m.quality?.risk?.source?.length === 0) ? [PASS, '문서·주석·정적 리소스 변경 — 코드 테스트 비적용'] : testKindsVerdict(tests))))
 
   // T3 — 검사 사슬
   {
@@ -208,6 +224,10 @@ export function strengthenCompletion({ manifest, storyText = '', diff = '', test
   const notes = completionNotesAudit({ manifest: m, storyText })
   criteria.push(crit('T8', notes.result, notes.why))
 
+  {
+    const quality = m.quality ?? { verdict: NOT_VERIFIED };
+    criteria.push({ id: 'Q9', label: '위험도별 필수 게이트와 변경 코드 90% 커버리지', result: quality.verdict === 'ready' ? PASS : quality.verdict === 'not-ready' ? FAIL : NOT_VERIFIED, why: `quality=${quality.verdict}` });
+  }
   const counts = {
     pass: criteria.filter((c) => c.result === PASS).length,
     fail: criteria.filter((c) => c.result === FAIL).length,
@@ -244,6 +264,9 @@ const KIND_KO = { normal: '정상', failure: '실패', boundary: '경계' }
 /** 케이스 한 건(이름 + 본문)의 유형 — 실패 > 경계 > 정상 우선순위(한 건은 한 유형으로만 센다). */
 export function classifyTestCase(blockText) {
   const s = str(blockText)
+  if (/\bassert\.(?:throws|rejects)\s*\(|\.rejects\b|\.toThrow\s*\(/.test(s)) return 'failure';
+  const title = /\b(?:it|test)\s*\(\s*(['"`])([^'"`]+)\1/.exec(s)?.[2];
+  if (title) return TEST_KIND_FAILURE_RE.test(title) ? 'failure' : TEST_KIND_BOUNDARY_RE.test(title) ? 'boundary' : 'normal';
   if (TEST_KIND_FAILURE_RE.test(s)) return 'failure'
   if (TEST_KIND_BOUNDARY_RE.test(s)) return 'boundary'
   return 'normal'
@@ -252,9 +275,10 @@ export function classifyTestCase(blockText) {
 /** 추가된 줄들을 테스트 케이스 단위 블록으로 자른다 — 케이스 선언 줄부터 다음 선언 줄 직전까지가 본문. */
 function testCaseBlocks(added = []) {
   const blocks = []
-  for (const a of added) {
+  const masked = maskJavaScript(added.map(a => str(a?.text)).join('\n')).code.split('\n');
+  for (const [i, a] of added.entries()) {
     const t = str(a?.text)
-    if (TEST_CASE_RE.test(t)) blocks.push([t])
+    if (TEST_CASE_RE.test(masked[i])) blocks.push([t])
     else if (blocks.length) blocks[blocks.length - 1].push(t)
   }
   return blocks.map((b) => b.join('\n'))
@@ -271,7 +295,7 @@ export function newTestsFromDiff(diff) {
   let cases = 0
   for (const [path, f] of Object.entries(byFile)) {
     if (!TEST_FILE_RE.test(path)) continue
-    const blocks = testCaseBlocks(f.added ?? [])
+    const blocks = testCaseBlocks(f.added ?? []).filter(b => /\b(?:expect\s*\(|assert(?:\.[A-Za-z]+)?\s*\()/.test(b))
     if (!blocks.length) continue
     files.push(path)
     cases += blocks.length

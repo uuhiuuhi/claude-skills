@@ -254,3 +254,37 @@ export function createGitGuard({
     cleanup() { try { rmSync(dir, { recursive: true, force: true }) } catch { /* 이미 없음 */ } },
   }
 }
+
+/** (N2 정밀화 · 2026-09-06) 사후 지문에서 **무시하는 ref 네임스페이스** — 워커가 아닌 도구가 같은 `.git` 에 남기는 기록.
+ *  Codex Desktop/CLI 는 turn 마다 `refs/codex/turn-diffs/checkpoints/<…>/<ms>/<uuid>` 체크포인트 ref 를 쓴다(2026-09-06 실측 —
+ *  linked worktree 로 `.git` 을 공유하는 운영 러너가 워커 실행 중 이 ref 가 생기자 「로컬 ref 지문이 달라졌다」로 STOP 3회).
+ *  이 네임스페이스는 HEAD·브랜치·태그·stash·remote 어느 것도 아니며 워커의 commit/reset/branch 우회와 무관하다.
+ *  ⚠️ 목록은 정확한 접두사만 — `refs/heads/`·`refs/tags/`·`refs/remotes/`·`refs/stash` 는 절대 넣지 않는다(탐지 대상). */
+export const GUARD_IGNORED_REF_NAMESPACES = Object.freeze(['refs/codex/'])
+
+/** `git show-ref` 출력에서 무시 네임스페이스 줄만 뺀다 — 나머지(heads·tags·remotes·stash·notes·기타)는 그대로 지문에 남는다. */
+export function filterGuardRefs(showRefOut, ignored = GUARD_IGNORED_REF_NAMESPACES) {
+  return String(showRefOut ?? '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((l) => {
+      const name = l.split(/\s+/)[1] ?? ''
+      return !ignored.some((prefix) => name.startsWith(prefix))
+    })
+    .join('\n')
+}
+
+/** (N2) 로컬 git 이동의 흔적 — HEAD reflog 엔트리 수 + (무시 네임스페이스를 뺀) 모든 로컬 ref.
+ *  절대경로 git 우회로 `commit → reset` 을 해도 **reflog 는 자란다**(HEAD 값은 원상복구돼도 기록은 남는다).
+ *  저장소가 아니면 `reflog=-1` + 빈 ref 목록(전후 비교는 같음). `exec` 주입은 테스트용. */
+export function localGitFingerprintFor(cwd, { exec = spawnSync, ignored = GUARD_IGNORED_REF_NAMESPACES } = {}) {
+  const run = (args) => {
+    const r = exec('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, windowsHide: true })
+    return { code: r.status ?? 1, out: `${r.stdout || ''}` }
+  }
+  const reflog = run(['reflog', 'show', '--format=%H', 'HEAD'])
+  const refs = run(['show-ref'])
+  const n = reflog.code === 0 ? reflog.out.split('\n').filter((l) => l.trim()).length : -1
+  return `reflog=${n}\n${refs.code === 0 ? filterGuardRefs(refs.out, ignored) : ''}`
+}

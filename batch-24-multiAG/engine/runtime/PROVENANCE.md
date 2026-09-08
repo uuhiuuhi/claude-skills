@@ -1,7 +1,6 @@
-# Project-pinned batch runtime
+# Canonical runtime
 
-Copied from the installed `auto-story-finish` runtime on 2026-09-06, then adapted for this project's routing policy. The upstream pipeline SHA-256 before changes was `BDD5ECC215FCB5F6F1BB24A452DD9181BD03BD214B29F97DE75392D01F3553D2`.
-
-This directory is versioned together with `tools/auto`. It is not a separately installable global skill: the pipeline also imports project assignment and runner rules. The entry point is `tools/auto/run-night.mjs`; skill instructions live in `.claude/skills/night-batch/SKILL.md`.
-
-Do not overwrite this directory from a global skill update. Review upstream changes and run the regression tests before adopting them. The local resolver uses one runtime for both executable and helper modules; `AUTO_STORY_RUNTIME` is an explicit override and fails if a requested module is absent.
+This directory is the sole story-pipeline source in batch-24-multiAG. The scheduler modules are its siblings in engine/.
+It consolidates auto-story-finish and night-batch-ops; original hashes and retained artifacts are recorded in
+../../references/consolidation-inventory.json. Installation copies the entire matched engine tree to tools/auto/.
+No old global skill is needed at runtime. Version updates are adopted only at an idle batch boundary after regression and installation checks.

@@ -13,7 +13,7 @@ export function recordModelEvent(stateDir, { model, kind, now = Date.now(), star
   const scope = ['auth', 'spend', 'transient'].includes(kind) ? providerOf(spec) : spec;
   const delays = { limit: 15 * 60_000, auth: 5 * 60_000, spend: 30 * 60_000, unavailable: 60 * 60_000, transient: 60_000, other: 5 * 60_000 };
   const deadline = Number(retryAt);
-  const event = { schema: 1, id: randomUUID(), model: spec, scope, kind, at: now, startedAt,
+  const event = { schema: 'batch-24-multiag/model-health/1', id: randomUUID(), model: spec, scope, kind, at: now, startedAt,
     retryAt: kind === 'success' ? null : Number.isFinite(deadline) && deadline > now ? deadline : now + (delays[kind] ?? delays.other),
     role, story, detail: redactSecrets(String(detail)).slice(0, 500) };
   const file = join(dir, `${now}-${event.id}.json`);
@@ -29,7 +29,7 @@ export function readModelHealth(stateDir, now = Date.now()) {
     try { names = readdirSync(join(stateDir, 'model-health')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
     for (const name of names.filter((n) => n.endsWith('.json')).sort()) {
       const e = JSON.parse(readFileSync(join(stateDir, 'model-health', name), 'utf8'));
-      if (e.schema !== 1 || !Number.isFinite(e.at) || !e.scope) throw new Error('invalid model-health event');
+      if (![1, 'batch-24-multiag/model-health/1'].includes(e.schema) || !Number.isFinite(e.at) || !e.scope) throw new Error('invalid model-health event');
       const prev = latest.get(e.scope);
       // A request already in flight when quota failed cannot clear that newer failure.
       const staleSuccess = e.kind === 'success' && prev?.kind !== 'success' && (e.startedAt ?? e.at) <= prev?.at;

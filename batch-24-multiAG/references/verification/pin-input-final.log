@@ -1,0 +1,26 @@
+✔ pin input boundary: missing revision stdout stops before ancestry or diff checks (2.4842ms)
+✔ pin input boundary: missing or malformed merge base stops before any tooling diff (0.5245ms)
+✔ pin input boundary: missing or empty paths fail before Git is called (0.376ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 104.2723
+ℹ start of coverage report
+ℹ ------------------------------------------------------------------------------------------
+ℹ file                              | line % | branch % | funcs % | uncovered lines
+ℹ ------------------------------------------------------------------------------------------
+ℹ ..                                |        |          |         |
+ℹ  claude-skills-quality-gates-9    |        |          |         |
+ℹ   _verification                   |        |          |         |
+ℹ    capture-source.mjs             | 100.00 |   100.00 |  100.00 |
+ℹ   batch-24-multiAG                |        |          |         |
+ℹ    engine                         |        |          |         |
+ℹ     runtime-pin.mjs               |  79.63 |    75.00 |  100.00 | 14-15 30-32 38-40 50-52
+ℹ ------------------------------------------------------------------------------------------
+ℹ all files                         |  84.51 |    79.41 |  100.00 |
+ℹ ------------------------------------------------------------------------------------------
+ℹ end of coverage report

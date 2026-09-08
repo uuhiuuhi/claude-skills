@@ -1,0 +1,22 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { asfCandidates, resolveAsf } from './asf-resolve.mjs';
+test('runtime resolution normal and failure: explicit override, pinned sibling, missing module and invalid names',async t=>{
+  const root=mkdtempSync(join(tmpdir(),'batch-pinned-resolution-')),saved=process.env.AUTO_STORY_RUNTIME;
+  t.after(()=>{if(saved===undefined)delete process.env.AUTO_STORY_RUNTIME;else process.env.AUTO_STORY_RUNTIME=saved;rmSync(root,{recursive:true,force:true});});
+  const pinned=join(root,'runtime'),override=join(root,'override');mkdirSync(pinned);mkdirSync(override);
+  writeFileSync(join(pinned,'version.mjs'),'export const version="pinned";');
+  writeFileSync(join(override,'version.mjs'),'export const version="override";');
+  delete process.env.AUTO_STORY_RUNTIME;
+  assert.deepEqual(asfCandidates('version.mjs',{here:root}),[join(pinned,'version.mjs')]);
+  assert.equal((await import(resolveAsf('version.mjs',{here:root}))).version,'pinned');
+  assert.throws(()=>resolveAsf('missing.mjs',{here:root}),/pinned runtime missing.*reinstall/);
+  process.env.AUTO_STORY_RUNTIME=override;
+  assert.equal(fileURLToPath(resolveAsf('version.mjs',{here:root})),join(override,'version.mjs'));
+  assert.equal((await import(resolveAsf('version.mjs',{here:root}))).version,'override');
+  for(const name of ['',null,'../escape','/absolute','\\absolute'])assert.throws(()=>asfCandidates(name),/invalid runtime/);
+});

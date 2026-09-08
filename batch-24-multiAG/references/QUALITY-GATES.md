@@ -1,0 +1,136 @@
+# Quality gates and evidence
+
+| Class | Required worker gates |
+|---|---|
+| docs | None: documents, comments and static resources only |
+| fast / standard | typecheck, lint, affected unit, changed-lines/branches coverage >= 90% |
+| api | standard + affected API integration + authorization policy report |
+| auth-db | standard + authorization matrix + security; API integration if routes changed |
+| performance | standard + performance; combine with API/auth gates when applicable |
+
+Risk classifications are additive. Deletions count. Performance does not trigger merely because a directory is named batch/queue.
+Unsupported or missing mandatory evidence fails closed. An inapplicable optional script is never required.
+
+## Project scripts
+
+Define `typecheck`, `lint`, `test:affected`, `coverage` (or `test:coverage:changed`),
+`test:api`, `test:authorization`, `test:security`, `test:perf` as applicable.
+For landing define `test:all` (or `test`) and `test:integration`.
+Affected test adapters receive `BATCH_BASE` and JSON `BATCH_CHANGED_FILES`.
+Use a verbose or TAP reporter: changed test names must appear in passing test results, not merely in source.
+The current evidence reader supports literal `it/test` cases with expect/assert assertions and TAP or verbose checkmark results.
+Parameterized/custom test runners need a compatible reporter/adapter; missing evidence is not a pass.
+
+Return LCOV at `coverage/lcov.info`. Every executable changed line must be instrumented.
+Missing files/lines are `not-verified`; whole-repository coverage cannot mask excluded new code.
+Changed branch coverage is also >= 90% when the LCOV includes branches.
+Coverage percentage has no denominator for comment/import/structural-only changes; this is explicitly recorded.
+
+Optional `tools/auto/quality.config.json` sets `lcov`, `authorizationReport`, `apiReport`, `timeoutMs`.
+`sensitivePaths` accepts `api`, `authDb`, `performance` arrays of project-relative prefixes; these can add scopes, never remove detected risks.
+`test:affected` (or `test:unit:affected`) is mandatory for code workers; there is no whole-suite fallback.
+Reports must stay inside the project. Old report files are removed before a fresh run.
+Keep coverage artifacts out of git. Test commands must not mutate source; before/after SHA-256 must match.
+
+## Authorization and API adapters
+
+The `test:api` command writes `BATCH_API_REPORT` with:
+`{ nonce: BATCH_VERIFICATION_NONCE, codeFingerprint: BATCH_CODE_FINGERPRINT, endpoints: [...] }`.
+Each endpoint has `source`, `method`, `route`, and `authorizationApplied: true`.
+Intentionally public endpoints instead record `public: true` with a specific `publicReason` reviewed by the independent reviewer.
+Every affected API source file must appear. This report is an integration-test contract, not a proof that a boolean declaration alone enforces middleware.
+
+For auth/permission/DB/RLS changes, `test:authorization` must execute:
+anonymous=401, authenticated forbidden=403, allowed role=2xx, existing foreign tenant/company resource=403 or 404.
+Use `tools/auto/runtime/authorization-matrix.mjs`: `verifyAuthorization()` sends actual requests;
+`writeAuthorizationReport()` writes a nonce/fingerprint-bound report. Use isolated test data and real application middleware.
+Unit mocks and fixture-only tests are not evidence of production authentication/tenant isolation.
+A missing security script blocks completion even if every other gate passes.
+
+## Execution and cache
+
+Run cheap diff/integrity/test-presence checks first. Typecheck, lint and independent unit commands run concurrently.
+Stateful security/API/performance commands run sequentially. Identical script bodies share a single promise and result.
+Prefer an affected-unit command that emits both verbose results and LCOV; alias coverage to that same command to avoid rerunning tests.
+The cache key includes HEAD, baseline, content SHA-256, full diff, scripts, config, phase, policy implementation, Node version, platform and architecture.
+Only ready results are cached. Old or malformed cache is a miss. Cache storage is project-local pipeline logs.
+Do not treat editable local cache as a security boundary against an administrator who can modify the engine itself.
+
+Worker manifests record commands, exit status, reason, timing, coverage, observed tests, risk and code fingerprints.
+Worker integration is explicitly outside its scope; landing manifests record the combined full/integration result.
+Landing failure blocks push and preserves rollback evidence. A missing/non-ready worker manifest blocks publication.
+A post-landing source change invalidates publication. `not-ready` and `not-verified` never authorize done/commit/push.
+Partial `--stages dev` can return its phase result while leaving completion unverified and refusing commit/push.
+
+## Limits requiring independent review
+
+Diff heuristics are conservative, not a language-complete AST/security analyzer. Test names/coverage do not prove assertion quality.
+Review middleware placement, all changed endpoints/methods, tenant fixture setup, thresholds and test-report adapters.
+Comments containing lint/coverage disabling directives are not exempt documentation.
+Measure real application workloads separately from deterministic stub benchmarks; never label stub latency as LLM throughput.
+
+Claude reviews request `--output-format stream-json --verbose`. Only successful Read tool results for every requested story/diff/changed path establish review evidence; prose and failed reads do not. Codex review evidence continues to use its structured CLI events. Raw CLI output is redacted before storage.
+
+Legacy `integrationGate.retry` is read but ignored. The first landing RED immediately preserves evidence, rolls back and blocks publication; it is never retried into GREEN.
+
+## Complete API surfaces
+
+API reports are matched by `source + method + route`, not one row per source file. Static root
+`app.get/post/put/patch/delete/head/options` registrations and Next app-router exports are discovered.
+Mounted `router.*`, dynamic dispatch and unsupported frameworks remain `not-verified` until reviewed
+`quality.config.json` `apiEndpoints` entries bind the complete inventory to the current source SHA-256:
+`[{"source":"src/api/handler.ts","sourceSha256":"<sha256>","endpoints":[{"method":"POST","route":"/items"}]}]`.
+The inventory must include every statically discovered registration; stale hashes or omitted methods block.
+A test report cannot declare its own expected surface. Removed/dynamic/mounted routes that cannot be
+established by this contract remain unverified and require a project adapter/review, never a fabricated row.
+
+## Vitest adapter
+
+The installer pins `adapters/vitest-quality.mjs` under `tools/auto/adapters`. Configure explicit unit and
+integration scopes in project-root `quality-adapter.config.json`; their union must retain the project's
+existing regression scope. Install `@vitest/coverage-v8` at the exact installed Vitest version.
+Set both `test:affected` and `coverage` to `node tools/auto/adapters/vitest-quality.mjs affected`.
+Use modes `all` for the full unit scope and `integration` for the integration scope at landing.
+The adapter uses Vitest's dependency graph and produces real LCOV in the same affected run.
+No mapping, no tests, missing instrumentation, missing required environment, or skipped mandatory integration
+is a failure. Capability output only describes availability; it is not execution evidence. SQL/Deno coverage
+and actual API/auth/security/performance adapters must be supplied by the project when relevant.
+
+Declared `integration.requiredEnv` names are resolved from the process environment first and then from the project
+root env file (`integration.envFile`, default `.env.local`, parsed like the project's own tests: optional `export`,
+matching quotes stripped, unquoted inline `#` comments cut). Only presence is checked; values are never printed.
+
+### Reviewed integration skip policy
+
+`integration.skipPolicy` in `quality-adapter.config.json` classifies **every** skipped test of the integration scope
+(`schema: batch-24-multiag/skip-policy/1`, `reviewedOn`, `reviewedBy`, `entries[]`). Each entry names one test
+(`file` + exact full name), a `category`, a `kind`, a `rationale`, and for optional entries the `evidence`:
+
+| category | effect at landing |
+|---|---|
+| `required-missing` | a check that must run and did not — **always blocks** completion and push; the exact item is reported |
+| `optional-not-applicable` | an approved optional check with evidence that it does not apply here — tolerated and **reported separately** |
+
+Unlisted skips block as `unclassified`. Only mechanically checked evidence can authorize tolerance:
+`coveredBy` (a named covering test in a test file must pass in the same run — its own name or the full
+`suite > … > name`), `envMissing` (the listed variables must be absent) and `envNotArmed` (the arming flag must be off —
+same rule as the project's probes: any non-empty value except `0`/`false` is armed; declared names resolve exactly like
+`process.env.X || fromFile.X`). Environment evidence must be bound to the test's gating code: every named variable must be
+actually looked up (`process.env.NAME`, `env.NAME`, `fromFile.NAME` or `['NAME']`) in the skipped test's own file or in
+the declared `envSource` — a JavaScript/TypeScript module that the test file imports (for example a shared
+`tests/db/client.ts` helper). Both files are parsed with the TypeScript compiler API (the project's `typescript` package;
+its absence, or a file that does not parse, fails closed), so comments, strings, regular-expression literals,
+configuration/JSON files and unrelated modules never qualify. `documented` is an annotation only and never sufficient
+by itself; optional `note` additionally requires the runtime `ctx.skip(note)` text to match. Under a policy a module whose
+tests are all skipped is classified test by test like any other skip; a failed module still ends the run.
+
+Tolerance is also denied when the change scope is missing (manual runs fail closed) or cannot be mapped: the landing
+change (`BATCH_BASE`/`BATCH_CHANGED_FILES`) is mapped through Vitest's dependency graph over the whole project scope
+(unit ∪ integration) — a changed test file affects itself, a changed JavaScript/TypeScript file affects the modules
+Vitest maps to it (a file covered only by unit tests is mapped and affects no integration module), and a file no test
+anywhere depends on or any
+non-JavaScript executable/configuration change (SQL migrations, `supabase/**`, package/lock files, the policy file
+itself, tool configuration, data fixtures such as `.csv`/`.jsonl`/`.json`) denies **all** optional tolerance because its
+integration impact cannot be established. Only documents and images by extension (`.md`, `.txt`, `.rst`, `.png`, `.svg`,
+`.pdf`, …) are ignored — a data file is data wherever it lives (`docs/…/rows.csv` still denies). The policy never deletes, excludes or rewrites a test; the full list stays in
+the suite and approved skips are never counted as executed evidence.

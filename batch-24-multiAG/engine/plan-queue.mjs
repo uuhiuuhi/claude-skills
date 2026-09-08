@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readRecord } from './runtime/schema-migration.mjs';
 // 큐 자동 편성기 — 「다음 할 일」을 규칙만으로 고른다. LLM 호출 0.
 // 이식판: 프로젝트 고유값(에픽 순서·병행 허용·하루 상한·목업 게이트·상태 폴더)은 전부
 // `tools/auto/auto.config.json` 이 소유한다 — 이 파일에는 프로젝트 이름이 없다.
@@ -72,7 +73,7 @@ const allowNewUnderChain = RULES.allowNewUnderChain ?? ((ageDays) => (ageDays ??
 /** 프로젝트 설정 — 없으면 빈 객체(호출부가 필수값 부재를 판정한다) */
 export function loadConfig(root) {
   const p = join(root, 'tools', 'auto', 'auto.config.json')
-  try { return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : {} } catch { return {} }
+  try { return existsSync(p) ? readRecord(readFileSync(p, 'utf8')) : {} } catch { return {} }
 }
 
 export function todayStr(d = new Date()) {
@@ -83,7 +84,7 @@ export function todayStr(d = new Date()) {
 const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null)
 // 부수 상태 파일(상한 연장·체인 정보)은 다른 프로세스가 쓴다 — 반쯤 쓰인 파일 하나가
 // 편성기를 통째로 세우면 무정지가 아니다. 깨졌으면 「없음」으로 보고 계속한다.
-const readJson = (p) => { try { return JSON.parse(readIf(p) ?? '{}') } catch { return {} } }
+const readJson = (p) => { try { return readRecord(readIf(p) ?? '{}') } catch { return {} } }
 
 export function plan({ root, stateDir, max, today = todayStr(), config }) {
   const cfg = config ?? loadConfig(root)
@@ -96,7 +97,7 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   // guarded(기본 · 종전) 는 아래 규칙 1~10 그대로다. full 은 「되돌릴 수 없는 실행」만 사람 몫으로 남기고
   // 결정·회수 라운드 개방·재투입 금지·무진전·체인·상한·목업 승인을 전부 편성 안에서 푼다(replan/mockup 단계).
   const AUTO = cfg.autonomy?.mode === 'full'
-  const autoCfg = { maxReplansPerStory: 2, epicScope: 'all', mockups: 'ai-draft', ...(cfg.autonomy ?? {}) }
+  const autoCfg = { maxReplansPerStory: 2, maxReviewRoundsPerStory: 2, epicScope: 'all', mockups: 'ai-draft', ...(cfg.autonomy ?? {}) }
   const humanGates = [] // { key, type: 'question'|'gate'|'post-hoc', text } — 「내가 할 일 뭐야」 재료
   // 상한은 페이스가 아니라 폭주 방지 백스톱이다 — 몫을 다 했다고 남은 슬롯이 쉬면 안 된다
   // (실사고: 상한 12 시절, 오전에 12건 소진 후 남은 슬롯이 통째로 놀았다). 실질 제동은
@@ -117,12 +118,12 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   const epicsText = readIf(join(root, '_bmad-output', 'planning-artifacts', 'epics.md')) ?? ''
   const inboxText = readIf(join(ART, 'DECISIONS-INBOX.md')) ?? ''
   const verdictsPath = String(gateCfg.verdictsPath ?? MOCKUP_GATE_DEFAULT.verdictsPath).split(/[/\\]+/).filter(Boolean)
-  const verdicts = gateCfg.marker ? JSON.parse(readIf(join(root, ...verdictsPath)) ?? '{}') : {}
+  const verdicts = gateCfg.marker ? readRecord(readIf(join(root, ...verdictsPath)) ?? '{}') : {}
   if (!sprintText) throw new Error('sprint-status.yaml 을 읽지 못했다 — 편성 불가(빈 큐를 정상인 척 내보내지 않는다)')
 
   // 일일 상한 원장 — 상태 파일은 저장소 밖(워크트리 reset 에 안 쓸린다)
   const statePath = join(stateDir, 'auto-plan-state.json')
-  const state = JSON.parse(readIf(statePath) ?? '{}')
+  const state = readRecord(readIf(statePath) ?? '{}')
   state.days ??= {}
   state.replans ??= {} // full: 스토리별 replan 회차(진전이 나면 0 으로 본다)
   // day.progressed[] 는 러너가 쓴다(그 라운드 커밋이 실제로 만진 스토리 키) — 규칙 9 v2 의 재료.
@@ -239,16 +240,34 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
       if (s.banPresent && s.unfinishedTasks === 0) why.push('재투입 금지 표기는 조언으로만 봄') // 미완 기계 Task 가 있으면 답은 replan 이 아니라 dev 다(리뷰 #1 · 무한 replan 방지)
       if (why.length) { stages = ['replan', ...stages]; notes.push(...why) }
     }
+    let replanHint = null
+    // 리뷰 비용 상한(👤 2026-09-07 「2 예」 · 같은 날 「리뷰 횟수 최적화」로 **모든 리뷰어** 계수): 마지막 replan 뒤 리뷰가 상한(기본 2)에 닿았으면 다음 리뷰 전에 replan 이
+    // 먼저 원인을 바꾼다 — 같은 코드에 세 번째 리뷰(회당 25~30만 토큰)를 붓지 않는다. 마감 재검수는 replan→dev→review 로 바꿔
+    // replan 이 연 Task 를 dev 가 실제로 반영한 뒤에만 리뷰한다. replan 은 표식(### Replan/회수 라운드)을 남겨 카운터를 다시 연다.
+    const reviewCap = Number(autoCfg.maxReviewRoundsPerStory)
+    const reviews = Number(s.reviewsSinceReplan ?? s.codexReviewsSinceReplan ?? 0) // 모든 리뷰어(bmad-code-review 포함) — Codex 만 세면 발동하지 않는다(09-07 실측 11건 0/0)
+    // 총량 상한(Sol-high 16차 H2): replan 은 표식으로 since-카운터를 되돌리므로 총량이 「리뷰 상한 × (replan 상한 + 1)」(기본 2×3 = 6 —
+    // dev-status 리뷰 반복 게이트 6 과 같은 잣대)에 닿으면 그 스토리만 「자율 한계」로 사람 질문에 올린다. 사람이 풀 때는 스토리 파일
+    // 0열에 `REVIEW-CAP-RESET: <날짜> — <사유>` 한 줄을 적는다(그 뒤부터 다시 센다).
+    const reviewGate = reviewCap > 0 ? reviewCap * (Number(autoCfg.maxReplansPerStory) + 1) : 0
+    const reviewsTotal = Number(s.reviewsTotal ?? s.codexReviewsTotal ?? 0)
+    if (reviewGate > 0 && stages.includes('review') && reviewsTotal >= reviewGate) {
+      return gateOut(r.key, 'question', '자율 한계 — 리뷰 ' + reviewsTotal + '회(모든 리뷰어 · 총량 상한 ' + reviewGate + ' = 리뷰 ' + reviewCap + '회 × replan ' + (Number(autoCfg.maxReplansPerStory) + 1) + '회) · 원인이 코드 밖일 수 있다 — 사람 판단 후 스토리 파일에 `REVIEW-CAP-RESET: <날짜> — <사유>` 줄로 해제')
+    }
+    if (reviewCap > 0 && stages.includes('review') && !stages.includes('replan') && reviews >= reviewCap) {
+      stages = ['replan', ...(kind === 'closeout' ? ['dev', 'review'] : stages)]
+      replanHint = '리뷰 ' + reviews + '회 소진(상한 ' + reviewCap + ') — 다음 리뷰 전에 접근을 바꿔라(남은 findings 의 원인 재진단 · 과제 재작성/분할 · 다른 구현 경로)'
+      notes.push('리뷰 ' + reviews + '회 → replan 선행(상한 ' + reviewCap + ')')
+    }
     const mp = kind === 'closeout' ? { stage: false } : mockupPlan(section, r.key) // 마감 재검수엔 목업 초안을 붙이지 않는다
     if (mp.block) return exclude(r.key, mp.block), null
     if (mp.stage) { stages = ['mockup', ...stages]; notes.push(mp.note) }
-    let replanHint = null
     if (streak >= 2) {
       if (overLimit()) return gateOut(r.key, 'question', limitWhy())
       // replan 회차(state.replans)는 **러너가 실제로 replan 배치를 돌린 라운드**에만 올린다(리뷰 #2 —
       // 편성 시점에 깎으면 한 번도 안 돌고 「자율 한계」로 빠진다). 편성기는 읽기만 한다.
       if (!stages.includes('replan')) stages = ['replan', ...stages]
-      replanHint = '무진전 편성 ' + streak + '회 — 접근을 바꿔라(과제 재작성·분할·다른 구현 경로)'
+      replanHint = [replanHint, '무진전 편성 ' + streak + '회 — 접근을 바꿔라(과제 재작성·분할·다른 구현 경로)'].filter(Boolean).join(' · ')
       notes.push('무진전 ' + streak + '회 → replan ' + (replansOf(r.key) + 1) + '/' + autoCfg.maxReplansPerStory)
     }
     // 어떤 갈래로든 replan 이 앞섰는데 회차가 상한이면 replan 을 떼고 dev 만 돌린다(리뷰 #1-2 · replan 무한 반복 방지)
@@ -482,7 +501,9 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
       ' · 오늘 기편성 ' + day.planned.length + (chainAgeDays > 0 ? ' · 체인 ' + chainAgeDays + '일' : '') + ')',
     // parallel ≥ 2 = 병렬 점화 — File List 서로소 2스토리 dev 배치(규칙 5 짝)만 러너가
     // 워크트리 분리 병렬로 돌린다. 조건 미달 배치는 러너가 순차 폴백(runner-rules.parallelPlan).
-    defaults: { waitAuthMin: 480, stageTimeoutMin: 150, commit: true, push: true, parallel: cfg.parallel ?? 2 },
+    // push 는 **기본 끔** — 프로젝트 설정 `push: true`(사람이 원격 push 를 승인한 표시)일 때만 켠다. 값이 없거나 오타면 push 하지 않는다
+    // (Sol-high 10차: 옵트아웃이면 설정 누락이 곧 무승인 push 다). commit 은 그대로 로컬 auto/* 에 남는다.
+    defaults: { waitAuthMin: 480, stageTimeoutMin: 150, commit: true, push: cfg.push === true, parallel: cfg.parallel ?? 2 },
     batches: batches.map((b, i) => ({
       label: 'AUTO-' + (i + 1) + ': ' + b.map((c) => c.key.split('-').slice(0, 2).join('-')).join(' · ') + ' (' + (b[0].kind === 'recovery' ? '회수' : b[0].kind === 'closeout' ? '마감 재검수' : '신규') + ')',
       enabled: true,

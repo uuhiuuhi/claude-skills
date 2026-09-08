@@ -1,0 +1,361 @@
+{
+  "schema": "batch-24-multiag/gate-benchmark/1",
+  "baseline": [
+    {
+      "exit": 0,
+      "wallClockMs": 21514,
+      "metrics": {
+        "batchId": "2026-09-06-1788676478449",
+        "label": "라운드 1",
+        "branch": "auto/2026-09-06",
+        "planSource": "deterministic",
+        "schema": "batch-24-multiag/metrics/1",
+        "workers": 2,
+        "wallMs": 21109,
+        "serialMs": 18850,
+        "occupancyMs": 23305,
+        "idleMs": 18913,
+        "idleRatio": 0.448,
+        "parallelEfficiency": 0.4465,
+        "stories": [
+          {
+            "story": "2-1-a",
+            "ms": 19136,
+            "stages": 3,
+            "exit": 0
+          },
+          {
+            "story": "2-2-b",
+            "ms": 4169,
+            "stages": 3,
+            "exit": 0
+          }
+        ],
+        "p50Ms": 4169,
+        "p95Ms": 19136,
+        "retries": {
+          "repairRounds": 0,
+          "providerSwitches": 2
+        },
+        "modelCalls": [
+          {
+            "provider": "claude",
+            "model": "fable",
+            "calls": 2,
+            "tokens": 0
+          },
+          {
+            "provider": "codex",
+            "model": "codex:default",
+            "calls": 2,
+            "tokens": 3000
+          }
+        ],
+        "tokens": 3000,
+        "qualityGate": {
+          "passed": true,
+          "why": "qa GREEN · 리뷰 high 0 · 통합 pass"
+        }
+      }
+    },
+    {
+      "exit": 0,
+      "wallClockMs": 21756,
+      "metrics": {
+        "batchId": "2026-09-06-1788676532480",
+        "label": "라운드 1",
+        "branch": "auto/2026-09-06",
+        "planSource": "deterministic",
+        "schema": "batch-24-multiag/metrics/1",
+        "workers": 2,
+        "wallMs": 21367,
+        "serialMs": 18777,
+        "occupancyMs": 24039,
+        "idleMs": 18695,
+        "idleRatio": 0.4375,
+        "parallelEfficiency": 0.4394,
+        "stories": [
+          {
+            "story": "2-1-a",
+            "ms": 4727,
+            "stages": 3,
+            "exit": 0
+          },
+          {
+            "story": "2-2-b",
+            "ms": 19312,
+            "stages": 3,
+            "exit": 0
+          }
+        ],
+        "p50Ms": 4727,
+        "p95Ms": 19312,
+        "retries": {
+          "repairRounds": 0,
+          "providerSwitches": 2
+        },
+        "modelCalls": [
+          {
+            "provider": "claude",
+            "model": "fable",
+            "calls": 2,
+            "tokens": 0
+          },
+          {
+            "provider": "codex",
+            "model": "codex:default",
+            "calls": 2,
+            "tokens": 3000
+          }
+        ],
+        "tokens": 3000,
+        "qualityGate": {
+          "passed": true,
+          "why": "qa GREEN · 리뷰 high 0 · 통합 pass"
+        }
+      }
+    },
+    {
+      "exit": 0,
+      "wallClockMs": 22031,
+      "metrics": {
+        "batchId": "2026-09-06-1788676585696",
+        "label": "라운드 1",
+        "branch": "auto/2026-09-06",
+        "planSource": "deterministic",
+        "schema": "batch-24-multiag/metrics/1",
+        "workers": 2,
+        "wallMs": 21624,
+        "serialMs": 19209,
+        "occupancyMs": 24316,
+        "idleMs": 18932,
+        "idleRatio": 0.4378,
+        "parallelEfficiency": 0.4442,
+        "stories": [
+          {
+            "story": "2-1-a",
+            "ms": 4737,
+            "stages": 3,
+            "exit": 0
+          },
+          {
+            "story": "2-2-b",
+            "ms": 19579,
+            "stages": 3,
+            "exit": 0
+          }
+        ],
+        "p50Ms": 4737,
+        "p95Ms": 19579,
+        "retries": {
+          "repairRounds": 0,
+          "providerSwitches": 2
+        },
+        "modelCalls": [
+          {
+            "provider": "claude",
+            "model": "fable",
+            "calls": 2,
+            "tokens": 0
+          },
+          {
+            "provider": "codex",
+            "model": "codex:default",
+            "calls": 2,
+            "tokens": 3000
+          }
+        ],
+        "tokens": 3000,
+        "qualityGate": {
+          "passed": true,
+          "why": "qa GREEN · 리뷰 high 0 · 통합 pass"
+        }
+      }
+    }
+  ],
+  "candidate": [
+    {
+      "exit": 0,
+      "wallClockMs": 26466,
+      "metrics": {
+        "batchId": "2026-09-06-1788676507177",
+        "label": "라운드 1",
+        "branch": "auto/2026-09-06",
+        "planSource": "deterministic",
+        "schema": "batch-24-multiag/metrics/1",
+        "workers": 2,
+        "wallMs": 26061,
+        "serialMs": 21134,
+        "occupancyMs": 27929,
+        "idleMs": 24193,
+        "idleRatio": 0.4642,
+        "parallelEfficiency": 0.4055,
+        "stories": [
+          {
+            "story": "2-1-a",
+            "ms": 6458,
+            "stages": 3,
+            "exit": 0
+          },
+          {
+            "story": "2-2-b",
+            "ms": 21471,
+            "stages": 3,
+            "exit": 0
+          }
+        ],
+        "p50Ms": 6458,
+        "p95Ms": 21471,
+        "retries": {
+          "repairRounds": 0,
+          "providerSwitches": 2
+        },
+        "modelCalls": [
+          {
+            "provider": "claude",
+            "model": "fable",
+            "calls": 2,
+            "tokens": 0
+          },
+          {
+            "provider": "codex",
+            "model": "codex:default",
+            "calls": 2,
+            "tokens": 3000
+          }
+        ],
+        "tokens": 3000,
+        "qualityGate": {
+          "passed": true,
+          "why": "qa GREEN · 리뷰 high 0 · 통합 pass"
+        }
+      }
+    },
+    {
+      "exit": 0,
+      "wallClockMs": 25843,
+      "metrics": {
+        "batchId": "2026-09-06-1788676560381",
+        "label": "라운드 1",
+        "branch": "auto/2026-09-06",
+        "planSource": "deterministic",
+        "schema": "batch-24-multiag/metrics/1",
+        "workers": 2,
+        "wallMs": 25429,
+        "serialMs": 20923,
+        "occupancyMs": 27390,
+        "idleMs": 23468,
+        "idleRatio": 0.4614,
+        "parallelEfficiency": 0.4114,
+        "stories": [
+          {
+            "story": "2-1-a",
+            "ms": 6211,
+            "stages": 3,
+            "exit": 0
+          },
+          {
+            "story": "2-2-b",
+            "ms": 21179,
+            "stages": 3,
+            "exit": 0
+          }
+        ],
+        "p50Ms": 6211,
+        "p95Ms": 21179,
+        "retries": {
+          "repairRounds": 0,
+          "providerSwitches": 2
+        },
+        "modelCalls": [
+          {
+            "provider": "claude",
+            "model": "fable",
+            "calls": 2,
+            "tokens": 0
+          },
+          {
+            "provider": "codex",
+            "model": "codex:default",
+            "calls": 2,
+            "tokens": 3000
+          }
+        ],
+        "tokens": 3000,
+        "qualityGate": {
+          "passed": true,
+          "why": "qa GREEN · 리뷰 high 0 · 통합 pass"
+        }
+      }
+    },
+    {
+      "exit": 0,
+      "wallClockMs": 26211,
+      "metrics": {
+        "batchId": "2026-09-06-1788676614218",
+        "label": "라운드 1",
+        "branch": "auto/2026-09-06",
+        "planSource": "deterministic",
+        "schema": "batch-24-multiag/metrics/1",
+        "workers": 2,
+        "wallMs": 25779,
+        "serialMs": 20891,
+        "occupancyMs": 27268,
+        "idleMs": 24290,
+        "idleRatio": 0.4711,
+        "parallelEfficiency": 0.4052,
+        "stories": [
+          {
+            "story": "2-1-a",
+            "ms": 6082,
+            "stages": 3,
+            "exit": 0
+          },
+          {
+            "story": "2-2-b",
+            "ms": 21186,
+            "stages": 3,
+            "exit": 0
+          }
+        ],
+        "p50Ms": 6082,
+        "p95Ms": 21186,
+        "retries": {
+          "repairRounds": 0,
+          "providerSwitches": 2
+        },
+        "modelCalls": [
+          {
+            "provider": "claude",
+            "model": "fable",
+            "calls": 2,
+            "tokens": 0
+          },
+          {
+            "provider": "codex",
+            "model": "codex:default",
+            "calls": 2,
+            "tokens": 3000
+          }
+        ],
+        "tokens": 3000,
+        "qualityGate": {
+          "passed": true,
+          "why": "qa GREEN · 리뷰 high 0 · 통합 pass"
+        }
+      }
+    }
+  ],
+  "comparison": {
+    "beforeMs": 21756,
+    "afterMs": 26211,
+    "increasePercent": 20.47710976282405,
+    "thresholdPercent": 30,
+    "result": "pass",
+    "samples": {
+      "baseline": 3,
+      "candidate": 3
+    },
+    "limitation": "Synthetic CLI fixture; real model latency is not measured."
+  }
+}

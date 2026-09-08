@@ -1,0 +1,159 @@
+{
+  "recordedAt": "2026-09-06T06:31:49.613Z",
+  "run": {
+    "startedAt": "2026-09-06T05:42:27.7767389Z",
+    "cwd": "C:\\Projects\\claude-skills-quality-gates-9",
+    "nodeVersion": "v24.18.0",
+    "gitHead": "93f6c44b1f91b681a15a06ab99ca0e9884000330",
+    "testFileCount": 49,
+    "sourceFileCount": 156,
+    "args": [
+      "--test",
+      "--test-concurrency=3",
+      "--experimental-test-coverage",
+      "--test-reporter=spec",
+      "--test-reporter-destination=_verification/final-regression.log",
+      "--test-reporter=lcov",
+      "--test-reporter-destination=_verification/final-regression.lcov",
+      "batch-24-multiAG\\adapters\\vitest-quality.test.mjs",
+      "batch-24-multiAG\\engine\\assign.test.mjs",
+      "batch-24-multiAG\\engine\\autofinish-e2e.test.mjs",
+      "batch-24-multiAG\\engine\\autofinish.test.mjs",
+      "batch-24-multiAG\\engine\\autonomy.test.mjs",
+      "batch-24-multiAG\\engine\\backlog.test.mjs",
+      "batch-24-multiAG\\engine\\bench.test.mjs",
+      "batch-24-multiAG\\engine\\bmad-sync.test.mjs",
+      "batch-24-multiAG\\engine\\conflicts.test.mjs",
+      "batch-24-multiAG\\engine\\consolidation.test.mjs",
+      "batch-24-multiAG\\engine\\decisions.test.mjs",
+      "batch-24-multiAG\\engine\\diagnose.test.mjs",
+      "batch-24-multiAG\\engine\\e2e-parallel.test.mjs",
+      "batch-24-multiAG\\engine\\fixture-protocol.test.mjs",
+      "batch-24-multiAG\\engine\\gate-benchmark.test.mjs",
+      "batch-24-multiAG\\engine\\landing-publication.test.mjs",
+      "batch-24-multiAG\\engine\\manual-cli.test.mjs",
+      "batch-24-multiAG\\engine\\metrics.test.mjs",
+      "batch-24-multiAG\\engine\\model-routing.test.mjs",
+      "batch-24-multiAG\\engine\\orchestrate.test.mjs",
+      "batch-24-multiAG\\engine\\plan-dag.test.mjs",
+      "batch-24-multiAG\\engine\\plan-queue.test.mjs",
+      "batch-24-multiAG\\engine\\readiness.test.mjs",
+      "batch-24-multiAG\\engine\\report.test.mjs",
+      "batch-24-multiAG\\engine\\runner-rules.test.mjs",
+      "batch-24-multiAG\\engine\\runtime-resolution.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\api-surface.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\authorization-matrix.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\claude-trace.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\completion-rules.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\engine-e2e.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\engine-guards.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\failure-classify.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\providers-hardening.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\providers.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\push-guard.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\quality-gates.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\quality-rules.test.mjs",
+      "batch-24-multiAG\\engine\\runtime\\story-writes.test.mjs",
+      "batch-24-multiAG\\engine\\spawn-deadline.test.mjs",
+      "batch-24-multiAG\\engine\\telegram-migration.test.mjs",
+      "batch-24-multiAG\\engine\\telegram-rules.test.mjs",
+      "batch-24-multiAG\\engine\\worker-pool.test.mjs",
+      "batch-24-multiAG\\engine\\worktree-refresh.test.mjs",
+      "dev-status\\batch-sources.test.mjs",
+      "dev-status\\daily-metrics.test.mjs",
+      "dev-status\\render-batch.test.mjs",
+      "dev-status\\scan.test.mjs",
+      "dev-status\\verdict.test.mjs"
+    ],
+    "vitestNodeModules": "C:\\Projects\\jng-os-batch24-rollout\\node_modules",
+    "rawCoverageDir": "C:\\Projects\\claude-skills-quality-gates-9\\_verification\\rollout-v8",
+    "sourceMapDir": "C:\\Projects\\claude-skills-quality-gates-9\\_verification\\rollout-maps",
+    "nodeOptions": "--import=file:///C:/Projects/claude-skills-quality-gates-9/_verification/capture-source.mjs",
+    "finishedAt": "2026-09-06T06:31:03.1259884Z",
+    "exitCode": 1
+  },
+  "summary": {
+    "tests": 1010,
+    "suites": 221,
+    "pass": 1006,
+    "fail": 4,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "duration_ms": 2895389.1546
+  },
+  "failureTitles": [
+    "runBench — 두 팔이 같은 스토리 세트로 실제로 돌고 비교 가능한 계측을 낸다 (458805.1073ms)",
+    "폐지 경고 · rollback · 원격 ref 0건 · 로컬 landing 0건 · exit 1 (2.4462ms)",
+    "[#16] 배치 매니페스트에 rollback 이 남고 push=false (25.7701ms)",
+    "[#16/N6] rollback 이 각 스토리 매니페스트에 남는다 — 증거 사본 + batchId 붙은 미추적 sidecar (13.9096ms)"
+  ],
+  "sourceChanges": [
+    {
+      "path": "batch-24-multiAG/engine/run-night.mjs",
+      "before": "dbbbc7db17dea46fdf2197a7edaf63353b43f6640f479e11b3b80b0725b779f1",
+      "after": "d83440d510cfd543503a1524af9680952de48ba1e55d30367b7d4069ee7313ce"
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/engine-e2e.test.mjs",
+      "before": "177de44caca8a760c269bbb6db18bd9a671a5bc7c35cbf64f3457b4c14e99d3e",
+      "after": "e5f29fc68282a354fe408bbdbe26385110d6f7aa8d2a3672eb96e1ddc80a8d82"
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/providers-hardening.test.mjs",
+      "before": "bc4f0af3c3a2a19325c0047d7baeb9354d0838f8ebd2ad36406347f00a22d9bf",
+      "after": "bcee02fdaa09000c1b36fae0c74cfa7311ce8b5f088d322e13620ca0836a166b"
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime/providers.test.mjs",
+      "before": "90e86eb56875eb169b98afb5669da9d4067a64285b5db5a88496c78aa227ff64",
+      "after": "680139a9acb434af7762589587ecc31cb5611b0aa83b26ca7aa170777d8c4cd6"
+    },
+    {
+      "path": "batch-24-multiAG/engine/worktree-refresh.mjs",
+      "before": "601f3d650197bb96d76558ec736b70a44abf12ee0768c8decd59dc13bf26bcb9",
+      "after": "68d10811bcbce23742e8633323b746219d1215b756608caf68feedf8057be03f"
+    },
+    {
+      "path": "batch-24-multiAG/engine/worktree-refresh.test.mjs",
+      "before": "51f039ecfff7ab0caaf4816283645cec8e20baed5a97b837bbf643afcae0c43d",
+      "after": "1d545ee9b9e70c04a3cde18f302be4003f75d4c9cc2ff7ed24186747c5662939"
+    },
+    {
+      "path": "batch-24-multiAG/install.mjs",
+      "before": "ef8e4b0efa66e04de2d02439b5a542c8c12d8f72709682cc7878f5729c4fb4b6",
+      "after": "54495c5c7094fa72c5bbbf6e6b4a8c3e4f963fef8ba5ea26b4554593a73fa0ab"
+    },
+    {
+      "path": "batch-24-multiAG/references/MIGRATION.md",
+      "before": "e7d76c9a01569160028f7c86a63b8fb3b2ba612ee61959b38598020e947a083b",
+      "after": "5612f4593c3900f6811965079dd5a79a2b494396879ece67e112eb76e63ecf0a"
+    },
+    {
+      "path": "batch-24-multiAG/references/SOL-HIGH-REVIEW-RESULT.md",
+      "before": "2b191ea584618270e85acbf93ab2d016e2dfbad0160cc5b0010f4d1e3fdb8a7b",
+      "after": "4453d1aad7c6325cebff0c369076db1998476c69a53e939eb1ba133532c757d0"
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime-pin.mjs",
+      "before": null,
+      "after": "885f4c1d552986291c22d5c0c5f370c418116a003ee0819ec8fe437f5dfa21c5"
+    },
+    {
+      "path": "batch-24-multiAG/engine/runtime-pin.test.mjs",
+      "before": null,
+      "after": "eefd68ccb1937ea38c0ea4475a08e9540fc56e7ee89b5971852a9cef49b479d7"
+    }
+  ],
+  "sourceFilesBefore": 156,
+  "sourceFilesAfter": 158,
+  "rawCoverageFiles": 2001,
+  "mappingFiles": 477,
+  "notes": [
+    "The full run was started once; frozen-boundary focused tests are separate and are not added to the full test counts.",
+    "rollout-v8 stores both the full run and focused final-source boundary evidence; merge only byte-identical current sources.",
+    "The capture-source instrumentation hook was optimized during the run to hash only .mjs files, the unchanged scope of its source index.",
+    "source-index retained earlier hashes and added final hashes for subsequent child processes; the pre-run source inventory was preserved.",
+    "Ordered Node spec reporting withheld later completed files behind autofinish-e2e and then e2e-parallel; unchanged visible counts did not mean stopped execution."
+  ]
+}

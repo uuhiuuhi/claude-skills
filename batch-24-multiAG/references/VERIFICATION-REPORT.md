@@ -1,0 +1,130 @@
+# 통합 품질 검증 보고서 — 2026-09-06
+
+스킬 구현, Sol-high 독립 리뷰, 저장소 회귀와 격리 설치 검증을 완료했다. **운영 러너 전환과 기존 전역 스킬 삭제는 미완료**다. 엄격한 landing 계약을 충족하지 못하는 기존 앱 DB 통합 테스트를 먼저 정비해야 한다. 운영 프로젝트의 스토리·로그·예약 설정은 변경하지 않았다.
+
+작업 위치는 `C:/Projects/claude-skills-quality-gates-9`, 브랜치는 `codex/quality-gates-9-consolidation`, 기준은 `166e28c`다. 검증된 구현 커밋은 `be8e77694c7f06e3dcee2eeb6d11dc6ceb0f5d3e`이며 [draft PR #1](https://github.com/uuhiuuhi/claude-skills/pull/1)에서 검토할 수 있다. 이후 문서 커밋은 실행 코드를 바꾸지 않는다.
+
+## 변경 구조와 중복 제거
+
+- `batch-24-multiAG/`를 유일한 저장소 정본으로 구성했다. `engine/`은 예약·lock·큐·병렬 워커·landing·복구, `engine/runtime/`은 create→dev→review·자동 수리·모델 호출·검증 manifest를 담당한다.
+- `finish-stories.mjs`와 SKILL.md에 수동 스토리 범위 완료를 통합했다. 수동 실행과 예약 실행이 같은 runtime을 사용한다.
+- `quality-gates.mjs`, `quality-rules.mjs`, `api-surface.mjs`, `authorization-matrix.mjs`가 위험도·검사 선택·API 목록·권한 증거를 검증한다. `schema-migration.mjs`는 구 상태를 읽고 새 기록을 `batch-24-multiag/*`로 쓴다.
+- `landing-publication.mjs`, `runtime-pin.mjs`, `worktree-refresh.mjs`가 검토된 코드 지문과 발행·교체를 연결한다. dirty 작업을 보존하며, 검증 뒤 변경된 코드는 push할 수 없다.
+- `adapters/vitest-quality.mjs`는 실제 영향 테스트와 LCOV를 연결하고 unit/integration 범위를 분리한다. 설치기는 runtime과 adapter를 프로젝트에 고정한다.
+- 구 두 폴더의 **92개 파일, 2,180,069 bytes**를 대조 후 저장소에서 제거했다. **45개는 동일 바이트, 47개는 통합 계약에 맞게 수정**됐다. 제거 폴더 크기이며 순수 저장소 절감량은 아니다. 필요한 테스트·문서·복구 규칙은 정본으로 이관했다.
+
+[이관 명세](consolidation-inventory.json), [마이그레이션](MIGRATION.md), [품질 계약](QUALITY-GATES.md), README에 새 명령과 이전 방법을 기록했다.
+
+## 품질 항목별 이전·이후 평가
+
+점수는 게이트 엔진에 대한 구현자 평가이며 보안 인증이나 운영 앱 품질 점수가 아니다. Sol은 독립적으로 코드 결함을 검토했으며 이 숫자를 인증한 것은 아니다.
+
+| 항목 | 이전 | 이후 | 확인 근거 |
+|---|---:|---:|---|
+| 변경 분류·검사 선택 | 5 | 8.5 | docs/fast/standard/api/auth-db/performance, 주석·정적 리소스 제외 |
+| typecheck/lint/영향 unit | 6 | 9 | 적용되는 필수 명령 부재·실패 차단, worker 전체 test 폴백 제거 |
+| 변경 코드 coverage | 3 | 9 | diff 라인·분기 각각 90%, 계측 누락 차단 |
+| 정상·실패·경계 테스트 | 5 | 8.5 | 소스와 실제 통과 기록 모두 요구 |
+| API·권한·테넌트 격리 | 4 | 8.5 | source+method+route 단위 증거, 401/403/2xx/테넌트 행 검사 |
+| security/performance 조건 | 6 | 9 | 해당 변경에만 실행, 필요한 검사 부재는 차단 |
+| landing·rollback | 8 | 9 | 전체 회귀 landing 1회, RED rollback·push 차단 |
+| 우회 방지 | 7 | 8.5 | only/skip/삭제/빈 테스트/단언·coverage·설정 완화 탐지 |
+| manifest·완료·발행 | 7 | 9 | 명령·사유·결과·시간·지문, 미검증 완료와 stale 발행 차단 |
+| 캐시·중복 제거·병렬 검사 | 4 | 8.5 | 동일 지문 재사용, 명령 공유, 독립 검사 병렬화 |
+| 평균 | **5.5** | **8.75** | 독립 리뷰의 남은 코드 출시 차단 결함 0개 |
+
+## 테스트와 coverage
+
+최종 검증된 테스트는 **51개 파일의 고유 1,033건, 미해결 실패 0건**이다. 전체 실행과 변경 영향 재검증을 합친 결과이며, 단일 실행 1,033/1,033이라고 주장하지 않는다.
+
+- 전체 회귀 1회: **1,010건 중 1,006 통과, 4 실패, skip 0**, 2,895.389초. V8 계측·소스 해시 수집과 동시성 3을 사용했다.
+- 실패 4개 assertion은 두 child fixture가 계측 병렬 부하에서 300초 deadline에 도달한 결과였다. 코드·timeout·assertion을 완화하지 않고 동일 영향 범위만 별도 실행하여 benchmark **1/1**, integration RED **3/3** 통과를 확인했다.
+- 전체 실행 뒤 runtime pin 9, refresh 6, installer 2, benchmark 입력 3, pin 입력 3의 고유 테스트를 추가·통과했다. 수정된 파일의 영향 테스트도 재검증했다.
+- 마지막 핵심 경계 36/36, refresh 19/19, installer 2/2, benchmark 입력 3/3, pin 입력 3/3 통과. 이 숫자를 1,033건에 다시 더하지 않는다.
+- Fable→Opus, Sonnet→Terra·Opus→Sol·Fable→Astra, 동일 제공자 자체 리뷰 금지, 모델 건강 공유, 파일 충돌, 중복 row, QA RED/push, integration RED/rollback, authorization matrix, coverage 차단, 조건부 검사, 우회 탐지, 구 상태·원장·예약 마이그레이션을 fixture와 회귀로 검증했다.
+- **변경 라인 96.82% (1,523/1,573), 변경 분기 90.21% (1,051/1,165), 계측 누락 0개.** 현재 소스 SHA와 일치하는 계측 결과만 병합했다. 전체 저장소 coverage로 대체하지 않았다.
+
+[검증 manifest](verification/manifest.json), [LCOV](verification/coverage.lcov), [changed coverage](verification/changed-coverage.json), [전체 실행 증거](verification/full-regression-evidence.json)에 명령·지문·결과를 남겼다. 로그는 같은 폴더에 있으며 행 끝 공백만 정리하고 원본은 로컬에 보존했다.
+
+## 격리 프로젝트 설치 결과
+
+`C:/Projects/jng-os-batch24-release`에 이전 로컬 tooling 커밋 `d77f61d`를 기반으로 설치했다. 실제 운영 프로젝트에 적용한 커밋이 아니며 아직 격리 준비 상태다.
+
+- 실제 앱 unit: **169개 파일, 4,600 통과 + 기존 skip 3**, 65.39초. 전체 217개 테스트 파일은 unit 169와 DB integration 48로 나뉜다.
+- 프로젝트 의미적 `npm run typecheck` 통과, `npm run lint` 오류 0·경고 0. 두 수동 명령의 정확한 시간은 보존되지 않아 수치를 만들지 않았다. 엔진 MJS 실행/구문 검증을 의미적 타입 검사로 표기하지 않는다.
+- 설치된 모델 라우팅·품질·권한 테스트 **71/71, skip 0**, 83.356초.
+- 정본과 설치된 실행 파일·필수 테스트 **53개 SHA 일치**, 기존 상태를 읽는 dry plan exit 0.
+- 실제 Vitest adapter fixture 9/9 통과. 실제 앱 DB·외부 모델 요청은 실행하지 않았다. 엔진 HTTP matrix fixture 성공을 운영 endpoint 검증으로 바꾸어 기록하지 않는다.
+
+## 성능과 오래 걸린 원인
+
+| 정상 합성 배치 중앙값 | 이전 | 이후 | 증가 |
+|---|---:|---:|---:|
+| 성공 표본 각 3개 | 21.756초 | 26.124초 | **20.08%** |
+
+30% 조사 기준을 넘지 않았다. 기준 커밋의 완전한 엔진과 같은 합성 CLI fixture를 비교했다. 최초 교차 측정 뒤 마지막 경로 guard 수정에 대해서만 후보 3회를 재측정하고 변하지 않은 기준 3회를 재사용했다. [표본](verification/benchmark.json)을 보존했다. 표본 수가 작고 실 LLM·운영 DB 지연은 포함하지 않는다.
+
+작업 지연의 큰 원인은 전체 V8 계측 회귀가 48.26분 걸리고 병렬 child fixture가 deadline에 도달한 것이다. 이 시간을 정상 배치 비용으로 혼동하지 않는다. 이후 검증은 변경 파일별 검사와 기존 지문 증거를 재사용했으며, raw coverage 전체 복사·재처리를 반복하지 않고 증분 병합했다. 앞으로 전체 회귀는 비계측 실행, 변경 코드만 계측하고 시간 측정과 겹치지 않도록 한다. 품질 임계치·skip 허용을 완화하지 않았다.
+
+## 전역 설치와 운영 상태
+
+Claude `C:/Users/user/.claude/skills/batch-24-multiAG`와 Codex `C:/Users/user/.codex/skills/batch-24-multiAG`는 백업 후 검증된 구현 `be8e776`으로 갱신했다. 최초 갱신 시 각 146개 파일을 해시 대조했고, 16:01 KST 최종 문서·증거 동기화 후 각 156개 파일의 SHA 일치와 모델 정책·품질 모듈 로드를 확인했다. 기존 실행 중인 운영 runner가 이 갱신만으로 교체되는 것은 아니다.
+
+**전역 단일화는 미완료다.** Claude의 `night-batch-ops`, `auto-story-finish`, Codex의 `auto-story-finish`를 보존했다. 구 전역 경로에 의존하는 실제 프로젝트가 남아 있기 때문이다. inspectier 두 프로젝트의 pinned runtime 이전은 빈 전역 환경에서 격리 smoke 6/6으로 검증했고 안전한 적용·rollback 스크립트를 준비했지만 실제 프로젝트에는 적용하지 않았다.
+
+운영 `C:/Projects/jng-os-auto`는 `19cc0b85`이며 이번 작업에서 변경하지 않았다. 2026-09-06 **16:02 KST** 조회 당시 `BaroOS-auto-slots`는 Ready, 다음 실행은 **16:05 KST**였다. 예약 작업을 끄거나 켜지 않았으며 운영 원격/main push도 하지 않았다.
+
+운영 전환의 차단 사유는 DB integration 준비 상태다. 실제 테스트는 존재하지만 48개 파일에 hardcoded `it.skip` 51개, `it.skipIf` 19개, `ctx.skip` 134개 사용 지점이 있다(실행 테스트 수가 아닌 소스 선언 수). 엄격한 zero-skip landing 검사는 일반 코드 배치도 차단할 수 있다. 외부 계정·이메일·DB 쓰기를 동반할 수 있는 probe를 임의로 켜거나 인증 정보를 복사하지 않았다. API/auth/security/performance 프로젝트 adapter 부재는 각각 해당 변경에만 차단 사유가 된다.
+
+운영 적용 순서는 앱 DB 통합 계약 정비 → 검토된 tooling 커밋 확정 → no runner lock AND no matching PID → 예약 진입 중지 후 재확인 → 도구만 적용 → routing/quality/dry plan → 성공 시 예약 복원이다. 실제 프로젝트 pinned 실행 검증이 끝난 뒤 구 전역을 제거한다. 앱 DB 테스트 보완까지 이번 작업에 포함할지 사용자 범위 선택이 남아 있다.
+
+## Sol 독립 리뷰와 남은 한계
+
+**gpt-5.6-sol / high**가 독립 리뷰를 수행했다. 초기 API 일부 endpoint 누락, worktree 보존·runtime pin, 검증 이후 발행 변경 문제를 수정한 뒤 **남은 코드 출시 차단 결함 0개**로 확인했다. 검토된 구현 11개 파일 지문은 `02ff9429f77ad3c7b1ebd1988da8b3fa658e47e72e163044e1df7166676c5245`다. 구현자와 다른 모델이며 동일 OpenAI 제공자다. 엔진의 교차 제공자 리뷰 정책 검증과 구분한다.
+
+[Sol 리뷰 결과](SOL-HIGH-REVIEW-RESULT.md)와 [후속 리뷰 체크리스트](SOL-HIGH-REVIEW.md)를 함께 제공한다. 다음 검토는 실제 앱 DB/권한 adapter와 배치 경계 전환 증거에 집중하면 된다. 새 대화를 만들어 이미 끝난 엔진 리뷰를 반복할 필요는 없다.
+
+정적 분류·테스트 이름 검사는 assertion의 의미적 충분성을 완전히 증명하지 않는다. 동적·mounted route에는 소스 SHA에 묶인 명시적 inventory가 필요하다. 로컬 검증기까지 수정할 수 있는 관리자에 대한 위조 방어 인증은 아니다. 실제 앱 인증·RLS/테넌트 격리와 운영 DB 결과는 아직 검증되지 않았다. 따라서 저장소 gate verdict `ready`는 운영 스토리 완료나 운영 전환 승인을 의미하지 않는다.
+
+## 후속 — 2026-09-06 저녁: 운영 전환 차단 2건 해소 (integration skip policy · COMMIT GUARD refs/codex)
+
+운영 전환을 막던 「DB integration 준비 상태」와 운영 러너의 실제 STOP 원인을 같은 날 해소했다. 상세 리뷰 기록은 [SOL-HIGH-REVIEW-2026-09-06-SKIP-POLICY-GUARD.md](SOL-HIGH-REVIEW-2026-09-06-SKIP-POLICY-GUARD.md), 계약은 [QUALITY-GATES.md](QUALITY-GATES.md) 「Reviewed integration skip policy」.
+
+- **integration skip policy** (`adapters/vitest-quality.mjs`): 프로젝트가 `quality-adapter.config.json` `integration.skipPolicy` 에 integration 범위의 **모든** skip 을 항목별로 분류한다 — `required-missing`(실행되지 않은 필수 검사 · 항상 차단 · 정확한 항목이 stderr/랜딩 매니페스트에 열거) / `optional-not-applicable`(승인된 선택 검사 · 기계 검증 근거가 살아 있고 랜딩 변경이 그 모듈에 닿지 않을 때만 인정 · 별도 보고 · 실행 증거로 세지 않음). 근거 = `coveredBy`(같은 실행에서 통과한 커버 테스트) · `envMissing` · `envNotArmed`(프로젝트 프로브와 같은 무장 규칙 · `process.env.X || 파일` 우선순위)이며, env 근거는 TypeScript AST 로 「테스트가 import 하는 모듈의 실제 `process.env`/`env`/`fromFile` 조회」에 결박된다. 변경 범위는 unit ∪ integration 전체 테스트 그래프로 매핑하고, 어떤 테스트도 의존하지 않는 파일·SQL·설정·데이터 픽스처(csv/jsonl/json)·정책 파일 자체는 선택 skip 전부를 차단한다(문서·이미지 확장자만 제외). 미등재 skip = `unclassified` 차단. 테스트 삭제·제외·수정 0.
+- **jng-os 분류 실측**(배포될 트리 = `codex/batch24-runtime-release`): tests/db skip **67건 = 53 required-missing / 14 optional**(무장 프로브 8 · 픽스처 env 1 · anon-baseline 중복 4 · 정적 가드 결박 1). 실DB 랜딩 실행(변경 범위 `src/lib/roles.ts`): 1,884 통과 · 67 skip → 어댑터 exit 1 · **차단 53 / 승인 14 / 미분류 0**. 즉 운영 전환 뒤에도 **랜딩은 53건이 실행될 때까지 차단**되며(대부분 QA 계정·프로브 티켓 사람 게이트로 잠긴 정적 `it.skip`), 정확한 목록은 프로젝트 `tools/auto/DB-SKIP-CLASSIFICATION-2026-09-06.md`.
+- **COMMIT GUARD 오탐**(`engine/runtime/providers/git-guard.mjs` `localGitFingerprintFor` · `filterGuardRefs`): Codex Desktop 이 공유 `.git` 에 남기는 `refs/codex/turn-diffs/…` 체크포인트 ref 가 워커 실행 중 지문을 바꿔 운영 러너를 3회 STOP 시켰다(08:07·09:37·10:27). `refs/codex/` 네임스페이스만 제외하고 HEAD reflog·브랜치·태그·stash·remote 는 그대로 본다. 실저장소 재현 테스트 `providers/git-guard-refs.test.mjs`.
+- **어댑터 env 파일**: 프로젝트 테스트처럼 `.env.local` 을 읽어 `requiredEnv` 존재를 판정(값 출력 0). 러너는 `.env.local` 을 프로세스 env 로 내보내지 않으므로 이것이 없으면 운영에서 integration 게이트가 항상 「env 없음」으로 실패했을 것이다.
+- **준비본 정리**: `d77f61dc` 가 옛 엔진째 복사해 둔 `tools/auto/runtime/*.test.mjs` 9개(가짜 시크릿 픽스처)가 프로젝트 `deploy-guard` ② 를 RED 로 만들어 제거했다(설치기가 배포하지 않는 파일 · main 에 없음 · Sol 승인).
+- Sol-high 독립 리뷰 7라운드(1차 3건 → … → 7차 「Release blocker: No」). 리뷰어 샌드박스는 임시 폴더 쓰기가 막혀 픽스처 테스트는 작성자 환경에서만 완주(54/54).
+
+
+## 후속 2 — 2026-09-06 밤: 첫 실배치 COMPLETION STOP 과 운영 수정 (push 기본 끔 · Status 주석 · 구현자 기록 복원 · 러너 독립 clone)
+
+- **첫 실배치 결과(18:39 슬롯)**: 운영 전환 자체는 완료됐으나(pinned `bef98b22` 기동 · `[MODEL-ROUTE]` codex:gpt-6-astra · 병렬 2 · lock 해제 정상) **정상 완주 배치는 0건**. 「2-4·2-25 마감 재검수」가 COMPLETION STOP — Codex 리뷰 clean 인데 T6(구현자 기록 없음)·T7(2-4 Status 꼬리 주석 미파싱 / 2-25 는 T6 미성립 상태에서 done 전이)로 not-verified · landing 0 · push 0. 원인은 코드 결함이 아니라 **운영 데이터 형식**(옛 엔진의 verification.json 은 새 엔진 증거로 승격되지 않음 · dev 워커의 `Status: x <!-- 메모 -->` 관례).
+- **수정(정본 · Sol-high 10~11차)**: `plan-queue` `defaults.push` 를 **기본 끔**(`cfg.push === true` 만 켬 — 10차 High) · T7 Status 정규식이 같은 줄 HTML 주석 꼬리 하나만 허용(10차 L2 · 11차 L1 강화). 초점 테스트 164/164. 기록: `SOL-HIGH-REVIEW-2026-09-06-SKIP-POLICY-GUARD.md` 10·11차.
+- **운영 데이터 복원(추측 없음)**: `state.json.workers` 11건은 run-summary `exit=0` dev 줄과 verification.json `workers.dev` 가 일치할 때만 복원(`restoredFrom` 동봉 · done 은 만들지 않음). 1-10 은 불일치로 `BLOCKED-ON-HUMAN` 보류(편성기가 사람 질문으로 분류하는 것을 `plan-queue` 로 실측). 필수 DB 검사 53건의 landing 차단은 그대로.
+- **러너 독립 clone**: 공유 `.git` 링크드 워크트리는 개발 저장소의 정상 커밋/fetch 를 워커 변경으로 오판한다(실측: 개발 저장소에 임시 브랜치+fetch+커밋 → 옛 폴더 지문 변경 / 독립 clone 지문 불변). `C:/Projects/jng-os-runner` = 로컬 저장소에서 clone(로컬 전용 커밋 승계) → origin 을 GitHub 로 재지정 · fetch → 무시 파일 335건(.env.local · 마커 · qa 로그) 복사 → `npm ci` → pin diff 0. 워커 자신의 브랜치 생성·commit→reset 탐지와 refs/codex 무시는 그대로. 옛 폴더 `C:/Projects/jng-os-auto` 는 복구용 보존(스케줄 작업만 새 경로로).
+- **남는 것**: 정상 완주 배치는 다음 슬롯 이후 확인 · 구 전역 스킬 보존 유지 · 운영 원격 push 는 사람 승인(`auto.config.json` `push: true`) 전까지 없음.
+
+
+## 후속 3 — 2026-09-06 밤: 슬롯 공회전(실행 보고 dirty) 수정 · 첫 정상 완주 · 같은 원인 반복 리뷰 차단
+
+- **첫 정상 완주(19:35 슬롯 · 독립 clone)**: 2-4 · 2-23 마감 재검수 done(T1~T8+Q9 pass · codex clean · landing 2 · 통합 게이트 GREEN · push 없음). 2-22 는 T8(완료 기록 실측 인용 부재)로 STOP.
+- **공회전 사고**: 20:05 · 20:35 · 21:05 슬롯이 refresh 거부(실행 보고 dirty 4~6건)로 무작업. 정본 수정 `preserveRunReport`(Sol-high 12~13차) — 종료 직전 로그 폴더만 러너 브랜치(auto/*)에서 커밋. 그때까지의 슬롯은 사람이 로그를 커밋해 이어 붙였다.
+- **같은 원인 반복 리뷰 차단**: 2-22 가 19:35 · 21:35 두 번 codex 리뷰(clean)를 받고도 T8 만으로 STOP 하는 것을 막기 위해 엔진 렌더러(`renderCompletionNotes`)로 현재 검증 매니페스트를 Completion Notes 에 인용(`completionNotesAudit` pass 확인 · 러너 clone `be6aa2ea`).
+- **DB 필수 검사 53건 실행 준비(별도 후속 · 작업 브랜치 `auto/2026-09-06-db-checks`)**: 계정 부족 0 · `[QA-DB]` 픽스처 빌더로 정적 it.skip 46건 실행 전환 · skip 67 → 17(필수 잔여 4: 2.17 service_role · 이관 시드 2 · outbox 시간 경과). 원장 `tools/auto/DB-SKIP-CLASSIFICATION-2026-09-06.md` 후속 절.
+
+
+## 후속 4 — 2026-09-07 새벽: main 머지·배포 · push 켬 · 엔진 결함 2건 수정
+
+- **👤 「머지해줘 · push켜줘」**: 러너 `push:true`(핀 c8544f8b) · `merge-main.mjs` — 첫 실행은 원장 가드 RED(아래 ①)로 중단, 원문 복원 뒤 재실행 GREEN → main ff dd40d3e→ec87e55(41커밋) · 운영 배포 Version bb45578f · RELEASE-LOG 기록.
+- **결함 ① 완료 기록 문자열 치환**(`promoteStory` → 부분 문자열 replace) — finding 본문의 같은 문구에 걸려 줄을 두 동강. `appendCompletionNotes`(줄 단위)로 교체. 2-22 는 잘린 꼬리 복원 + 오삽입 블록 14줄 제거.
+- **결함 ② 순차 STOP 잔여물** — 본 트리 워커의 미완 변경이 refresh 를 밤새 막음(8슬롯). `preserveStopLeftovers`(증거 보관 뒤 auto/* 에 STOP 표식 커밋 · 금지 경로/시크릿은 커밋 안 함)로 러너가 스스로 마무리.
+- Sol-high 14차 기록: `SOL-HIGH-REVIEW-2026-09-06-SKIP-POLICY-GUARD.md`.
+
+
+## 후속 5 — 2026-09-07 아침: 한도 강등 정책 · codex 리뷰 상한 (👤 「1 추천대로 · 2 예」)
+
+- **정책 ①** `modelPolicy.limitDowngrade` — review 는 한도에 다른 모델을 고르지 않고 exit 5(날씨) · 회수 dev 만 sonnet 까지 · 신규 dev 는 fable→opus 만. 러너가 `--batch-kind` 를 넘긴다. 레거시 사다리·경계 프로브도 같은 모드(Sol 16 H1).
+- **정책 ②** `autonomy.maxReviewRoundsPerStory`(2) — 마지막 replan 표식 뒤 codex 리뷰가 2회면 다음 리뷰 전에 replan 선행(마감 재검수 = replan→dev→review). 총량 6회(2×3)면 「자율 한계」 사람 질문 · `REVIEW-CAP-RESET:` 줄로 해제(Sol 16 H2). 펜스 안 헤딩 무시(Sol 16 M3).
+- 테스트 +11 · 초점 172/172 · 전체 스위트 결과는 커밋 메시지에 기재. Sol-high 16·17차 기록: `SOL-HIGH-REVIEW-2026-09-06-SKIP-POLICY-GUARD.md`.

@@ -25,8 +25,8 @@ import { dirname, join, resolve, sep } from 'node:path'
 import { resolveAsf } from './asf-resolve.mjs'
 const { setSprintStatus, setStoryStatus } = await import(resolveAsf('story-writes.mjs'))
 
-export const BMAD_PLAN_SCHEMA = 'night-batch-ops/bmad-write-plan/1'
-export const BMAD_APPLY_SCHEMA = 'night-batch-ops/bmad-apply/1'
+export const BMAD_PLAN_SCHEMA = 'batch-24-multiag/bmad-write-plan/1'
+export const BMAD_APPLY_SCHEMA = 'batch-24-multiag/bmad-apply/1'
 
 /** 사람이 쓴 문서에서 **뒤에 덧붙이는 것만** 허용하는 절(설계 §3). 이 목록 밖 앵커는 거부한다. */
 export const APPEND_ONLY_ANCHORS = Object.freeze([

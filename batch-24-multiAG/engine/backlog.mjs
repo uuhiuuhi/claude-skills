@@ -19,7 +19,7 @@ import { resolveAsf } from './asf-resolve.mjs'
 const { classifyQaFailure } = await import(resolveAsf('quality-rules.mjs'))
 import { tierOfFinding, SECRET_PATH_RE, SECRET_PATH_EXAMPLE_RE } from './diagnose.mjs'
 
-export const BACKLOG_SCHEMA = 'night-batch-ops/backlog/1'
+export const BACKLOG_SCHEMA = 'batch-24-multiag/backlog/1'
 
 // ── 7단계 우선순위 (SPEC §2) ────────────────────────────────────────────────
 export const TIERS = Object.freeze([

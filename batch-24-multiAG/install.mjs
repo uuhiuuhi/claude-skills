@@ -50,13 +50,13 @@ function whichBin(name) {
   }
   return ''
 }
-function safeExec(bin, args = []) {
+function safeExec(bin, args = [], timeout = 20_000) {
   const file = String(bin ?? '')
   const list = (args ?? []).map(String)
   if (file === '' || SHELL_META_RE.test(file) || list.some((a) => SHELL_META_RE.test(a))) {
     return { status: 1, stdout: '', stderr: `실행 거부 — 실행파일·인자에 셸 메타문자가 있다: ${file}` }
   }
-  const o = { encoding: 'utf8', timeout: 20_000, maxBuffer: 1024 * 1024, shell: false }
+  const o = { encoding: 'utf8', timeout, maxBuffer: 1024 * 1024, shell: false }
   // `/s` 는 바깥 따옴표 한 쌍만 벗긴다 — 그래서 전체를 한 번 더 감싼다(안 감싸면 공백 경로가 깨진다).
   const r = /\.(cmd|bat)$/i.test(file) && process.platform === 'win32'
     ? spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${file}" ${list.map((a) => `"${a}"`).join(' ')}"`], { ...o, windowsVerbatimArguments: true })
@@ -66,6 +66,7 @@ function safeExec(bin, args = []) {
 
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
 const notes = []
+const nlSep = String.fromCharCode(10)
 
 // 프로젝트 이름·상태 폴더는 **러너와 같은 3단계 우선순위**로 정한다(공유 계약 C3):
 //   이름  = 기존 auto.config.json 의 project → package.json name → 폴더명
@@ -85,11 +86,11 @@ const project = String(existingCfg.project || basename(ROOT)).replace(/[^a-zA-Z0
 const bundledRuntime = join(SELF, 'engine', 'runtime', 'auto-story-pipeline.mjs')
 if (!existsSync(bundledRuntime) || !existsSync(join(dirname(bundledRuntime), 'providers', 'index.mjs')))
   fail('번들 모델 런타임이 불완전하다(engine/runtime 확인)')
-// Codex 는 선택 사항 — 없어도 Claude 전용으로 그대로 돈다. 있으면 어떤 상태인지만 적어 둔다(설치 결정은 사람 몫).
+// 설치는 가능하지만 완료에는 독립 제공자 리뷰가 필요하다. CLI 가용성과 인증 상태를 기록한다.
 {
   const codexBin = process.env.CODEX_BIN || whichBin('codex')
   const v = codexBin ? safeExec(codexBin, ['--version']) : { status: 1, stdout: '', stderr: 'PATH 에 codex 없음' }
-  if ((v.status ?? 1) !== 0) notes.push('· Codex CLI 없음 — Claude 전용(providers.codex.enabled 는 false 유지). 쓰려면 `npm i -g @openai/codex` + `codex login`')
+  if ((v.status ?? 1) !== 0) notes.push('· Codex CLI 없음 — 독립 제공자 리뷰와 완료가 차단됨(providers.codex.enabled 는 false 유지). 사용하려면 `npm i -g @openai/codex` + `codex login`')
   else {
     const l = safeExec(codexBin, ['login', 'status'])
     const ok = (l.status ?? 1) === 0 && /logged in/i.test(`${l.stdout}${l.stderr}`) && !/not logged in/i.test(`${l.stdout}${l.stderr}`)
@@ -102,14 +103,14 @@ if (![join(ROOT, '.claude', 'pipeline-settings.json'), join(homedir(), '.claude'
     'deny 규칙(예: {"permissions":{"deny":["Bash(git commit:*)","Bash(git push:*)","Bash(git stash:*)","Bash(git reset:*)"]}})을 담아 둘 것')
 if (!existsSync(join(ROOT, '_bmad-output', 'implementation-artifacts', 'sprint-status.yaml')))
   notes.push('⚠️ sprint-status.yaml 이 없다 — BMad 산출물이 없으면 자동 편성(--auto-plan)은 돌지 않는다(수동 큐는 가능)')
-if (!(pkg.scripts && pkg.scripts.qa)) notes.push('⚠️ `npm run qa` 스크립트가 없다 — 엔진 qa 게이트가 실패한다. typecheck+lint+test 조합으로 정의할 것')
+for (const name of ['typecheck', 'lint', 'test:affected', 'coverage', 'test:all', 'test:integration']) if (!pkg.scripts?.[name]) notes.push(`· ${name} 없음 — QUALITY-GATES.md의 별칭/범위 계약을 확인할 것. 적용되는 필수 게이트 부재는 완료를 차단한다.`)
 
 // ── 1. 엔진 파일 설치 ────────────────────────────────────────────────────
 const dst = join(ROOT, 'tools', 'auto')
 mkdirSync(dst, { recursive: true })
 // 목록을 고정하지 않는다 — 엔진에 새 모듈(plan-dag·conflicts…)이 생길 때마다 설치본만 구판이 되어
 // 러너가 ERR_MODULE_NOT_FOUND 로 죽는다(2026-09-02 e2e 실측). 테스트 파일은 제외한다.
-for (const f of readdirSync(join(SELF, 'engine')).filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs'))) {
+for (const f of readdirSync(join(SELF, 'engine')).filter((n) => n.endsWith('.mjs') && (!n.endsWith('.test.mjs') || n === 'model-routing.test.mjs'))) {
   const to = join(dst, f)
   if (existsSync(to) && !has('force')) { notes.push(`· ${f} 이미 있음 — 건너뜀(덮어쓰려면 --force)`); continue }
   copyFileSync(join(SELF, 'engine', f), to)
@@ -118,8 +119,27 @@ for (const f of readdirSync(join(SELF, 'engine')).filter((n) => n.endsWith('.mjs
 const runtimeDst = join(dst, 'runtime')
 if (existsSync(runtimeDst) && !has('force')) notes.push('· runtime 이미 있음 — 건너뜀(덮어쓰려면 --force)')
 else {
-  cpSync(join(SELF, 'engine', 'runtime'), runtimeDst, { recursive: true, force: true })
+  cpSync(join(SELF, 'engine', 'runtime'), runtimeDst, { recursive: true, force: true, filter: src => !src.endsWith('.test.mjs') || ['quality-gates.test.mjs', 'authorization-matrix.test.mjs'].includes(basename(src)) })
   console.log('✔ tools/auto/runtime (프로젝트 고정 모델 런타임)')
+}
+// 👤 2026-09-08 동결 예외 ② — 설치본이 소비 프로젝트 eslint 에 걸리면 `npm run lint` 가 RED 가 되고, 워커가 엔진을 고치다 핀 불일치로
+// 러너가 선다(2026-09-07 review-tail.mjs no-useless-escape ×5 → 슬롯 36회 무음 정지). 프로젝트에 lint 스크립트와 eslint 가 있으면 설치본을 그 규칙으로 검사한다.
+const eslintJs = join(ROOT, 'node_modules', 'eslint', 'bin', 'eslint.js')
+if (pkg.scripts?.lint && existsSync(eslintJs)) {
+  const lint = safeExec(process.execPath, [eslintJs, join(dst, 'runtime'), join(dst, 'adapters'), '--no-error-on-unmatched-pattern'], 180_000)
+  if ((lint.status ?? 1) !== 0) {
+    notes.push('⚠️ 설치본이 프로젝트 eslint 에 걸린다 — npm run lint 가 RED 가 된다. 정본을 고쳐 재설치할 것(러너 핀을 올리지 말 것):' + nlSep + String(lint.stdout || lint.stderr).trim().split(nlSep).slice(0, 12).join(nlSep))
+    process.exitCode = 1
+  } else console.log('✔ 설치본 eslint(프로젝트 규칙) 통과')
+}
+mkdirSync(join(dst, 'fixtures'), { recursive: true });
+copyFileSync(join(SELF, 'engine/fixtures/strict-quality-fixture.mjs'), join(dst, 'fixtures/strict-quality-fixture.mjs'));
+for (const guide of ['QUALITY-GATES.md', 'MIGRATION.md']) copyFileSync(join(SELF, 'references', guide), join(dst, guide));
+// Optional project test adapters are pinned with the engine; project scripts/config stay explicit.
+const adapterSource = join(SELF, 'adapters')
+if (existsSync(adapterSource)) {
+  cpSync(adapterSource, join(dst, 'adapters'), { recursive: true, force: has('force'), filter: src => src === adapterSource || (src.endsWith('.mjs') && !src.endsWith('.test.mjs')) })
+  console.log('✔ tools/auto/adapters (project quality adapters)')
 }
 const routingGuide = join(dst, 'MODEL-ROUTING.md')
 if (existsSync(routingGuide) && !has('force')) notes.push('· MODEL-ROUTING.md 이미 있음 — 건너뜀(덮어쓰려면 --force)')
@@ -149,8 +169,8 @@ if (!existsSync(cfgPath)) {
       'modelPolicy: 여섯 모델 등급 라우팅. Sonnet→Terra, Opus→Sol, Fable→Astra이며 Fable 한도는 Opus로 전환한다.',
       'providers.codex: { enabled(기본 true), max(동시 1 고정 권장 — 같은 auth.json 동시 사용 불가), roles([\"review\"] 또는 [\"review\",\"dev\"]),',
       '  reviewKinds([\"new\",\"closeout\"] — recovery 는 review 단계가 없다), split(dev 역할일 때 병렬 짝을 Claude/Codex 로 나눔), network(기본 false — Codex dev 샌드박스 네트워크) }',
-      '  codex 는 배치 워크트리에서만 실행되며(본 트리 실데이터 반출 방지) 미설치·미인증·한도면 엔진이 claude 로 폴백한다 — 배치는 서지 않는다.',
-      'quality: { autoRepair: true|숫자(총 수리 시도 · 기본 0 = qa RED 즉시 STOP), sameRootCauseMaxRetries(기본 3), integrity: auto|on|off }',
+      '  교차 제공자 리뷰가 불가능하면 not-verified로 완료·commit·push를 차단한다. 동일 제공자 자체 리뷰 금지.',
+      'quality: autoRepair는 수리 예산이다. 필수 품질·무결성·manifest는 off/no-manifest로 끌 수 없다. QUALITY-GATES.md 참조.',
       'integrationGate: { enabled(병렬 landing 뒤 통합 트리에서 qa 1회) } — RED 는 **설정으로 우회 불가**: 항상 landing 되돌림 + STOP + push 금지(옛 pushOnFail 은 폐지 · 남아 있으면 무시하고 경고)',
       'orchestrator: { enabled(기본 true), model(기본 fable), timeoutMin(기본 5), cacheHours(기본 12) }',
       '  기본값은 켜짐이다. Fable 계획 결과를 캐시해 반복 슬롯의 불필요한 호출을 줄인다.',
@@ -161,6 +181,9 @@ if (!existsSync(cfgPath)) {
       'providers.codex.max 는 동시 실행 상한이다. 배치 전체의 총 Codex 호출량 제한으로 해석하지 않는다.',
       '── 자율운전(2026-09-03) ──',
       'autonomy.mode: guarded(기본 = 위 규칙 그대로 · 결정·회수 라운드·목업 승인·무진전은 사람 몫) | full(24시간 자율운전).',
+      'autonomy.maxReviewRoundsPerStory(기본 2 · 0 = 끔): 마지막 replan 표식 뒤 리뷰 상한 — **모든 리뷰어**(bmad-code-review · Codex) 라운드를 센다(👤 2026-09-07 「리뷰 횟수 최적화」). 닿으면 다음 리뷰 전에 replan 선행 · 총량 = 상한 × (maxReplansPerStory+1) 이면 「자율 한계」 사람 질문 · 해제 = 스토리 0열 `REVIEW-CAP-RESET: <날짜> — <사유>`.',
+      'autonomy.deferTailFromRound(기본 3 · 0 = 끔): N차 리뷰부터 high/critical 이 아닌 열린 Patch 를 엔진이 ⏭️ Defer 로 닫고(deferred-work 이관 · 이월 금지 5범주 제외) done 을 허용한다 — 리뷰가 매 라운드 취향 지적을 만들어 수렴하지 않던 실사고(11-6 6차 · 11-7 11차) 대응.',
+      'autonomy.noDeferPaths(선택 · 정규식 문자열 배열): 꼬리 이월에서 **문구와 무관하게** 지켜야 할 파일 경로(5범주 영역) — 엔진 기본(supabase/·*.sql·auth·session·roles·billing·청구·vault·notify·outbox·mail·sms·webhook·deploy·wrangler·workflows·backup 등)에 더한다. 지적의 [경로:줄] 토큰만 본다.',
       '  full: main 머지 · 배포 · 운영 DB 쓰기 · 삭제 · 외부 발송 · 시크릿은 종전대로 사람 승인이고, 그 밖의 편성 판단은 편성기·오케스트레이터가 한다 —',
       '  결정은 replan/dev 가 ⭐추천안을 채택해 인박스 「🔵 사후 확인」에 근거를 남기며(사람이 사후 확인·되돌리기), 열린 Patch 만 남은 스토리는 replan 이 회수 Task 를 연다.',
       '  무진전은 replan(접근 변경)으로 풀고 maxReplansPerStory 회를 넘기면 그 스토리만 「자율 한계」로 사람 질문에 올린다.',
@@ -182,6 +205,7 @@ if (!existsSync(cfgPath)) {
     },
     workers: { max: 3, batchSize: 3 },
     modelPolicy: { enabled: true, version: 1 },
+    runtimePin: { required: true },
     providers: {
       claude: { enabled: true, max: 3 },
       codex: { enabled: true, max: 1, roles: ['review'], reviewKinds: ['new', 'closeout'], split: false, network: false, fallback: true },
@@ -227,11 +251,9 @@ if (clonePath) {
 
 // ── 4. 예약 작업 = 무정지 1개(기본 = 명령 출력 · --register-tasks 로만 실제 등록) ─────
 const runDir = clonePath || ROOT
-// 실행 폴더에 엔진이 실제로 있는지 본다. 방금 만든 클론에는 **없다** — 엔진은 ROOT 에 복사됐을 뿐
-// 아직 커밋·푸시되지 않았기 때문이다. 여기서 파일을 클론에 직접 복사해 넣는 우회는 쓰지 않는다:
-// 러너는 marker 클론을 라운드마다 `git clean -fdq` + `checkout -f` 로 새로고침하므로 복사본이
-// 첫 라운드에 그대로 지워진다(= 며칠 뒤 조용히 실패). 그래서 「커밋·푸시 → 클론 pull」이
-// 유일하게 안 깨지는 경로이고, 그 전에는 **예약을 등록하지 않는다**(등록 즉시 실패 방지).
+// 실행 폴더에 검토된 도구가 없으면 예약을 등록하지 않는다.
+// 운영 원격 push는 필요조건이 아니다. MIGRATION.md의 로컬 auto 브랜치 pin을 사용한다.
+// dirty 파일은 그대로 보존하고, 러너가 자신의 코드를 다른 ref로 바꾸려 하면 중단한다.
 // 목록을 손으로 적지 않는다 — engine/ 에 새 모듈(plan-dag·orchestrate·assign·conflicts·metrics·bench…)이
 // 생겼는데 여기만 구판이면 클론은 「동기 완료」로 보이고 러너는 첫 라운드에 ERR_MODULE_NOT_FOUND 로 죽는다.
 // 설치 복사와 **같은 규칙**(engine/*.mjs 에서 테스트 제외)으로 세고, 설정 파일 하나를 더한다.
@@ -244,8 +266,9 @@ const engineFiles = [
 ]
 const missingInRunDir = engineFiles.filter((f) => !existsSync(join(runDir, 'tools', 'auto', f)))
 const syncSteps = [
-  `cd ${ROOT} && git add tools/auto && git commit -m "chore(auto): batch-24-multiAG 엔진·설정" && git push`,
-  `cd ${runDir} && git pull`,
+  `cd ${ROOT} && git add tools/auto && git commit -m "chore(auto): reviewed batch runtime"`,
+  `Read tools/auto/MIGRATION.md: apply the reviewed tooling commit to the intended local auto/<date> branch at an idle boundary; preserve existing changes.`,
+  `Record that commit in <stateDir>/runtime-pin.json, then run routing/quality tests and dry plan before restoring the existing schedule. No operational remote push is required or authorized.`,
 ]
 const nodeExe = process.execPath
 // C3 3단계 — 러너·편성기와 같은 순서. 이 폴더가 어긋나면 로그·lock·원장이 갈라진다.
@@ -356,7 +379,7 @@ if (existingTasks.includes(taskName)) notes.push(`· ${taskName} 이 이미 있�
 console.log('\n── 다음 단계(사람 확인 필요) ──')
 console.log(`1. tools/auto/auto.config.json 의 epicOrder 를 채운다(예: [1,2,3] — 에픽 번호를 우선순위 순으로) · mockupGate 는 프로젝트 관례에 맞게`)
 if (clonePath) {
-  console.log(`1-b. **클론 실행 전 필수** — 엔진이 git 을 타고 클론에 들어가야 한다(직접 복사는 러너 새로고침에 지워진다):`)
+  console.log(`1-b. **클론 실행 전 필수** — 검토된 도구 커밋을 실행 폴더의 로컬 auto 브랜치에 적용하고 pin을 기록한다:`)
   for (const s of syncSteps) console.log(`     ${s}`)
 }
 console.log(`2. 프로젝트 .claude/settings.json 에 npm·node·git 읽기/빌드 allow 규칙 추가 후 대화형에서 1회 신뢰`)

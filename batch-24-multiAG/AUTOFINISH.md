@@ -18,7 +18,7 @@
 |---|---|---|
 | 「지금 어디까지 됐는지 보고, 되는 데까지 밀어 줘」 | ✅ 자율 마무리 | — |
 | 「어젯밤 뭐 됐는지만 보자」 | ❌ | `morning-brief` |
-| 「오늘 밤 이 스토리들을 돌려」(범위를 사람이 정했다) | ❌ | `night-batch` · `run-night.mjs --queue` |
+| 「오늘 밤 이 스토리들을 돌려」(범위를 사람이 정했다) | ❌ | `batch-24-multiAG` · `run-night.mjs --queue` |
 | 「지금 상태만 진단해 줘. 아무것도 건드리지 마」 | ✅ `--diagnose-only` | `dev-status`(현황판) |
 
 트리거 문구 예 — 「배포 가능한 수준까지 자율적으로 마무리해줘」 · 「남은 거 알아서 끝내 줘」 ·
@@ -39,7 +39,7 @@ node <skill>/engine/autofinish.mjs --root <프로젝트 경로>
 | `--dry-run` | 꺼짐 | 러너까지 띄우되 실제 작업은 하지 않는다(무엇을 돌릴지만 본다). BMAD 쓰기도 하지 않는다 |
 | `--max-rounds <n>` | `3` | 진단→실행 라운드 상한 |
 | `--budget-min <분>` | `480` | 전체 예산. **절대 deadline** 이다 — 게이트·러너·계획의 timeout 이 `min(개별 상한, 잔여)` 로 잘리고, 잔여가 0 이면 **라운드 진입·BMAD 등재·계획·러너·최종 게이트를 전부 건너뛴다**. 마감은 **프로세스 트리 종료**(win32 `taskkill /T /F` · POSIX 그룹 SIGKILL)로 집행하고 파이프를 기다리지 않는다 |
-| `--gates qa,build` | `qa` | 돌릴 검사. **qa 는 라운드마다 + 마지막 1회**, 나머지는 마지막 1회. `--no-gates`·`--diagnose-only` 와 **같이 쓸 수 없다**(거부 규칙 ②·④) |
+| `--gates qa,build` | `qa` | 돌릴 검사. **스토리에는 영향 검사만 실행하고 전체 QA는 landing에서 한 번 실행한다.** 최종 QA는 같은 코드 지문의 landing 결과를 재사용한다. 나머지 선택 검사는 마지막 1회. `--no-gates`·`--diagnose-only` 와 **같이 쓸 수 없다**(거부 규칙 ②·④) |
 | `--no-gates` | — | 검사를 한 번도 돌리지 않는다(진단만 빨리 볼 때). **최종 재진단은 그래도 한다**. `--gates` 와 **같이 쓸 수 없다**(거부 규칙 ④) |
 | `--state <폴더>` | `$AUTO_BATCH_STATE_DIR` 또는 `~/.batch-24-multiag/autofinish` | 산출물·감사 기록이 쌓이는 곳. **대상 저장소 밖이어야 한다**(아래 거부 규칙 ③) |
 | `--out <경로>` | `<state>/autofinish/<runId>/report.md` | 사람이 읽는 보고서 경로. 역시 **대상 저장소 밖**이어야 한다 |
@@ -143,7 +143,7 @@ run-night --queue  기존 러너 계약 그대로(워크트리 · `auto/*` 브�
    한 자리로만 흘러 산출물 쓰기 직전에 `deepRedact` 를 지난다
    (2026-09-02 codex-review-r4 NEW-H4: `deterministic-fallback(runner-error:<stderr 원문>)` 이
    `[ORCHESTRATOR] source=…` 로그로 그대로 재출력됐다).
-   **마스커는 단 하나다** — `auto-story-finish/providers/redact.mjs`(`redactSecrets` = 값 그물 ·
+   **마스커는 단 하나다** — `batch-24-multiAG/engine/runtime/providers/redact.mjs`(`redactSecrets` = 값 그물 ·
    `isSecretFieldName` = 키 이름 판정). Codex 입력·워커 로그·archive 가 쓰는 그물과 같은 것이다.
    `batch-24-multiAG/engine/diagnose.mjs` 가 `maskSecrets`(문자열) · `deepRedact`(객체 전체)로 그것을
    감싸고, 진단·자율 마무리 산출물·보고서가 모두 이 둘만 쓴다(감싼 이유는 서명부가 잘린 2조각 JWT
@@ -295,18 +295,8 @@ run-night --queue  기존 러너 계약 그대로(워크트리 · `auto/*` 브�
 옵션·산출물 경로·안전 경계·문제 해결은 `AUTOFINISH.md` 에 있다.
 ```
 
-### (B) `auto-story-finish/SKILL.md` 에 넣을 절
+### 통합 진입점
 
-```markdown
-## 자율 마무리가 부를 때
-
-스토리 범위가 **주어지지 않은** 요청(「알아서 마무리해줘」)은 이 스킬이 직접 받지 않는다.
-`batch-24-multiAG`의 자율 마무리(`engine/autofinish.mjs`)가 진단·우선순위·BMAD 등재·편성을 먼저 하고,
-그 결과 큐를 `run-night --queue` 로 넘기면 이 엔진은 **종전 계약 그대로** 스토리 단위로 돈다
-(create→dev→qa→review · 커밋 가드 · 통합 게이트 · 실패 격리).
-
-즉 이 스킬이 바뀌는 것은 없다 — 큐가 어디서 왔는지만 다르다. 자율 마무리가 만든 큐는
-`planned: "autofinish"` 이고 `defaults.push` 는 항상 `false` 다(외부 반영은 사람 승인).
-
-자세한 것은 `batch-24-multiAG/AUTOFINISH.md`.
-```
+수동 범위는 `node tools/auto/finish-stories.mjs --from 4-1 --to 4-4`로 실행한다.
+범위 없는 자율 마무리는 `autofinish.mjs`, 예약 큐는 `run-night.mjs`가 담당하며 같은 pinned runtime을 사용한다.
+기존 두 스킬의 별도 설치는 필요하지 않다. 상태·원장·예약 작업의 이전 절차는 `references/MIGRATION.md`를 따른다.

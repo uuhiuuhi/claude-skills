@@ -1,3 +1,4 @@
+import { readRecord } from './runtime/schema-migration.mjs';
 // Fable 오케스트레이터 — 계획 생성 + 결정적 폴백 (2026-09-02 「9점대 하네스」)
 //
 // 무엇인가: 편성기(plan-queue)의 규칙 계획은 **안전하지만 근시안**이다 — 규칙 1~10 은 「지금
@@ -160,11 +161,11 @@ export function parsePlanResponse(input) {
   else {
     const text = String(input)
     if (!text.trim()) return { ok: false, error: 'empty' }
-    try { obj = JSON.parse(text) } catch { obj = null }
+    try { obj = readRecord(text) } catch { obj = null }
     if (obj === null) {
       const block = firstJsonBlock(text)
       if (!block) return { ok: false, error: 'not-json' }
-      try { obj = JSON.parse(block) } catch { return { ok: false, error: 'not-json' } }
+      try { obj = readRecord(block) } catch { return { ok: false, error: 'not-json' } }
     }
   }
   // 봉투 벗기기(최대 2겹) — result 가 문자열이면 그 안이 본문이다
@@ -172,9 +173,9 @@ export function parsePlanResponse(input) {
     if (obj && typeof obj === 'object' && !Array.isArray(obj) && !Array.isArray(obj.batches) && typeof obj.result === 'string') {
       const inner = obj.result
       let next = null
-      try { next = JSON.parse(inner) } catch {
+      try { next = readRecord(inner) } catch {
         const block = firstJsonBlock(inner)
-        if (block) { try { next = JSON.parse(block) } catch { next = null } }
+        if (block) { try { next = readRecord(block) } catch { next = null } }
       }
       if (!next) return { ok: false, error: 'not-json' }
       obj = next
@@ -185,7 +186,7 @@ export function parsePlanResponse(input) {
   return { ok: true, plan: obj }
 }
 
-const clone = (o) => (o == null ? o : JSON.parse(JSON.stringify(o)))
+const clone = (o) => (o == null ? o : readRecord(JSON.stringify(o)))
 
 /**
  * 실행기 실패의 **고정 코드** (codex-review-r4 NEW-H4).
