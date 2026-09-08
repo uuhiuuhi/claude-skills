@@ -36,6 +36,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { resolveAsf } from './asf-resolve.mjs'
 import { readModelHealth, recordModelEvent } from './runtime/model-health.mjs'
 import { failureKind } from './runtime/model-policy.mjs'
+import { probeUsage, usageLine } from './runtime/usage-probe.mjs'
 import { loadConfig } from './plan-queue.mjs'
 import { safeGitPush } from './push-guard.mjs'
 import { preserveRunReport, preserveStopLeftovers, refreshWorktree } from './worktree-refresh.mjs'
@@ -903,6 +904,13 @@ async function applyOrchestrator(q, outPath) {
 
   // 모델 사다리(👤 2026-09-04): 실행기 **사고**(runner-timeout·error·nonzero = 한도·인증·프로세스)에만 다음 모델로 한 번 더 묻는다.
   // 형식 불량·검증 거부는 모델이 답한 것이라 사다리를 타지 않는다. 스텁(AUTO_PLAN_RUNNER_STUB)은 모델을 모르므로 첫 칸만.
+  // 사용량 API 직접 읽기(👤 2026-09-09 「2 a」): 세션·주간·모델별 한도를 CLI 문구가 아닌 실측으로 model-health 에 먼저 적는다.
+  // 모델별 한도(예: Fable 주간 100%)는 그 모델만 리셋 시각까지 제외되고 opus·sonnet 은 계속 간다. 조회 실패는 무시(종전 동작).
+  if (CFG.usageProbe !== false && !process.env.AUTO_PLAN_RUNNER_STUB) {
+    const probed = await probeUsage({ stateDir: STATE_DIR })
+    if (probed.usage) console.log(`${usageLine(probed.usage)}${probed.blocks.length ? ` → 라우팅 제외 ${probed.blocks.map((b) => b.model).join(',')}` : ''}`)
+    else console.log(usageLine(null))
+  }
   const ladder = (process.env.AUTO_PLAN_RUNNER_STUB ? [ORCH.model] : ORCH.ladder)
     .filter((m) => !CFG.modelPolicy?.enabled || (!(CFG.exhaustedModels ?? []).includes(m) && !readModelHealth(STATE_DIR).blocked(m)))
   let res = { source: 'deterministic-fallback(model-cooldown)', plan: null }

@@ -87,6 +87,7 @@ import { assertSafeModel, assertSafePath, normalizeCommand, spawnSafe } from "./
 import { safeGitPush } from "./push-guard.mjs";
 import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes, reviewPendingOnly } from "./completion-rules.mjs";
 import { StageRouter, preferredDevProvider } from './stage-router.mjs';
+import { readUsageSnapshot, reclassifySpend } from './usage-probe.mjs';
 import { MODEL_CATALOG, failureKind, providerOf, limitDowngradeMode } from './model-policy.mjs';
 import { storyRisk, storyDifficulty } from '../assign.mjs';
 import { readEvidenceFor } from './providers/codex.mjs';
@@ -1461,9 +1462,15 @@ function runRoutedStage(stage, story, variant) {
       }
       return;
     }
-    router.record(selected.model, result, { role: stage, story, ...lastRoutingFailure });
+    // 「spend limit」 문구 ≠ 크레딧 지갑(2026-09-09 실측: Fable 주간 모델별 한도 100% 를 CLI 가 이 문구로 냈다). 슬롯 시작 스냅샷이
+    // 그 모델의 플랜 한도를 증언하면 limit(모델 스코프 · 리셋 시각)로 기록해 사다리를 탄다 — spend 는 프로바이더 전체를 30분 막아 opus 까지 세운다.
+    const spendAsLimit = result === 'spend' && !dryRun ? reclassifySpend(readUsageSnapshot(modelStateDir), selected.model) : null;
+    if (spendAsLimit) {
+      note(`↔ [${story}] ${stage}: ${selected.model} 「spend limit」 문구지만 사용량 실측은 ${spendAsLimit.reason} — 모델 한도(limit)로 기록(계정 지갑 차단 아님)`);
+      router.record(selected.model, 'limit', { role: stage, story, retryAt: spendAsLimit.retryAt, ...lastRoutingFailure });
+    } else router.record(selected.model, result, { role: stage, story, ...lastRoutingFailure });
     attempted.push(selected.model);
-    if (result === 'limit') {
+    if (result === 'limit' || spendAsLimit) {
       // 👤 2026-09-07 「1 추천대로」: 마감 재검수(review)는 한도에 다른 모델을 고르지 않는다(리셋 대기 · exit 5 = 날씨).
       // 회수 dev 는 품질 하한을 sonnet 까지 내려 계속한다(relax). 그 밖(신규 dev · create/replan/mockup)은 종전 하한 안에서만.
       const mode = limitDowngradeMode({ stage, batchKind, policy: routingConfig.modelPolicy?.limitDowngrade });
