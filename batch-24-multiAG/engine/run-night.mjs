@@ -580,6 +580,18 @@ if (autoPlan) {
       }
     }
   } catch (error) {
+    // 👤 2026-09-08 동결 예외 ① — 핀 거부(exit 3)는 30분 슬롯이 무기한 반복하는데 알림이 없어 09-07 16:0x~09-08 10:35
+    //    슬롯 36회(18시간) 무음 정지했다(11-4 워커의 엔진 수정이 STOP 잔여물로 실려 tools/auto ≠ 핀). 창당 1회만 알린다.
+    if (!dryRun && /runtime pin|tooling/i.test(String(error?.message ?? ''))) {
+      try {
+        const { day, save } = loadState(); const winId = stopWindowId(new Date()); day.notified ??= {}
+        if (day.notified.pinRefused !== winId) {
+          notify('러너 정지 — 런타임 핀 불일치', `${error.message}
+슬롯이 시작하지 못한다(exit 3 · 30분마다 반복). tools/auto 를 핀 커밋과 맞추거나 <stateDir>/runtime-pin.json 을 검토된 커밋으로 재기록할 것.`)
+          day.notified.pinRefused = winId; save()
+        }
+      } catch { /* 알림 실패가 종료 코드(3)를 바꾸지 않게 */ }
+    }
     fail(`워크트리 새로고침 중단 — ${error.message}`, 3)
   }
 
