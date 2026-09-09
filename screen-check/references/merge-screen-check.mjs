@@ -6,7 +6,8 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { RUBRIC } from './score.mjs'
 
-const norm = (s) => String(s).toLowerCase().replace(/[\s·・\-–—_:()\[\]「」『』'"`,.]/g, '')
+// 역할 접두([engineer /path] → [* /path])와 뷰포트(@390)는 같은 finding 으로 접는다 — 벌 A 가 6역할 × 3폭으로 같은 결함을 반복해서 내기 때문
+const norm = (s) => String(s).toLowerCase().replace(/\[(engineer|admin|team_lead|sales|office|executive)\s/g, '[').replace(/@\d{3,4}/g, '').replace(/[\s·・\-–—_:()\[\]「」『』'"`,.]/g, '')
 const same = (a, b) => a.cat === b.cat && (norm(a.name) === norm(b.name) || norm(a.name).includes(norm(b.name)) || norm(b.name).includes(norm(a.name)))
 
 export function merge(files, { triage = {} } = {}) {
@@ -25,7 +26,7 @@ export function merge(files, { triage = {} } = {}) {
     c.name = c.items[0].name; c.cat = c.items[0].cat
     c.sources = [...new Set(c.items.map((i) => i.source))]
     c.disagree = [...new Set(all.filter((x) => x.ok && c.items.some((i) => same(i, x))).map((x) => x.source))]
-    c.triage = triage[c.name] ?? c.items.map((i) => triage[i.name]).find(Boolean) ?? ''
+    c.triage = triage[c.name] ?? c.items.map((i) => triage[i.name]).find(Boolean) ?? c.items.map((i) => i.triage).find(Boolean) ?? ''   // 벌이 결과 항목에 triage 를 직접 적어도 받는다
   }
   const perSource = sources.map((s) => {
     const mine = clusters.filter((c) => c.sources.includes(s))
@@ -60,7 +61,7 @@ export function merge(files, { triage = {} } = {}) {
 
 export function renderMerged(m, title = '') {
   const L = []
-  L.push(`## screen-check 취합 — ${title} (${new Date().toISOString().slice(0, 16).replace('T', ' ')})`, '')
+  L.push(`## screen-check 취합 — ${title} (${(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}` })()})`, '')
   L.push(`**합산 총점 ${m.total} / ${m.max}** · 자동 체크 ${m.checks}건 · 통과 ${m.pass}건 · finding 군집 ${m.clusters.length}건 · 벌 = ${m.sources.join(' · ')}`, '')
   L.push('| # | 평가 항목 | 합산 | 벌별 |', '|---|---|---|---|')
   m.rows.forEach((r, i) => L.push(`| ${i + 1} | ${r.label} | ${r.avg === null ? '—' : `**${r.avg}** / 10`} | ${r.per.map((p) => `${p.source}=${p.s}${p.n ? `(${p.n})` : '(수동)'}`).join(' · ') || '미측정'} |`))

@@ -47,7 +47,8 @@ try {
       }
       if (d.filledBy) { check('ac', `[${tag}] 미구현 목적지 = 행동 초대형 빈 상태`, s.empty && s.titled, s.text.slice(0, 100)); continue }
       const deadEnd = s.blank ? '빈 화면' : s.denied ? '권한인데 거절' : s.notFound ? '없는 화면으로 떨어짐' : !s.titled ? '타이틀 없음' : ''
-      check('ac', `[${tag}] 화면 열림(막다른 골목 0)`, !deadEnd, deadEnd ? `${deadEnd}: ${s.text.slice(0, 120)}` : `h1=${s.h1} · title=${s.title}`)
+      if (s.guided) check('ac', `[${tag}] id 없는 진입 → 선택 안내(정상 화면 렌더는 시나리오 몫)`, !deadEnd, s.text.slice(0, 120))
+      else check('ac', `[${tag}] 화면 열림(막다른 골목 0)`, !deadEnd, deadEnd ? `${deadEnd}: ${s.text.slice(0, 120)}` : `h1=${s.h1} · title=${s.title}`)
       check('copy', `[${tag}] 앱바 타이틀 = 화면 표 제목`, s.title.startsWith(d.title), `title=${s.title}`)
       if (d.top && inScope(d)) {
         const cur = await page.$eval(`aside a[href="${d.path}"]`, (a) => a.getAttribute('aria-current')).catch(() => 'missing')

@@ -41,6 +41,14 @@ description: 구현이 끝난 스토리를 실제 화면에서 직접 확인한�
 
 **공용 헬퍼** `references/lib.mjs`: `setup({story, source, root})` → `{ check, shot, login(page,'QA_TEST'|'QA_ADMIN'), wire, browser, STAMP, finish }` · `loadDestinations(page, role)`(vite 가 주는 `/src/lib/routes.ts` 를 dynamic import — TS 파싱 0) · `judgeScreen(page, dest)`(로딩 대기 + 막다른 골목 판정) · 역할 계정은 `QA_<ROLE>_EMAIL/PASSWORD` 가 있으면 자동 편입, 없으면 미측정.
 
+**전수 시범에서 배운 것(2026-09-09 밤 · Epic 1·2·3·11·4 · 2,400건 · 산출물 `jng-os/_bmad-output/implementation-artifacts/screen-check-full-2026-09-09/`)**
+- 벌별 고유 적중 합산 A 12 · B 25 · **C 47** — C(Astra 소스·목업 대조 · 브라우저 0 · 10분)가 5범주·설계형을 가장 많이 잡았다. 세 벌 모두 > 0 이라 3벌 유지.
+- A 의 JARGON 정규식은 영문 식별자(`SERVER`·`TEAM1`·`(equipment_type)`)를 못 잡는다 — C 가 뒤집은 「판정 불일치」의 대부분. 엔진의 「화면 열림」은 id 없는 상세/수정 진입을 통과시키므로 `lib.mjs` `GUIDED` 판정으로 「선택 안내」를 따로 센다.
+- 취합기는 `[역할 /경로 @폭]` 접두를 접는다(A 가 6역할 × 3폭으로 같은 결함을 반복) · 벌이 항목에 `triage` 필드를 직접 적어도 받는다.
+- 개발 DB 에 미적용 마이그레이션이 있으면 화면에서 42703/PGRST205 로 나타난다 — 실측 전에 객체 프로브(42501 = 있음)로 확인하고 `apply-migration.mjs` 로 개발 ref 에 적용한다.
+- 워크트리 `.env.local` 복사 뒤 QA 계정 키가 늘면 재복사(배치 1 이 2역할로 돈 실사례). `runner-window.mjs` 는 runner.lock 을 막지 않고 qa 프로세스·`codex exec` 만 본다.
+- Sonnet/Opus 벌이 「실행을 백그라운드로 돌려 놓고 종료」하는 일이 잦다 — 지휘 세션이 `until [ -f results-… ]` 로 기다려 직접 triage 하는 편이 빠르다.
+
 ## 평가 항목 — 10개 × 10점 (보고서 필수)
 실행이 끝나면 **반드시** `references/score.mjs` 로 아래 표를 만들어 보고서 마지막에 붙인다(👤 2026-09-09 「각 항목이 10점 만점에 몇 점인지」). 자동 채점 = 그 항목에 태그된 `check()` 통과율 × 10(반올림). 자동 체크가 없는 항목은 수동 점수 + 한 줄 이유. **보지 않은 항목은 점수를 지어내지 않고 「—(미측정)」** 으로 두고 합계에서 뺀다.
 

@@ -15,6 +15,8 @@ export const RAW_ERROR = /Error|undefined|network|fetch|status code|exception/i
 export const DENY = /(권한이 없습니다|볼 수 없습니다|열 수 없습니다|열립니다)[\s\S]{0,400}홈으로 이동/
 export const NOT_FOUND = /주소에 해당하는 화면이 없습니다/
 export const EMPTY_DEST = /아직 준비 중인 화면으로/
+/** id·쿼리 없이 상세/수정 경로에 들어갔을 때의 정상 안내(오류 화면이 아니라 「고르라」는 안내) — 「화면 열림」 통과 근거로 쓰지 않는다(Astra 대조 지적 2026-09-09) */
+export const GUIDED = /찾을 수 없습니다|불러오지 못했습니다|주소가 잘못|목록에서 (다시 )?(선택|골라)|먼저 (선택|골라)|선택해 주세요/
 /** QA 계정 → 역할. 없는 역할은 「미측정」으로 남긴다(👤 가 .env.local 에 QA_<ROLE>_EMAIL/PASSWORD 를 더하면 자동 편입). */
 export const ROLE_ACCOUNTS = [
   ['engineer', 'QA_TEST'],
@@ -99,5 +101,6 @@ export async function judgeScreen(page, dest, { timeout = 12000 } = {}) {
   const denied = DENY.test(s.text) && s.interactive <= 2
   const notFound = NOT_FOUND.test(s.text)
   const empty = EMPTY_DEST.test(s.text)
-  return { ...s, denied, notFound, empty, blank: !s.hasMain || s.text.length < 12, titled: s.title.startsWith(dest.title) || s.h1.length > 0 }
+  const guided = !denied && !notFound && GUIDED.test(s.text) && s.interactive <= 4
+  return { ...s, denied, notFound, empty, guided, blank: !s.hasMain || s.text.length < 12, titled: s.title.startsWith(dest.title) || s.h1.length > 0 }
 }
