@@ -1,9 +1,9 @@
 ---
 name: screen-check
-description: 구현이 끝난 스토리를 실제 화면에서 직접 확인한다 — 격리 워크트리 + 별도 포트 dev 서버 + Playwright(playwright-core · Edge 채널 · 헤드리스)로 QA 계정 로그인부터 성공 경로·거부 경로·모바일까지 밟고 스크린샷·판정표를 남긴다. "실제 화면에서 확인해줘", "실화면 검증", "화면 테스트 돌려줘", 스토리 마감 전 「실제 화면 확인 항목」 실측, 자동 테스트가 사람 게이트로 남긴 성공 경로(관리자 계정) 실증에 사용한다. 비밀번호는 스크립트가 .env.local 에서 읽고 사람·AI 가 치지 않는다. 다른 창의 작업 트리를 건드리지 않는다(v0.1 · 2026-09-09 Story 1.12 실측에서 추출 · 평가 항목 10개 × 10점 채점표를 보고서 마지막에 낸다). 정본 = GitHub uuhiuuhi/claude-skills `screen-check/` · 24배치(batch-24-multiAG)와 별개 스킬.
+description: 구현이 끝난 스토리를 실제 화면에서 직접 확인한다 — 격리 워크트리 + 별도 포트 dev 서버 + Playwright(playwright-core · Edge 채널 · 헤드리스)로 QA 계정 로그인부터 성공 경로·거부 경로·모바일까지 밟고 스크린샷·판정표를 남긴다. "실제 화면에서 확인해줘", "실화면 검증", "화면 테스트 돌려줘", 스토리 마감 전 「실제 화면 확인 항목」 실측, 자동 테스트가 사람 게이트로 남긴 성공 경로(관리자 계정) 실증에 사용한다. 비밀번호는 스크립트가 .env.local 에서 읽고 사람·AI 가 치지 않는다. 다른 창의 작업 트리를 건드리지 않는다(v0.2 · 2026-09-09 · 기본 1벌 · `--mode multi` 3벌 = A Sonnet 템플릿+링크 전수 / B Opus 탐색·쓰기 독점 / C Astra 대조 산출물만 · 취합 `merge-screen-check.mjs` · 러너 qa 창이면 시작 금지 · 평가 항목 10개 × 10점 채점표를 보고서 마지막에 낸다). 정본 = GitHub uuhiuuhi/claude-skills `screen-check/` · 24배치(batch-24-multiAG)와 별개 스킬.
 ---
 
-# screen-check (v0.1)
+# screen-check (v0.2)
 
 **한 줄**: 스토리의 「실제 화면에서 확인할 항목」을 사람 대신 브라우저로 밟아 **판정표 + 스크린샷**을 낸다. qa(typecheck·lint·vitest)가 못 보는 것 — 실제 로그인 · 실제 DB 왕복 · 시트/모달 상호작용 · 뷰포트별 렌더 — 을 본다.
 
@@ -26,6 +26,20 @@ description: 구현이 끝난 스토리를 실제 화면에서 직접 확인한�
 3. **스크립트**: `references/template.mjs` + `references/score.mjs` 를 `e2e-tools/` 에 복사해 시나리오를 채운다 — 로그인 헬퍼 · 역할별 브라우저 컨텍스트(직원/관리자 분리) · `check(cat, name, ok, detail)`(cat = 평가 항목 키) · `fullPage` 스크린샷 · 끝에 `results-<story>.json` + `report-<story>.md`(채점표) 자동 생성.
 4. **실행·판정**: `node <script>.mjs` → 실패 항목 스크린샷 확인 → 타이밍이면 2차 스크립트(기존 프로브 재사용) → 전건 통과까지.
 5. **기록·정리**: 채점표를 스토리 Completion Notes 「실화면 확인」 절 + 사용자 보고서 마지막에 붙인다 → 커밋 → vite 종료 → junction 링크 삭제 → worktree 제거. 스크린샷은 scratchpad 에 두고 필요한 것만 사용자에게 보낸다.
+
+## v0.2 — 3벌 모드(`--mode multi` · 파티 판정 2026-09-09 · 기본은 여전히 1벌)
+기본(1벌)은 위 절차 그대로다. **전수 시범·마감 실측처럼 놓치면 비싼 화면**은 3벌로 돈다 — 벌마다 시나리오 **종류**가 다르지, 스크린샷을 3배 찍는 게 아니다.
+
+| 벌 | 모델 | 무엇을 | 재료 | 브라우저·쓰기 |
+|---|---|---|---|---|
+| **A 템플릿** | Sonnet(1차) / Terra(2차 비교) | 계약·AC 실측 + **링크·화면 전수**(`SCREEN_DESTINATIONS` × 역할 · 막다른 골목 5종 = 빈 화면·안내 없는 거절·타이틀 없음·없는 화면·pageerror) + 뷰포트 3종 + 접근성 기본 | `references/template-A.mjs`(엔진 고정) + 배치별 `scenarios-<배치>.mjs`(AC 만 채운다) | 브라우저 O · **쓰기 0** |
+| **B 탐색** | Opus | 상태 경합·리사이즈 중 입력·새로고침 복원·권한 경계·실패 주입·경계값 · **쓰기 프로브 독점** | `references/template-B.md` 체크리스트 B1~B12 · `lib.mjs` 재사용 · 스크립트는 스토리마다 직접 쓴다 | 브라우저 O · 쓰기 O(라벨 `QA 프로브 MMDDHHmm` · leftovers 기재) |
+| **C 대조** | Codex Astra(`codex exec -s read-only`) | A/B 의 JSON·스크린샷 ↔ 승인 목업·문구 규율·5범주 대조 · 실측 오탐/누락 재검 | `references/brief-C.md` 를 채워 stdin 으로 · `-i` 로 스크린샷 첨부 | **브라우저 0 · 로그인 0** |
+| 취합 | Fable | `node merge-screen-check.mjs results-A-*.json results-B-*.json results-C-*.json --triage triage.json --title …` → 합산 채점표 + **벌 × (고유 적중/중복/판정 불일치/오탐)** 표 · 결함은 파트 소유자(셸·권한·라우팅 = Opus · 폼·목록·위젯 = Sol)에게 수리 배정 → Astra/Opus 재검수 | `references/merge-screen-check.mjs` | — |
+
+**동시성 규칙**: A·B 동시 시작 허용(로그인 합계 ≤ 6/실행 · 429 한도 30/5분/IP) · C 는 A·B 종료 후 · **러너 qa 진행 중이면 시작 금지** — `node references/runner-window.mjs [--wait 분]` 이 `runner.lock` · slots.log `qa-gate` · vitest/tsc 프로세스를 보고 FREE/BUSY 를 낸다(파티 판정 3항: 시작 간격 규칙은 폐기 · 러너 창 회피가 맞다). 스토리 파일은 Fable 만 쓴다(벌은 각자 `results-<벌>-<배치>.json`). **채택 유지 조건**: 취합 표에서 고유 적중 0 인 벌은 다음 실행에서 뺀다(Grumbal).
+
+**공용 헬퍼** `references/lib.mjs`: `setup({story, source, root})` → `{ check, shot, login(page,'QA_TEST'|'QA_ADMIN'), wire, browser, STAMP, finish }` · `loadDestinations(page, role)`(vite 가 주는 `/src/lib/routes.ts` 를 dynamic import — TS 파싱 0) · `judgeScreen(page, dest)`(로딩 대기 + 막다른 골목 판정) · 역할 계정은 `QA_<ROLE>_EMAIL/PASSWORD` 가 있으면 자동 편입, 없으면 미측정.
 
 ## 평가 항목 — 10개 × 10점 (보고서 필수)
 실행이 끝나면 **반드시** `references/score.mjs` 로 아래 표를 만들어 보고서 마지막에 붙인다(👤 2026-09-09 「각 항목이 10점 만점에 몇 점인지」). 자동 채점 = 그 항목에 태그된 `check()` 통과율 × 10(반올림). 자동 체크가 없는 항목은 수동 점수 + 한 줄 이유. **보지 않은 항목은 점수를 지어내지 않고 「—(미측정)」** 으로 두고 합계에서 뺀다.
