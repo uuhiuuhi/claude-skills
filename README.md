@@ -1,12 +1,13 @@
 # claude-skills
 
-Claude Code 스킬 백업. 네 개가 들어 있다.
+Claude Code 스킬 백업. 다섯 개가 들어 있다.
 
 | 스킬 | 하는 일 |
 |---|---|
 | [`auto-story-finish`](auto-story-finish/) | BMad 스토리 배치를 create → dev → review 순으로 무인 완료한다(헤드리스 엔진). 단계별 모델 자동 선택, 인증 만료·사용량 한도 감지와 복구 대기, qa RED 시 중단, 옵트인 커밋·푸시(가드 하에). **v3(2026-09-02)**: 워커 프로바이더 계층 — `claude -p` 와 **`codex exec`** 를 모델 스펙(`"opus"` / `"codex"` / `"codex:<model>"`)으로 고른다 · Codex 리뷰는 read-only + 구조화 JSON → 엔진이 원장 기재 · 한도 시 프로바이더 전환(스토리당 1회) · 자동 수리 루프(`--auto-repair`) · 테스트 무결성 검사 · 검증 매니페스트. 플래그 없으면 종전 동작. |
 | [`dev-status`](dev-status/) | BMad v6 프로젝트의 **읽기 전용** 개발 현황판. `epics.md`·`sprint-status.yaml`·스토리 md·배치 로그를 규칙만으로 판정해 진행률·단계 배지·파일 겹침·불일치·다음 할 일을 로컬 HTML 한 장으로 낸다. 외부 의존성 0, LLM 호출 0. |
 | [`night-batch-ops`](night-batch-ops/) | **프로젝트 설치형** 24시간 **무정지** 무인 배치 체계 — 30분 반복 예약 **1개**(무기한 · 창 구분 없음) · 심박 lock(죽은 프로세스는 자동 탈취, 판정 불능은 6시간 심박으로 가름) · **선형 승계**(미머지 `auto/*` 가 있으면 쉬지 않고 그 브랜치를 이어 쌓는다 — 「미머지면 휴면」 폐지) · **공회전 가드**(엔진 로그 말고 바뀐 게 없는 라운드면 연속 루프를 끝내고 다음 정시 실행에 넘긴다) · 라운드마다 **하향 동기**(`origin/main` 병합 · 충돌은 해소/보류/중단 3처분) · 큐 자동 편성(규칙 10종, LLM 0)에 **무진전 연속 상한**(같은 스토리가 진전 없이 반복될 때만 제외) · **한도 대기(exit 5) 원장 환불** · 병렬 실행(File List 서로소 2폭, 워크트리 분리 + cherry-pick landing) · 중요도별 모델 배정 · 텔레그램 원격 명령(`/status` `/merge` `/resume` `/extend N` — 코드 되묻기) · 알림. `auto-story-finish` 를 엔진으로 쓴다. **원장 해석 단일 소스**(`story-ledger.mjs` — 굵게·인용·부정문 표기 흔들림 흡수) · **지출 한도 차단 알림**(원인을 이름으로 · 반복 억제) · **소진 모델 짝 단위 회피**. 프로젝트 고유값은 설치되는 `auto.config.json` 이 소유. |
+| [`screen-check`](screen-check/) | 구현이 끝난 스토리를 **실제 화면에서** 확인 — 격리 worktree + 별도 포트 dev 서버 + Playwright(playwright-core·Edge) 로 QA 계정 로그인·성공/거부 경로·모바일까지 밟고 **평가 항목 10개 × 10점 채점표**를 보고서 마지막에 낸다. 24배치(night-batch-ops/batch-24)와 별개 스킬 |
 
 **2026-09-02 통합**: 종전의 4시간 슬롯판(`night-batch-ops-4h-slots`)과 무정지판을 **`night-batch-ops`
 하나로 합쳤다.** 4시간 슬롯판은 시계가 밤에만 열려 있어 낮 산출물을 이어받지 못했고, 그 문제를
