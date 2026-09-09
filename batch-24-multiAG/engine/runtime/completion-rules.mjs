@@ -158,6 +158,20 @@ export function reviewPendingOnly(criteria, { hasReviewStage = false } = {}) {
   return failing.every((c) => c.id === 'T6' || (c.id === 'T7' && /교차 검토/.test(str(c.why)) && !/열린 지적|사람 결정|검사가 통과/.test(str(c.why))))
 }
 
+/** 마감 재검수(review 전용) 배치의 「회수 대기」 판정(2026-09-10 새벽 실사고: 5-1 마감 재검수가 지적을 남기자 COMPLETION STOP(exit 1) 이
+ *  3슬롯 연속 라운드의 남은 배치 12건을 전부 세웠다) — 이 배치엔 dev 가 없고, review 가 지적을 남겨 스토리가 in-progress 로 내려간 것뿐일 때
+ *  true. 리뷰 지적은 검토의 정상 산출이고 다음 편성(회수 dev)의 몫이지 고장이 아니다. 검사 미통과·사람 결정·같은 제공자·열람 증거 없음이
+ *  섞이면 false(진짜 not-ready). reviewPendingOnly(회수 dev 배치 · T6 만 미충족)와 짝을 이룬다.
+ *  @param {Array<{id:string,result:string,why?:string}>} criteria 완주 게이트 판정 목록
+ *  @param {{stages:string[]}} o 이 배치의 단계 목록 — review 하나뿐일 때만 해당 */
+export function recoveryPendingOnly(criteria, { stages = [] } = {}) {
+  if (!(Array.isArray(stages) && stages.length === 1 && stages[0] === 'review')) return false
+  const failing = (Array.isArray(criteria) ? criteria : []).filter((c) => c && c.result !== PASS)
+  const t7 = failing.find((c) => c.id === 'T7')
+  if (!t7 || !/열린 지적/.test(str(t7.why)) || /사람 결정|검사가 통과/.test(str(t7.why))) return false
+  return failing.every((c) => c.id === 'T7' || (c.id === 'T6' && /높음 지적|기록이 없어|기록이 빠졌다|교차 검토 기록이 없다/.test(str(c.why))))
+}
+
 // ── 본체 ─────────────────────────────────────────────────────────────────────
 /**
  * 완료 기준 8조건 판정. **순수** — 매니페스트를 고치지 않고 completion 객체를 돌려준다.

@@ -85,7 +85,7 @@ import { buildCodexCommand, runCodexWorker, classifyCodexFailure, codexFailureTe
 import { createGitGuard, findCredentialRemotes, stripRemoteCredentials, localGitFingerprintFor } from "./providers/git-guard.mjs";
 import { assertSafeModel, assertSafePath, normalizeCommand, spawnSafe } from "./providers/spawn-safe.mjs";
 import { safeGitPush } from "./push-guard.mjs";
-import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes, reviewPendingOnly } from "./completion-rules.mjs";
+import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes, reviewPendingOnly, recoveryPendingOnly } from "./completion-rules.mjs";
 import { StageRouter, preferredDevProvider } from './stage-router.mjs';
 import { readUsageSnapshot, reclassifySpend } from './usage-probe.mjs';
 import { MODEL_CATALOG, failureKind, providerOf, limitDowngradeMode } from './model-policy.mjs';
@@ -1756,6 +1756,7 @@ try { unlinkSync(exitInfoFile); } catch { /* 이전 배치 부기 없음 */ } //
 
 ensureBranch();
 
+const recoveryPendingStories = []; // (2026-09-10 · 동결 예외) 회수 대기 — 마감 재검수(review 전용)가 지적을 남긴 스토리. exit 1 로 세면 러너가 뒤 배치를 전부 세운다(09-10 새벽 3슬롯 연속 실사고)
 const reviewPendingStories = []; // (👤 2026-09-07 · 동결 예외) 리뷰 대기 — 남은 스토리까지 돌린 뒤 한 번에 exit 8(Codex 리뷰 P2-4: 뒤 스토리가 편성만 되고 안 돈 채 사라지지 않게)
 for (const story of stories) {
   note(`──────── STORY ${story} ────────`);
@@ -1859,6 +1860,13 @@ for (const story of stories) {
       reviewPendingStories.push(story);
       continue;
     }
+    // (2026-09-10 · 동결 예외) 마감 재검수(review 전용) 배치가 지적을 남겨 스토리를 in-progress 로 내린 것은 검토의 정상 산출 — 다음 편성(회수 dev)의 몫.
+    // STOP(exit 1)로 세면 러너가 「앞 배치가 멈췄다」며 남은 배치를 전부 세운다(09-10 05:12·07:0x·07:1x 3슬롯 연속 · 12배치 미실행). exit 8 로 나가고 러너가 계속 돈다. done/commit/push 없음은 불변.
+    if (final?.quality?.codeFingerprint === codeFingerprint() && recoveryPendingOnly(final?.completion?.criteria, { stages })) {
+      note(`⏳ [${story}] 회수 대기(exit ${REVIEW_PENDING_EXIT}) — 마감 재검수가 지적을 남겨 in-progress 로 내려갔다 · 다음 편성이 회수(dev)를 연다 · done/commit/push 없음 · 차단기 미계수(잔여물은 러너의 STOP 보존 커밋)`);
+      recoveryPendingStories.push(story);
+      continue;
+    }
     note(`✖ COMPLETION STOP — [${story}] ${final?.completion?.verdict ?? 'not-verified'} · done/commit/push blocked · ${JSON.stringify(final?.completion?.criteria?.filter(c => c.result !== 'pass'))}`);
     writeExitInfo({ code: 1, kind: 'qa', story, stage: 'completion', why: final?.completion?.verdict ?? 'not-verified' });
     process.exit(1);
@@ -1870,9 +1878,10 @@ for (const story of stories) {
 }
 
 // (👤 2026-09-07 · 동결 예외) 리뷰 대기 스토리가 있으면 e2e·push 전에 exit 8 — 이 배치 산출물의 push 는 다음 편성(마감 재검수) 뒤 러너 몫(STOP 잔여물 보존과 같은 경로).
-if (reviewPendingStories.length) {
-  note(`⏳ 리뷰 대기 ${reviewPendingStories.length}건(${reviewPendingStories.join(", ")}) — exit ${REVIEW_PENDING_EXIT} · done/commit/push 없음 · 러너는 고장으로 세지 않는다`);
-  writeExitInfo({ code: REVIEW_PENDING_EXIT, kind: 'review-pending', story: reviewPendingStories.join('+'), stage: 'completion', why: 'T6 only — no review stage in this batch' });
+if (reviewPendingStories.length || recoveryPendingStories.length) {
+  const pending = [...reviewPendingStories, ...recoveryPendingStories];
+  note(`⏳ 리뷰 대기 ${reviewPendingStories.length}건 · 회수 대기 ${recoveryPendingStories.length}건(${pending.join(", ")}) — exit ${REVIEW_PENDING_EXIT} · done/commit/push 없음 · 러너는 고장으로 세지 않는다`);
+  writeExitInfo({ code: REVIEW_PENDING_EXIT, kind: reviewPendingStories.length ? 'review-pending' : 'recovery-pending', story: pending.join('+'), stage: 'completion', why: reviewPendingStories.length ? 'T6 only — no review stage in this batch' : 'closeout review left findings — next plan opens recovery' });
   process.exit(REVIEW_PENDING_EXIT);
 }
 

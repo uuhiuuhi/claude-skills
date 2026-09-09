@@ -9,7 +9,7 @@ import { describe, it } from 'node:test'
 
 import { TASK_CRITERIA } from '../readiness.mjs'
 import {
-  reviewPendingOnly,
+  reviewPendingOnly, recoveryPendingOnly,
   COMPLETION_CRITERIA, FAIL, NOT_READY, NOT_VERIFIED, NV, PASS, READY,
   blockingIntegrity, bmadStateAgreesWithCode, classifyTestCase, completionNotesAudit, crossReviewResult,
   newTestsFromDiff, renderCompletionNotes, reviewEvidenceCount, strengthenCompletion, testKindsVerdict,
@@ -373,5 +373,28 @@ describe('reviewPendingOnly — 회수 dev 배치의 T6 미충족만이면 「�
     assert.equal(reviewPendingOnly([{ id: 'T6', result: 'fail', why: '만든 쪽과 검토한 쪽이 같다(claude)' }], { hasReviewStage: false }), false)
     assert.equal(reviewPendingOnly([], { hasReviewStage: false }), false)
     assert.equal(reviewPendingOnly(null, { hasReviewStage: false }), false)
+  })
+})
+
+describe('recoveryPendingOnly — 마감 재검수(review 전용) 배치가 지적을 남긴 것만이면 「회수 대기」(2026-09-10 새벽 실사고 · 3슬롯 연속 라운드 정지)', () => {
+  const pass = (id) => ({ id, result: 'pass', why: 'ok' })
+  const T6high = { id: 'T6', result: 'fail', why: '검토에서 높음 지적 2건이 남아 있다' }
+  const T6prov = { id: 'T6', result: 'not-verified', why: '구현자(workers.dev.provider) 기록이 없어 「만든 쪽과 다른 쪽인지」를 확인하지 못했다' }
+  const T7open = { id: 'T7', result: 'fail', why: '문서는 완료라고 적었는데 코드 상태가 아니다 — 교차 검토가 성립하지 않았다 · 열린 지적 2건' }
+  it('review 단계뿐 · T6(높음 잔존 또는 기록 없음) + T7(열린 지적) → true', () => {
+    assert.equal(recoveryPendingOnly([pass('T1'), T6high, T7open, pass('T8')], { stages: ['review'] }), true)
+    assert.equal(recoveryPendingOnly([pass('T1'), T6prov, T7open], { stages: ['review'] }), true)
+    assert.equal(recoveryPendingOnly([pass('T1'), T7open], { stages: ['review'] }), true)
+  })
+  it('dev 가 섞인 배치 · 검사 미통과 · 사람 결정 · 같은 제공자 · 열린 지적 없는 T7 · 빈 입력 → false', () => {
+    assert.equal(recoveryPendingOnly([T6high, T7open], { stages: ['dev', 'review'] }), false)
+    assert.equal(recoveryPendingOnly([T6high, T7open], { stages: [] }), false)
+    assert.equal(recoveryPendingOnly([{ id: 'T1', result: 'fail', why: '검사 RED' }, T7open], { stages: ['review'] }), false)
+    assert.equal(recoveryPendingOnly([{ id: 'T7', result: 'fail', why: '문서는 완료 — 열린 지적 1건 · 사람 결정 1건' }], { stages: ['review'] }), false)
+    assert.equal(recoveryPendingOnly([{ id: 'T6', result: 'fail', why: '만든 쪽과 검토한 쪽이 같다 — 교차 검토가 아니다' }, T7open], { stages: ['review'] }), false)
+    assert.equal(recoveryPendingOnly([{ id: 'T6', result: 'fail', why: '검토자가 파일을 실제로 읽은 증거가 없다' }, T7open], { stages: ['review'] }), false)
+    assert.equal(recoveryPendingOnly([T6high, { id: 'T7', result: 'fail', why: '문서는 완료라고 적었는데 코드 상태가 아니다 — 교차 검토가 성립하지 않았다' }], { stages: ['review'] }), false)
+    assert.equal(recoveryPendingOnly([], { stages: ['review'] }), false)
+    assert.equal(recoveryPendingOnly(null, { stages: ['review'] }), false)
   })
 })
