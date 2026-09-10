@@ -386,8 +386,10 @@ describe('recoveryPendingOnly — 마감 재검수(review 전용) 배치가 지�
     assert.equal(recoveryPendingOnly([pass('T1'), T6prov, T7open], { stages: ['review'] }), true)
     assert.equal(recoveryPendingOnly([pass('T1'), T7open], { stages: ['review'] }), true)
   })
-  it('dev 가 섞인 배치 · 검사 미통과 · 사람 결정 · 같은 제공자 · 열린 지적 없는 T7 · 빈 입력 → false', () => {
-    assert.equal(recoveryPendingOnly([T6high, T7open], { stages: ['dev', 'review'] }), false)
+  it('review 가 마지막이 아닌 배치 · 검사 미통과 · 사람 결정 · 같은 제공자 · 열린 지적 없는 T7 · 빈 입력 → false', () => {
+    assert.equal(recoveryPendingOnly([T6high, T7open], { stages: ['dev', 'review'] }), true)
+    assert.equal(recoveryPendingOnly([T6high, T7open], { stages: ['replan', 'dev', 'review'] }), true)
+    assert.equal(recoveryPendingOnly([T6high, T7open], { stages: ['review', 'dev'] }), false)
     assert.equal(recoveryPendingOnly([T6high, T7open], { stages: [] }), false)
     assert.equal(recoveryPendingOnly([{ id: 'T1', result: 'fail', why: '검사 RED' }, T7open], { stages: ['review'] }), false)
     assert.equal(recoveryPendingOnly([{ id: 'T7', result: 'fail', why: '문서는 완료 — 열린 지적 1건 · 사람 결정 1건' }], { stages: ['review'] }), false)

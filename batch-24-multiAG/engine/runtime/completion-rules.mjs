@@ -163,9 +163,10 @@ export function reviewPendingOnly(criteria, { hasReviewStage = false } = {}) {
  *  true. 리뷰 지적은 검토의 정상 산출이고 다음 편성(회수 dev)의 몫이지 고장이 아니다. 검사 미통과·사람 결정·같은 제공자·열람 증거 없음이
  *  섞이면 false(진짜 not-ready). reviewPendingOnly(회수 dev 배치 · T6 만 미충족)와 짝을 이룬다.
  *  @param {Array<{id:string,result:string,why?:string}>} criteria 완주 게이트 판정 목록
- *  @param {{stages:string[]}} o 이 배치의 단계 목록 — review 하나뿐일 때만 해당 */
+ *  @param {{stages:string[]}} o 이 배치의 단계 목록 — 마지막 단계가 review 일 때 해당 */
 export function recoveryPendingOnly(criteria, { stages = [] } = {}) {
-  if (!(Array.isArray(stages) && stages.length === 1 && stages[0] === 'review')) return false
+  // 마지막 단계가 review 면(마감 재검수 · create→dev→review · replan→dev→review 모두) 지적은 정상 산출이다 — 10:5x 실측: replan→dev→review 배치도 exit 1 로 라운드를 세웠다.
+  if (!(Array.isArray(stages) && stages.length && stages[stages.length - 1] === 'review')) return false
   const failing = (Array.isArray(criteria) ? criteria : []).filter((c) => c && c.result !== PASS)
   const t7 = failing.find((c) => c.id === 'T7')
   if (!t7 || !/열린 지적/.test(str(t7.why)) || /사람 결정|검사가 통과/.test(str(t7.why))) return false
