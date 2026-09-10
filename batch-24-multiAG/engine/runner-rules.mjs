@@ -246,9 +246,13 @@ export function stopRecord(win, worstCode, label) {
   w.stops = Math.max(...Object.values(w.sigs), 0) // 원격 명령 폴러(/status·/resume) 호환(stops = 최대 스트릭)
   return w
 }
-export function stopBlocked(win) {
+export const BREAKER_WINDOW_TOTAL = 4
+/** @param {{total?:number}} o 창 누적 백스톱 — auto.config.json `breaker.windowTotal`(기본 4). 스토리 단위 STOP 격리(2026-09-10)로
+ *  한 라운드에 서로 다른 스토리의 STOP 이 여럿 쌓일 수 있어, 폭주 백스톱만 프로젝트가 올릴 수 있게 했다(같은 서명 2회는 불변). */
+export function stopBlocked(win, { total = BREAKER_WINDOW_TOTAL } = {}) {
   if (!win) return false
-  if ((win.total ?? 0) >= 4) return true // 창 백스톱
+  const cap = Number.isFinite(Number(total)) && Number(total) >= 2 ? Number(total) : BREAKER_WINDOW_TOTAL
+  if ((win.total ?? 0) >= cap) return true // 창 백스톱
   return Object.values(win.sigs ?? {}).some((n) => n >= 2)
 }
 

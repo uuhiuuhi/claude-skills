@@ -536,3 +536,14 @@ describe('리뷰 대기(exit 8) — 👤 2026-09-07 동결 예외: 회수 dev �
     assert.equal(worseExit(1, 7), 7); assert.equal(worseExit(7, 1), 7); assert.equal(worseExit(1, 6), 1); assert.equal(worseExit(5, 8), 5); assert.equal(worseExit(8, 5), 5)
   })
 })
+
+describe('차단기 창 누적 상한 설정(2026-09-10 스토리 단위 STOP 격리)', () => {
+  it('total 은 기본 4 · 옵션으로 올릴 수 있고 같은 서명 2회는 불변 · 잘못된 값은 기본으로', () => {
+    let v = stopRecord(undefined, 1, 'A'); v = stopRecord(v, 1, 'B'); v = stopRecord(v, 1, 'C'); v = stopRecord(v, 1, 'D')
+    assert.equal(stopBlocked(v), true)
+    assert.equal(stopBlocked(v, { total: 8 }), false)
+    assert.equal(stopBlocked(v, { total: 'x' }), true)
+    let w = stopRecord(undefined, 1, 'A'); w = stopRecord(w, 1, 'A')
+    assert.equal(stopBlocked(w, { total: 8 }), true)
+  })
+})

@@ -168,8 +168,12 @@ export function authorizationVerdict(report, { nonce, codeFingerprint, endpoints
   const scope = missingEndpoints(endpoints, report.endpoints);
   if (scope.invalidScope) return { result: 'not-verified', why: 'endpoint scope requires source, method and route' };
   const missing = scope.missing;
-  const invalid = report.endpoints.filter(e => !e.method || !e.route || e.authorizationApplied !== true ||
-    e.cases?.anonymous !== 401 || e.cases?.forbidden !== 403 || !(e.cases?.allowed >= 200 && e.cases?.allowed < 300) || ![403, 404].includes(e.cases?.crossTenant));
+  // Intentionally public/internal endpoints (cron-invoked worker with a shared-secret header, webhook receivers) cannot
+  // produce anonymous/forbidden/allowed/cross-tenant cases — the same `public: true` + specific `publicReason` the api
+  // report already accepts is accepted here, reviewed by the independent reviewer (2026-09-10 outbox-dispatch).
+  const isPublic = e => e?.public === true && typeof e.publicReason === 'string' && e.publicReason.trim().length > 10;
+  const invalid = report.endpoints.filter(e => !e.method || !e.route || (!isPublic(e) && (e.authorizationApplied !== true ||
+    e.cases?.anonymous !== 401 || e.cases?.forbidden !== 403 || !(e.cases?.allowed >= 200 && e.cases?.allowed < 300) || ![403, 404].includes(e.cases?.crossTenant))));
   return { result: missing.length || invalid.length ? 'fail' : 'pass', missing, invalid: invalid.map(e => `${e.method} ${e.route}`), endpoints: report.endpoints };
 }
 

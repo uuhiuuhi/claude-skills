@@ -602,7 +602,7 @@ if (autoPlan) {
   //    창(낮/밤) 단위로 센다 — 낮 사고가 밤 몫을 잠그지 않게(stopWindowId).
   const { day, win, save } = loadState()
   const winId = stopWindowId(new Date())
-  if (stopBlocked(win)) {
+  if (stopBlocked(win, { total: CFG.breaker?.windowTotal })) {
     console.log(`이 창(${winId}) 차단 — 같은 원인 STOP 2회 또는 창 누적 4회(아침에 사람이 본다 · /resume 으로 열 수 있다)`)
     // ⚠️ 30분 슬롯이 무기한 반복하므로, 차단이 하루 유지되면 알림 없는 억제가 없을 때 같은 문구가
     // 수십 번 나간다(4시간 슬롯 시절엔 드러나지 않던 결함). 창당 1회로 묶고 리허설은 무발신.
@@ -1686,6 +1686,9 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
         results.push({ label, code: pr.code, started, batchBase, stories: batch.stories ?? [], stages: batch.stages ?? [] })
         record(`- ${pr.code === 0 ? '완주' : isReviewPendingExit(pr.code) ? `⏳ 리뷰 대기(exit ${pr.code})` : `**중단(exit ${pr.code})**`}: ${label} (병렬)`)
         if (pr.code !== 0 && !isReviewPendingExit(pr.code)) {
+          // (2026-09-10) exit 1 = 스토리 단위 STOP(qa RED · 완주 게이트) — 잔여물은 보존됐고 원인은 그 스토리 안에 있다. 뒤 배치는 계속 돈다
+          // (같은 날 5회 실측: 첫 STOP 이 남은 12배치를 전부 세움). 환경 정지(핀 3 · 가드 6 · 되돌림 7 · 한도 5)는 종전대로 라운드를 끊는다.
+          if (pr.code === 1) { record(`- 다음 배치 계속 — exit 1 은 스토리 단위 STOP(잔여물 보존 · 차단기가 반복을 센다)`); continue }
           record(`- 남은 배치는 실행하지 않았다 — \`auto-pipeline-logs/run-summary.log\` 확인`)
           break
         }
@@ -1775,7 +1778,9 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
       }
       // 리뷰 대기(exit 8)는 고장이 아니다 — 잔여물은 위에서 보존했고, 남은 배치는 계속 돈다(👤 2026-09-07 · 동결 예외).
       if (isReviewPendingExit(code)) continue
-      // 앞 배치가 멈췄는데 뒤를 돌리면 원인이 섞인다.
+      // (2026-09-10) exit 1 = 스토리 단위 STOP — 잔여물은 위에서 보존했고 원인은 그 스토리 안에 있다. 뒤 배치는 계속 돈다.
+      // 환경 정지(핀 3 · 가드 6 · 되돌림 7 · 한도 5)만 「원인이 섞인다」로 라운드를 끊는다.
+      if (code === 1) { record(`- 다음 배치 계속 — exit 1 은 스토리 단위 STOP(잔여물 보존 · 차단기가 반복을 센다)`); continue }
       record(`- 남은 배치는 실행하지 않았다 — \`auto-pipeline-logs/run-summary.log\` 확인`)
       break
     }

@@ -278,3 +278,11 @@ test('coverage ignores non-JS sources (SQL migrations) and project coverageExclu
   assert.equal(changedCoverage({ diff: coverageDiff + denoDiff, lcov: lcov(10) }).result, 'not-verified')
   assert.equal(changedCoverage({ diff: coverageDiff + denoDiff, lcov: lcov(10), exclude: ['supabase/functions/'] }).result, 'pass')
 })
+
+test('authorization accepts an intentionally public endpoint only with a specific publicReason (2026-09-10 outbox-dispatch)', () => {
+  const pub = { source: 'supabase/functions/outbox-dispatch/index.ts', method: 'POST', route: '/functions/v1/outbox-dispatch', public: true, publicReason: 'pg_cron 이 공유 시크릿 헤더로 호출하는 발송 워커 — 사용자 역할 케이스가 존재하지 않는다' };
+  const scope = [{ source: pub.source, method: 'POST', route: pub.route }];
+  assert.equal(authorizationVerdict({ nonce: 'fresh', codeFingerprint: 'fp', endpoints: [pub] }, { nonce: 'fresh', codeFingerprint: 'fp', endpoints: scope }).result, 'pass');
+  assert.equal(authorizationVerdict({ nonce: 'fresh', codeFingerprint: 'fp', endpoints: [{ ...pub, publicReason: 'short' }] }, { nonce: 'fresh', codeFingerprint: 'fp', endpoints: scope }).result, 'fail');
+  assert.equal(authorizationVerdict({ nonce: 'fresh', codeFingerprint: 'fp', endpoints: [{ ...pub, public: false }] }, { nonce: 'fresh', codeFingerprint: 'fp', endpoints: scope }).result, 'fail');
+})
