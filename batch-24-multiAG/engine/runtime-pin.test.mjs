@@ -263,3 +263,15 @@ test('pin input boundary: missing or empty paths fail before Git is called', () 
     assert.equal(calls, 0, 'path validation must precede every Git subprocess');
   }
 });
+
+test('project-owned quality.config.json may change under the pin; any other tooling file still fails (2026-09-10)', t => {
+  const f = fixture(t)
+  const input = { cwd: f.cwd, toolingDir: f.toolingDir, commit: f.base, required: true }
+  writeFileSync(join(f.cwd, f.toolingDir, 'quality.config.json'), '{"apiEndpoints":[]}\n')
+  f.git('add', '-A'); f.git('commit', '-qm', 'inventory')
+  assert.equal(assertReviewedRuntime(input).checked, true)
+  writeFileSync(join(f.cwd, f.toolingDir, 'quality.config.json'), '{"apiEndpoints":[{"source":"x"}]}\n')
+  assert.equal(assertReviewedRuntime(input).checked, true)
+  writeFileSync(join(f.cwd, f.toolingDir, 'engine.mjs'), 'changed\n')
+  assert.throws(() => assertReviewedRuntime(input), /differs/)
+})
