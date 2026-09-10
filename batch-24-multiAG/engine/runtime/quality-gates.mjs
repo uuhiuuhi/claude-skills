@@ -78,7 +78,12 @@ export function fingerprint(root) {
 
 // LCOV is intersected with added/modified executable lines. Missing instrumentation
 // remains unknown; an excluded file can never improve the percentage.
-export function changedCoverage({ diff, lcov, root = process.cwd() }) {
+// JS line coverage can only ever exist for JavaScript/TypeScript the test runner instrumented. SQL migrations and other
+// executable-but-not-JS sources are verified by their own gates (security/authorization + project guard tests) — counting
+// their added lines here made every migration story "not-verified" forever (2026-09-10 5-3). `exclude` lists project-owned
+// path prefixes (quality.config.json `coverageExclude`, e.g. Deno edge-function sources) that the JS runner cannot load.
+const JS_COVERABLE = /\.[cm]?[jt]sx?$/i
+export function changedCoverage({ diff, lcov, root = process.cwd(), exclude = [] }) {
   const records = new Map(); let current;
   for (const line of String(lcov).split(/\r?\n/)) {
     if (line.startsWith('SF:')) { const p = line.slice(3); const key = norm(isAbsolute(p) ? relative(root, p) : p).replace(/^\.\//, ''); current = records.get(key) ?? { lines: new Map(), branches: [] }; records.set(key, current); }
@@ -89,6 +94,7 @@ export function changedCoverage({ diff, lcov, root = process.cwd() }) {
   let total = 0, covered = 0, branches = 0, coveredBranches = 0; const unknown = [], files = [];
   for (const [path, f] of Object.entries(splitDiffByFile(diff))) {
     if (!implementationFile(path) || !f.added.length) continue;
+    if (!JS_COVERABLE.test(path) || (Array.isArray(exclude) && exclude.some(p => typeof p === 'string' && p && norm(path).startsWith(norm(p))))) continue;
     const rec = records.get(path), lines = new Set(f.added.map(a => a.line));
     let fileTotal = 0, fileCovered = 0;
     for (const a of f.added) {
@@ -255,7 +261,7 @@ export async function runQuality({ root = process.cwd(), base = 'HEAD', phase = 
       const outcome = await run(gate); result.gates.push(outcome);
       if (outcome.result !== 'pass') break;
       if (gate.name === 'coverage') {
-        result.coverage = existsSync(lcovPath) ? changedCoverage({ diff: changes.diff, lcov: readFileSync(lcovPath, 'utf8'), root }) : { result: 'not-verified', why: 'fresh LCOV report missing' };
+        result.coverage = existsSync(lcovPath) ? changedCoverage({ diff: changes.diff, lcov: readFileSync(lcovPath, 'utf8'), root , exclude: config.coverageExclude ?? [] }) : { result: 'not-verified', why: 'fresh LCOV report missing' };
         if (result.coverage.result !== 'pass') break;
       }
       if (gate.name === 'authorization') {

@@ -269,3 +269,12 @@ test('comment language boundary: SQL/Python/template comments are docs; quoted S
   assert.equal(classifyRisk({files:['db/schema.sql'],diff:diff('db/schema.sql',["SELECT '-- new'"],["SELECT '-- old'"])}).category,'auth-db');
   assert.equal(classifyRisk({files:['src/task.py'],diff:diff('src/task.py',['value = "# new"'],['value = "# old"'])}).category,'fast');
 });
+
+test('coverage ignores non-JS sources (SQL migrations) and project coverageExclude prefixes (2026-09-10 5-3)', () => {
+  const sqlDiff = diff('supabase/migrations/20260910190500_x.sql', ['create table public.t (id int);', 'grant select on public.t to authenticated;'])
+  assert.equal(changedCoverage({ diff: coverageDiff + sqlDiff, lcov: lcov(10) }).unknown.length, 0)
+  assert.equal(changedCoverage({ diff: coverageDiff + sqlDiff, lcov: lcov(10) }).result, 'pass')
+  const denoDiff = diff('supabase/functions/fn/policy.ts', ['export const a = 1', 'export const b = 2'])
+  assert.equal(changedCoverage({ diff: coverageDiff + denoDiff, lcov: lcov(10) }).result, 'not-verified')
+  assert.equal(changedCoverage({ diff: coverageDiff + denoDiff, lcov: lcov(10), exclude: ['supabase/functions/'] }).result, 'pass')
+})
