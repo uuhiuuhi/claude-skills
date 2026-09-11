@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, realpathSync, rmSync, statSync, readdirSync } from 'node:fs';
 import { resolve, relative, isAbsolute, dirname, basename, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -325,6 +325,17 @@ export function assertRunEvidence(modules, errors = [], reason = 'passed', stric
  *    itself, tool configuration, …) denies all tolerance. */
 // Documents and images only. Data files (csv/jsonl/json/sql/…) are test inputs or configuration and stay fail-closed.
 const DOC_CHANGE = /\.(?:md|markdown|txt|rst|png|jpe?g|gif|svg|webp|ico|pdf)$/i;
+/** Test modules whose text references a non-JavaScript file (full repo-relative path, or the basename without extension when
+ *  it is distinctive: timestamped migrations `20260910100000_x`, `tools/migrate/x.py`). Never matches on directory names. */
+export function referencingTests(root, file) {
+  const base = basename(file); const stem = base.replace(/\.[^.]+$/, '');
+  const needles = [normalize(file)]; if (/^\d{14}_/.test(stem) || /\.(?:py|sql)$/i.test(base)) needles.push(stem);
+  const out = [];
+  const walk = dir => { let entries; try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; } for (const e of entries) { const p = join(dir, e.name); if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p); } else if (TEST.test(e.name)) { let text; try { text = readFileSync(p, 'utf8'); } catch { continue; } if (needles.some(n => text.includes(n))) out.push(normalize(relative(root, p))); } } };
+  walk(join(root, 'tests'));
+  return out;
+}
+
 export async function affectedModules(ctx, root, changed) {
   const modules = new Set(), reasons = [];
   const previous = ctx.config.related;
@@ -333,7 +344,14 @@ export async function affectedModules(ctx, root, changed) {
       const file = normalize(raw);
       if (DOC_CHANGE.test(file)) continue; // by extension only — a data file under docs/ is still data
       if (TEST.test(file)) { modules.add(file); continue; }
-      if (!JS.test(file)) { reasons.push(`non-JavaScript change cannot be mapped: ${file}`); continue; }
+      if (!JS.test(file)) {
+        // A non-JavaScript executable (SQL migration, Deno function source, migration script) is mapped to the test modules that
+        // name it — the project's guard tests reference the file by path or basename (2026-09-10: every migration story was
+        // denied all optional tolerance and could never land). No referencing test → still unmappable (fail closed).
+        const referencing = referencingTests(root, file);
+        if (referencing.length) { for (const spec of referencing) modules.add(spec); continue; }
+        reasons.push(`non-JavaScript change cannot be mapped: ${file}`); continue;
+      }
       ctx.config.related = [normalize(resolve(root, file))];
       const specs = await ctx.getRelevantTestSpecifications();
       if (!specs.length) { reasons.push(`unmapped changed file: ${file}`); continue; }

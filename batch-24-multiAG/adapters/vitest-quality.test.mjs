@@ -315,6 +315,12 @@ test('real Vitest integration with a reviewed policy: approved optional skip lan
     assert.notEqual(r.status, 0, file);
     assert.match(r.stderr, /cannot be mapped to integration modules \(non-JavaScript change cannot be mapped: /, file);
   }
+  // 5b. a non-JavaScript executable referenced by a test module (guard test naming the migration) maps to that module — tolerance kept
+  writeFileSync(join(root, 'tests/db/guard.test.js'), 'import { test, expect } from "vitest"; test("guard 20260906_security",()=>expect("supabase/migrations/20260906_security.sql").toContain("20260906_security"));');
+  const guarded = cli(root, 'integration', { ...base, BATCH_BASE: 'HEAD', BATCH_CHANGED_FILES: JSON.stringify(['src/math.js', 'supabase/migrations/20260906_security.sql']) });
+  assert.equal(guarded.status, 0, guarded.stderr);
+  assert.doesNotMatch(guarded.stderr, /cannot be mapped to integration modules/);
+  rmSync(join(root, 'tests/db/guard.test.js'));
   // 6. a JavaScript change Vitest cannot map to any integration test → denied as well (impact cannot be established)
   const unmapped = cli(root, 'integration', { ...base, BATCH_BASE: 'HEAD', BATCH_CHANGED_FILES: '["src/orphan.js"]' });
   assert.notEqual(unmapped.status, 0);
