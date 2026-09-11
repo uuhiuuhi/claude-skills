@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn } from './runner-rules.mjs'
+import { limitNoWorkKeys, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn } from './runner-rules.mjs'
 
 const RUN_NIGHT_URL = new URL('./run-night.mjs', import.meta.url)
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -546,4 +546,17 @@ describe('차단기 창 누적 상한 설정(2026-09-10 스토리 단위 STOP �
     let w = stopRecord(undefined, 1, 'A'); w = stopRecord(w, 1, 'A')
     assert.equal(stopBlocked(w, { total: 8 }), true)
   })
+})
+
+it('limitNoWorkKeys — 라운드 안 모든 exit 5 무작업 배치를 환불 대상으로 낸다(worst 하나만이 아니다 · md 를 만진 스토리는 제외 · exit 1/0 은 제외)', () => {
+  const results = [
+    { code: 5, batchBase: 'a', stories: ['5-1-x'] },
+    { code: 0, batchBase: 'b', stories: ['6-3-y'] },
+    { code: 5, batchBase: 'c', stories: ['7-4-z', '7-6-w'] },
+    { code: 1, batchBase: 'd', stories: ['9-3-v'] },
+    { code: 5, batchBase: null, stories: ['9-4-u'] },
+  ]
+  const lists = (r) => (r.batchBase === 'c' ? [['_bmad-output/implementation-artifacts/7-6-w.md']] : [])
+  assert.deepEqual(limitNoWorkKeys(results, lists), ['5-1-x', '7-4-z', '9-4-u'])
+  assert.deepEqual(limitNoWorkKeys([], lists), [])
 })

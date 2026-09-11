@@ -328,6 +328,19 @@ export function limitRefundKeys(batchStories, commitFileLists) {
   return (batchStories ?? []).filter((k) => !touched.has(k))
 }
 
+/** 한도(exit 5) 무작업 배치의 스토리 키 — 라운드 안 **모든** exit 5 배치를 본다. 09-12 00:40 실사고: 「exit 5 는 다음 배치 계속」
+ *  뒤로 한 라운드에 exit 5 배치가 10개씩 생기는데 환불은 worst(첫 고장) 하나만 해 나머지 9개가 「편성됐는데 무진전」으로 쌓였고,
+ *  replan 단계가 든 배치는 헛돈 것도 회차 +1 로 세어 두 라운드 만에 7-4·7-6·8-4 가 「자율 한계」 사람 질문으로 빠졌다(한도는 날씨다).
+ *  fileListsOf(result) 는 그 배치 베이스 이후 라운드 커밋의 파일 목록 — md 를 한 번이라도 만졌으면 환불하지 않는다. */
+export function limitNoWorkKeys(results, fileListsOf) {
+  const keys = []
+  for (const r of results ?? []) {
+    if (Number(r?.code) !== 5) continue
+    keys.push(...limitRefundKeys(r.stories ?? [], r.batchBase ? fileListsOf(r) : []))
+  }
+  return keys
+}
+
 /** 라운드 진전 스토리 추출 — 비수렴 상한(규칙 9)을 「편성 횟수」가 아니라 「무진전 편성의 연속
  *  횟수」로 재정의하기 위한 재료. 라운드 커밋들이 만진 스토리 md 의 키 목록을 돌려준다.
  *  로그 폴더 안 경로는 명시적으로 제외한다 — 엔진이 자기 로그만 커밋하고 exit 0 을 내는

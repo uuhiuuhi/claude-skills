@@ -48,7 +48,7 @@ import { parallelHazardsCompat } from './conflicts.mjs'
 import { appendJsonl, metricsHistoryPath, parseCodexUsage, parseEngineLog, renderMetricsTable, summarizeTimeline, writeJsonAtomic } from './metrics.mjs'
 import { makeClaudePlanRunner, requestPlan } from './orchestrate.mjs'
 import { buildDag, parseDependsOn } from './plan-dag.mjs'
-import { REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, LOG_PREFIX, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, LOG_PREFIX, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = fileURLToPath(resolveAsf('auto-story-pipeline.mjs'))
 // mockup 단계가 든 배치는 목업 폴더(config mockupGate.mockupsDir · 기본 mockups)를 스토리 커밋에 함께 싣는다 —
@@ -1825,9 +1825,8 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     // exit 5(한도) 환불 확장: 멈춘 배치의 스토리 중 라운드 커밋이 그 스토리 md 를 한 번도 안 만졌으면
     // 실작업 0 이다 — 한도가 원장·비수렴 상한을 공짜로 소모하지 않게 환불한다.
     // 그 외 exit 코드는 종전대로 보수적으로 남긴다(일부라도 실행됐을 수 있다).
-    if (worst.code === 5 && worst.batchBase) {
-      unrun.push(...limitRefundKeys(worst.stories ?? [], roundCommitFileLists(worst.batchBase)))
-    }
+    // 09-12: worst 하나가 아니라 라운드 안 모든 exit 5 배치(「다음 배치 계속」 뒤로 한 라운드에 여럿) — 한도 라운드가 무진전 스트릭을 만들지 않는다.
+    unrun.push(...limitNoWorkKeys(results, (r) => roundCommitFileLists(r.batchBase)))
     if (unrun.length > 0) {
       const { s, save } = loadState()
       const day = s.days[START_DATE]
@@ -1860,7 +1859,9 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     // 자율운전 replan 회차 — 편성기가 아니라 러너가, replan 단계가 든 배치가 **실제로 돈** 라운드에만 +1 (리뷰 #2).
     // 성공·실패를 가리지 않는다: 두 번 헛돌면 편성기가 「자율 한계」로 사람 질문에 올린다.
     s.replans ??= {}
-    for (const r of results) if ((r.stages ?? []).includes('replan')) for (const k of r.stories ?? []) s.replans[k] = (s.replans[k] ?? 0) + 1
+    // 단 한도(exit 5)로 헛돈 배치는 세지 않는다 — 09-12 실사고: 한도 라운드 2번에 replan 2회가 차 「자율 한계」 사람 질문 3건 오발.
+    const noWork = new Set(limitNoWorkKeys(results, (r) => roundCommitFileLists(r.batchBase)))
+    for (const r of results) if ((r.stages ?? []).includes('replan')) for (const k of r.stories ?? []) if (!(Number(r.code) === 5 && noWork.has(k))) s.replans[k] = (s.replans[k] ?? 0) + 1
     save()
     const fullMode = autoQueueMeta?.mode === 'full'
     const blocked = fullMode ? (autoQueueMeta?.humanGates ?? []).length : (autoQueueMeta?.excluded ?? []).filter((e) => e.why.includes('결정 대기')).length
