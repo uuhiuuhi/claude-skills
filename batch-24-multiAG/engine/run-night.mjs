@@ -1686,9 +1686,9 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
         results.push({ label, code: pr.code, started, batchBase, stories: batch.stories ?? [], stages: batch.stages ?? [] })
         record(`- ${pr.code === 0 ? '완주' : isReviewPendingExit(pr.code) ? `⏳ 리뷰 대기(exit ${pr.code})` : `**중단(exit ${pr.code})**`}: ${label} (병렬)`)
         if (pr.code !== 0 && !isReviewPendingExit(pr.code)) {
-          // (2026-09-10) exit 1 = 스토리 단위 STOP(qa RED · 완주 게이트) — 잔여물은 보존됐고 원인은 그 스토리 안에 있다. 뒤 배치는 계속 돈다
+          // (2026-09-10) exit 1 = 스토리 단위 STOP(qa RED · 완주 게이트) · exit 4 = NO-OP STOP(워커가 산출물 없이 종료 · 09-11 9-2 헤드리스 도망 패턴) — 잔여물은 보존됐고 원인은 그 스토리 안에 있다. 뒤 배치는 계속 돈다
           // (같은 날 5회 실측: 첫 STOP 이 남은 12배치를 전부 세움). 환경 정지(핀 3 · 가드 6 · 되돌림 7 · 한도 5)는 종전대로 라운드를 끊는다.
-          if (pr.code === 1) { record(`- 다음 배치 계속 — exit 1 은 스토리 단위 STOP(잔여물 보존 · 차단기가 반복을 센다)`); continue }
+          if (pr.code === 1 || pr.code === 4) { record(`- 다음 배치 계속 — exit ${pr.code} 는 스토리 단위 STOP(잔여물 보존 · 차단기가 반복을 센다)`); continue }
           record(`- 남은 배치는 실행하지 않았다 — \`auto-pipeline-logs/run-summary.log\` 확인`)
           break
         }
@@ -1780,7 +1780,7 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
       if (isReviewPendingExit(code)) continue
       // (2026-09-10) exit 1 = 스토리 단위 STOP — 잔여물은 위에서 보존했고 원인은 그 스토리 안에 있다. 뒤 배치는 계속 돈다.
       // 환경 정지(핀 3 · 가드 6 · 되돌림 7 · 한도 5)만 「원인이 섞인다」로 라운드를 끊는다.
-      if (code === 1) { record(`- 다음 배치 계속 — exit 1 은 스토리 단위 STOP(잔여물 보존 · 차단기가 반복을 센다)`); continue }
+      if (code === 1 || code === 4) { record(`- 다음 배치 계속 — exit ${code} 는 스토리 단위 STOP(잔여물 보존 · 차단기가 반복을 센다)`); continue }
       record(`- 남은 배치는 실행하지 않았다 — \`auto-pipeline-logs/run-summary.log\` 확인`)
       break
     }
