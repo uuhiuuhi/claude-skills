@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { limitNoWorkKeys, shouldArchiveEvidence, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn } from './runner-rules.mjs'
+import { limitNoWorkKeys, shouldArchiveEvidence, evidenceLogKeep, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn } from './runner-rules.mjs'
 
 const RUN_NIGHT_URL = new URL('./run-night.mjs', import.meta.url)
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -269,6 +269,21 @@ describe('[무정지] Non-Stop 판정부 (2026-08-30 적대 리뷰 wf_b8f76633 �
     assert.equal(shouldArchiveEvidence({ code: 8, hasWork: false }), true)
     assert.equal(shouldArchiveEvidence({ code: undefined, hasWork: false }), true)
     assert.equal(shouldArchiveEvidence(), true)
+  })
+
+  it('증거 로그 선별 — 그 스토리 접두 파일·같은 이름 폴더·라운드 공통 파일만 · 키 없으면 전부 (09-12 증거 1.1 GB/건 실사고)', () => {
+    const keys = ['7-6-문의-대장-이관']
+    assert.equal(evidenceLogKeep('7-6-문의-대장-이관-dev.log', keys), true)
+    assert.equal(evidenceLogKeep('7-6-문의-대장-이관-verification.json', keys), true)
+    assert.equal(evidenceLogKeep('7-6-문의-대장-이관', keys), true) // 스토리 이름 폴더
+    assert.equal(evidenceLogKeep('7-6-문의-대장-이관.probe.test.mjs', keys), true)
+    assert.equal(evidenceLogKeep('7-60-다른-스토리-dev.log', keys), false) // 접두 경계 — 7-6 ≠ 7-60
+    assert.equal(evidenceLogKeep('2-24-티켓-dev.log', keys), false)
+    for (const f of ['run-summary.log', 'exit-info.json', 'night-last-run.md', 'state.json']) assert.equal(evidenceLogKeep(f, keys), true)
+    assert.equal(evidenceLogKeep('batch-2026-09-12-1-manifest.json', keys), false)
+    assert.equal(evidenceLogKeep('2-24-티켓-dev.log', ['5-1-a', '2-24-티켓']), true) // 순차 a+b 묶음
+    assert.equal(evidenceLogKeep('anything.log', []), true) // 근거 없으면 잃지 않는다
+    assert.equal(evidenceLogKeep('anything.log', undefined), true)
   })
 
   // 2026-08-30 실사고 — 편성 0건 교착의 뿌리. git 은 core.quotepath 기본값에서 비ASCII 경로를

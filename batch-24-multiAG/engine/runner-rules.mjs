@@ -350,6 +350,17 @@ export function shouldArchiveEvidence({ code, hasWork } = {}) {
   return hasWork === true
 }
 
+/** 증거 폴더에 담을 엔진 로그 선별 — 그 스토리 것(키 접두 `<키>-…` · 키와 같은 이름의 폴더)과 라운드 공통 파일만.
+ *  종전엔 로그 폴더 **전체**(전 스토리 누적 · 09-12 실측 1.1 GB)를 증거마다 복사해 실 STOP 하루 44건 = 44 GB 였다(👤 09-12 「2 승인」).
+ *  storyKeys = 순차 배치는 `a+b` 로 묶이므로 키 배열로 받는다. 키가 비면 종전대로 전부 담는다(선별 근거가 없으면 잃지 않는다). */
+export const EVIDENCE_ROUND_FILES = ['run-summary.log', 'exit-info.json', 'night-last-run.md', 'state.json']
+export function evidenceLogKeep(name, storyKeys) {
+  const keys = (storyKeys ?? []).map((k) => String(k).trim()).filter(Boolean)
+  if (keys.length === 0) return true
+  if (EVIDENCE_ROUND_FILES.includes(name)) return true
+  return keys.some((k) => name === k || name.startsWith(k + '-') || name.startsWith(k + '.'))
+}
+
 /** 라운드 진전 스토리 추출 — 비수렴 상한(규칙 9)을 「편성 횟수」가 아니라 「무진전 편성의 연속
  *  횟수」로 재정의하기 위한 재료. 라운드 커밋들이 만진 스토리 md 의 키 목록을 돌려준다.
  *  로그 폴더 안 경로는 명시적으로 제외한다 — 엔진이 자기 로그만 커밋하고 exit 0 을 내는

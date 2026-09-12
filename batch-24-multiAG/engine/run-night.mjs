@@ -48,7 +48,7 @@ import { parallelHazardsCompat } from './conflicts.mjs'
 import { appendJsonl, metricsHistoryPath, parseCodexUsage, parseEngineLog, renderMetricsTable, summarizeTimeline, writeJsonAtomic } from './metrics.mjs'
 import { makeClaudePlanRunner, requestPlan } from './orchestrate.mjs'
 import { buildDag, parseDependsOn } from './plan-dag.mjs'
-import { REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, LOG_PREFIX, shouldArchiveEvidence, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, LOG_PREFIX, shouldArchiveEvidence, evidenceLogKeep, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = fileURLToPath(resolveAsf('auto-story-pipeline.mjs'))
 // mockup 단계가 든 배치는 목업 폴더(config mockupGate.mockupsDir · 기본 mockups)를 스토리 커밋에 함께 싣는다 —
@@ -298,9 +298,10 @@ async function redactor() {
 const REDACT = await redactor()
 /** 로그 폴더 복사 — `cpSync` 는 원문을 그대로 옮긴다. 텍스트는 한 줄씩이 아니라 파일째 마스킹해 옮기고,
  *  바이너리는 그대로 둔다(마스킹이 깨뜨릴 수 있다 · 증거 폴더에 바이너리 로그는 거의 없다). */
-function copyLogsRedacted(from, to) {
+function copyLogsRedacted(from, to, keep = null) {
   mkdirSync(to, { recursive: true })
   for (const e of readdirSync(from, { withFileTypes: true })) {
+    if (keep && !keep(e.name)) continue // 최상위만 선별(runner-rules.evidenceLogKeep) — 하위 폴더 안은 통째로
     const src = join(from, e.name)
     const dst = join(to, e.name)
     if (e.isDirectory()) { copyLogsRedacted(src, dst); continue }
@@ -357,7 +358,9 @@ async function archiveEvidence(wt) {
     const redact = await redactor()
     const logs = join(wt.dir, '_bmad-output', 'implementation-artifacts', 'auto-pipeline-logs')
     // ⚠️ 로그도 **마스킹해서** 옮긴다 — 종전 `cpSync` 는 원문을 그대로 증거 폴더에 복사했다(N3/정책 12).
-    if (existsSync(logs)) copyLogsRedacted(logs, join(dst, 'auto-pipeline-logs'))
+    // 그 스토리 로그 + 라운드 공통 파일만 — 폴더 전체(전 스토리 누적 1.1 GB)를 증거마다 복사하던 것이 09-12 디스크 0 의 승수였다
+    const storyKeys = String(wt.story ?? '').split('+')
+    if (existsSync(logs)) copyLogsRedacted(logs, join(dst, 'auto-pipeline-logs'), (name) => evidenceLogKeep(name, storyKeys))
     else notes.push('엔진 로그 폴더 없음')
 
     // ① 추적 파일의 미커밋 변경 — 민감 pathspec 제외 후 생성, 저장 직전 재마스킹
