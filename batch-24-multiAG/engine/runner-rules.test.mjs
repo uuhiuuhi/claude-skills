@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { limitNoWorkKeys, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn } from './runner-rules.mjs'
+import { limitNoWorkKeys, shouldArchiveEvidence, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn } from './runner-rules.mjs'
 
 const RUN_NIGHT_URL = new URL('./run-night.mjs', import.meta.url)
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -259,6 +259,16 @@ describe('[무정지] Non-Stop 판정부 (2026-08-30 적대 리뷰 wf_b8f76633 �
     assert.deepEqual(progressedStoryKeys([['_bmad-output/implementation-artifacts/sprint-status.yaml', 'src/a.ts']]), [])
     assert.deepEqual(progressedStoryKeys([['_bmad-output/implementation-artifacts/2-1-a.md'], ['_bmad-output/implementation-artifacts/2-1-a.md']]), ['2-1-a'])
     assert.deepEqual(progressedStoryKeys(undefined), [])
+  })
+
+  it('한도(exit 5) 무작업 STOP 은 증거를 만들지 않는다 — 다른 exit · 실작업 있는 exit 5 는 종전대로 (09-12 디스크 0 실사고)', () => {
+    assert.equal(shouldArchiveEvidence({ code: 5, hasWork: false }), false)
+    assert.equal(shouldArchiveEvidence({ code: '5', hasWork: undefined }), false) // 판정 불가 = 무작업 취급 아님 · hasWork 는 명시 true 만
+    assert.equal(shouldArchiveEvidence({ code: 5, hasWork: true }), true)
+    assert.equal(shouldArchiveEvidence({ code: 1, hasWork: false }), true)
+    assert.equal(shouldArchiveEvidence({ code: 8, hasWork: false }), true)
+    assert.equal(shouldArchiveEvidence({ code: undefined, hasWork: false }), true)
+    assert.equal(shouldArchiveEvidence(), true)
   })
 
   // 2026-08-30 실사고 — 편성 0건 교착의 뿌리. git 은 core.quotepath 기본값에서 비ASCII 경로를

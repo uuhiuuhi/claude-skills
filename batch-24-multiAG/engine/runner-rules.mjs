@@ -341,6 +341,15 @@ export function limitNoWorkKeys(results, fileListsOf) {
   return keys
 }
 
+/** 증거 보관 여부 — 한도(exit 5) 배치가 **실작업 없이** 섰으면 증거를 만들지 않는다. 09-12 실사고: 주간 한도 대기 중
+ *  30분 슬롯마다 exit 5 배치 10개가 각각 엔진 로그 폴더(1.1 GB) 사본을 증거로 남겨 하루 207폴더·214 GB 로 C: 를 0 바이트로
+ *  채웠다(러너 커밋 「Out of diskspace」 · 핀 재기록·git 전부 정지). 한도는 날씨다 — 잔여물 보존 커밋이 어차피 트리를
+ *  지키고, 코드 diff 0 인 증거는 복구할 것이 없다. exit 5 라도 로그 밖 실작업이 있으면 종전대로 보관한다(부분 작업 유실 방지). */
+export function shouldArchiveEvidence({ code, hasWork } = {}) {
+  if (Number(code) !== 5) return true
+  return hasWork === true
+}
+
 /** 라운드 진전 스토리 추출 — 비수렴 상한(규칙 9)을 「편성 횟수」가 아니라 「무진전 편성의 연속
  *  횟수」로 재정의하기 위한 재료. 라운드 커밋들이 만진 스토리 md 의 키 목록을 돌려준다.
  *  로그 폴더 안 경로는 명시적으로 제외한다 — 엔진이 자기 로그만 커밋하고 exit 0 을 내는

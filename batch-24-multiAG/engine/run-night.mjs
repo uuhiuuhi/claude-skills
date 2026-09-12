@@ -48,7 +48,7 @@ import { parallelHazardsCompat } from './conflicts.mjs'
 import { appendJsonl, metricsHistoryPath, parseCodexUsage, parseEngineLog, renderMetricsTable, summarizeTimeline, writeJsonAtomic } from './metrics.mjs'
 import { makeClaudePlanRunner, requestPlan } from './orchestrate.mjs'
 import { buildDag, parseDependsOn } from './plan-dag.mjs'
-import { REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, LOG_PREFIX, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, LOG_PREFIX, shouldArchiveEvidence, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = fileURLToPath(resolveAsf('auto-story-pipeline.mjs'))
 // mockup 단계가 든 배치는 목업 폴더(config mockupGate.mockupsDir · 기본 mockups)를 스토리 커밋에 함께 싣는다 —
@@ -336,6 +336,17 @@ const RESTORE_MD = (story, mainTree = false) => mainTree ? `# 복구 절차 — 
 - 저장 직전 시크릿 마스킹을 한 번 더 돌렸다. 마스킹이 diff 본문을 건드렸다면 \`git apply\` 가 그 hunk 에서
   실패할 수 있다(\`summary.json.redacted\` 가 true 면 의심할 것).
 `
+/** 로그 폴더 밖에 실작업(베이스 이후 추적 변경 · 미추적 파일)이 있는가 — 한도 exit 5 증거 생략 판정의 재료
+ *  (runner-rules.shouldArchiveEvidence · 09-12 디스크 0 실사고). 베이스를 모르거나 git 이 실패하면 **있다**로 본다(보수적). */
+function treeHasWorkBeyondLogs(dir, base) {
+  if (!base) return true
+  const g = (args) => spawnSync('git', ['-C', dir, '-c', 'core.quotePath=false', ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  const ex = `:(exclude)${LOG_PREFIX}`
+  const diff = g(['diff', '--name-only', base, '--', '.', ex])
+  if (diff.status !== 0 || (diff.stdout ?? '').trim()) return true
+  const others = g(['ls-files', '--others', '--exclude-standard', '--', '.', ex])
+  return others.status !== 0 || Boolean((others.stdout ?? '').trim())
+}
 /** 실패 워크트리의 증거(엔진 로그·코드 diff·미추적 산출물)를 상태 폴더에 보관 — `worktree remove --force` 와 함께 사라지지 않게(F39·#9) */
 async function archiveEvidence(wt) {
   const dst = join(STATE_DIR, 'archive', `${today()}-${Date.now()}-evidence`, wt.story)
@@ -1489,7 +1500,8 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   for (const wt of wts) {
     const r = outs.find((o) => o.story === wt.story)
     if (!r || r.code !== 0) {
-      const ev = await archiveEvidence(wt)
+      // 한도(exit 5) 무작업 워크트리는 증거를 만들지 않는다(09-12 디스크 0 실사고 · 로그 밖 변경이 있으면 종전대로 보관)
+      const ev = shouldArchiveEvidence({ code: r?.code, hasWork: r?.code === 5 ? treeHasWorkBeyondLogs(wt.dir, wt.base) : true }) ? await archiveEvidence(wt) : null
       if (ev) evidence[wt.story] = ev
       record(isReviewPendingExit(r?.code) ? `- ⏳ 리뷰 대기(exit ${r.code}): ${wt.story} (병렬 dev) — 다음 편성이 마감 재검수${ev ? ` · 증거 보관 ${ev}` : ''}` : `- **중단(exit ${r?.code ?? '?'}): ${wt.story} (병렬 dev)** — 성공분 landing 후 배치 STOP${ev ? ` · 증거 보관 ${ev}` : ''}`); worst = worseExit(worst, r?.code ?? 1); continue
     }
@@ -1769,8 +1781,11 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
       // 금지 경로·시크릿이 섞이면 커밋하지 않고 dirty 로 둔다(그때의 refresh 거부는 의도된 보호).
       if (!dryRun) {
         const seqStory = (batch.stories ?? []).join('+') || label
-        const ev = await archiveEvidence({ dir: process.cwd(), story: seqStory, base: batchBase, mainTree: true })
+        // 한도(exit 5) 무작업 STOP 은 증거를 만들지 않는다 — 09-12 실사고: 30분 슬롯마다 10배치 × 로그 폴더 1.1 GB 사본 = 하루 214 GB · C: 0 바이트
+        const archive = shouldArchiveEvidence({ code, hasWork: code === 5 ? treeHasWorkBeyondLogs(process.cwd(), batchBase) : true })
+        const ev = archive ? await archiveEvidence({ dir: process.cwd(), story: seqStory, base: batchBase, mainTree: true }) : null
         if (ev) record(`- 증거 보관(순차 STOP): ${ev}`)
+        else if (!archive) record(`- 증거 보관 생략(한도 exit 5 · 로그 밖 변경 0 — 잔여물 보존 커밋이 트리를 지킨다)`)
         const kept = preserveStopLeftovers({ label, exitCode: code, dryRun })
         if (kept?.committed) record(`- STOP 잔여물 보존 커밋: ${kept.committed.slice(0, 12)} (${kept.entries}건${kept.denied?.length ? ` · 금지 경로 ${kept.denied.length}건은 미커밋` : ''})`)
         else if (kept?.failed) record(`⚠ STOP 잔여물 보존 실패 — ${kept.failed}. 다음 슬롯이 refresh 에서 멈추면 사람이 트리를 검토할 것`)
