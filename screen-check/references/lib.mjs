@@ -6,17 +6,12 @@ import { chromium } from 'playwright-core'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { report } from './score.mjs'
+import { NOT_FOUND, EMPTY_DEST, GUIDED, isDenied } from './judge.mjs'
 
 export const BASE = process.env.SC_BASE ?? 'http://127.0.0.1:5174'
-/** 사용자 화면에 노출되면 안 되는 개발 용어·원시 에러 */
-export const JARGON = /에픽|스토리 \d|RPC|RLS|스프린트|PGRST|\bundefined\b|\bnull\b|\[object Object\]|TypeError|Error:/
-export const RAW_ERROR = /Error|undefined|network|fetch|status code|exception/i
-/** AccessDenied(3요소 + 홈으로 이동) 판정 — 권한 안내·없는 화면 둘 다 이 형태다 */
-export const DENY = /(권한이 없습니다|볼 수 없습니다|열 수 없습니다|열립니다)[\s\S]{0,400}홈으로 이동/
-export const NOT_FOUND = /주소에 해당하는 화면이 없습니다/
-export const EMPTY_DEST = /아직 준비 중인 화면으로/
-/** id·쿼리 없이 상세/수정 경로에 들어갔을 때의 정상 안내(오류 화면이 아니라 「고르라」는 안내) — 「화면 열림」 통과 근거로 쓰지 않는다(Astra 대조 지적 2026-09-09) */
-export const GUIDED = /찾을 수 없습니다|불러오지 못했습니다|주소가 잘못|목록에서 (다시 )?(선택|골라)|먼저 (선택|골라)|선택해 주세요/
+/** 문구 판정 규칙(JARGON·DENY·NOT_FOUND·EMPTY_DEST·GUIDED)은 judge.mjs 가 소유한다 — playwright 없이
+ *  `node --test judge.test.mjs` 로 단위 검증하기 위해 분리했다(2026-09-17). 재수출하므로 기존 import 는 그대로 동작한다. */
+export { JARGON, RAW_ERROR, DENY_NEGATIVE, DENY_RESTRICT, DENY, NOT_FOUND, EMPTY_DEST, GUIDED, isDenied } from './judge.mjs'
 /** QA 계정 → 역할. 없는 역할은 「미측정」으로 남긴다(👤 가 .env.local 에 QA_<ROLE>_EMAIL/PASSWORD 를 더하면 자동 편입). */
 export const ROLE_ACCOUNTS = [
   ['engineer', 'QA_TEST'],
@@ -71,7 +66,9 @@ export async function setup({ story, source, root, headless = true }) {
     const md = report(data)
     writeFileSync(resolve(root, `e2e-tools/report-${source}-${story}.md`), md + '\n', 'utf8')
     console.log(md)
-    if (exitOnFail) process.exit(data.results.some((r) => !r.ok) ? 1 : 0)
+    // 중단(fatal)·미실행 시나리오는 「실패 0건」으로 끝나도 비0 으로 나간다 — 조용한 반쪽 실행을 만들지 않는다(2026-09-17).
+    if (data.fatal) console.error(`[e2e] 중단 — ${data.fatal.step} · 미실행 시나리오 ${data.notRun?.scenarios ?? '?'}건 · exit 4`)
+    if (exitOnFail) process.exit(data.fatal || data.notRun?.scenarios ? 4 : data.results.some((r) => !r.ok) ? 1 : 0)
   }
   return { env, need, data, check, shot, login, wire, browser, BASE, STAMP, OUT, availableRoles, finish, pageErrors, badResponses }
 }
@@ -98,7 +95,7 @@ export async function judgeScreen(page, dest, { timeout = 12000 } = {}) {
     const interactive = m ? [...m.querySelectorAll('a,button,input,select,textarea,[role=button]')].filter((e) => e.getBoundingClientRect().height > 0).length : 0
     return { text, h1, interactive, title: document.title, overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1, hasMain: !!m }
   })
-  const denied = DENY.test(s.text) && s.interactive <= 2
+  const denied = isDenied(s.text, s.interactive)
   const notFound = NOT_FOUND.test(s.text)
   const empty = EMPTY_DEST.test(s.text)
   const guided = !denied && !notFound && GUIDED.test(s.text) && s.interactive <= 4

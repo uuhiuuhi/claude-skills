@@ -39,6 +39,8 @@ description: 구현이 끝난 스토리를 실제 화면에서 직접 확인한�
 
 **동시성 규칙**: A·B 동시 시작 허용(로그인 합계 ≤ 6/실행 · 429 한도 30/5분/IP) · C 는 A·B 종료 후 · **러너 qa 진행 중이면 시작 금지** — `node references/runner-window.mjs [--wait 분]` 이 `runner.lock` · slots.log `qa-gate` · vitest/tsc 프로세스를 보고 FREE/BUSY 를 낸다(파티 판정 3항: 시작 간격 규칙은 폐기 · 러너 창 회피가 맞다). 스토리 파일은 Fable 만 쓴다(벌은 각자 `results-<벌>-<배치>.json`). **채택 유지 조건**: 취합 표에서 고유 적중 0 인 벌은 다음 실행에서 뺀다(Grumbal).
 
+**엔진 안전장치(2026-09-17 T3 실사고 반영)**: 벌 A(`template-A.mjs`)는 예외를 삼키지 않는다 — 어디서 끊겼는지 `results-*.json` 의 `fatal{role, step, message, stack}` 과 보고서 머리의 「⚠️ 중단 — 미실행 시나리오 N건」에 적고 **exit 4** 로 나간다(옛 판은 마지막 역할의 예외를 삼키고 exit 0 · AC 시나리오 19건이 통째로 빠진 걸 결과만 봐선 알 수 없었다). 정상 종료에도 `notRun.scenarios` 를 **항상** 적는다(0 건이면 0 이라고). 문구 판정 규칙은 `references/judge.mjs` 가 소유하고 `node --test "screen-check/references/*.test.mjs"` 로 단위 검증한다 — 거절 판정은 부정형(「권한이 없습니다」)뿐 아니라 **제한형**(「…권한이 있는 분만 볼 수 있습니다」·「관리자에게만 열립니다」)도 잡는다(옛 규칙이 못 잡아 거절 6건이 오탐이었다).
+
 **공용 헬퍼** `references/lib.mjs`: `setup({story, source, root})` → `{ check, shot, login(page,'QA_TEST'|'QA_ADMIN'), wire, browser, STAMP, finish }` · `loadDestinations(page, role)`(vite 가 주는 `/src/lib/routes.ts` 를 dynamic import — TS 파싱 0) · `judgeScreen(page, dest)`(로딩 대기 + 막다른 골목 판정) · 역할 계정은 `QA_<ROLE>_EMAIL/PASSWORD` 가 있으면 자동 편입, 없으면 미측정.
 
 **전수 시범에서 배운 것(2026-09-09 밤 · Epic 1·2·3·11·4 · 2,400건 · 산출물 `jng-os/_bmad-output/implementation-artifacts/screen-check-full-2026-09-09/`)**
@@ -74,6 +76,8 @@ description: 구현이 끝난 스토리를 실제 화면에서 직접 확인한�
 - 모바일 뷰포트는 `setViewportSize` 뒤 **`goto` 로 다시 마운트**하고 화면 고유 문구(예: 「보기 전용입니다」)를 기다린다 — 골격 로딩 중 스크린샷은 판정이 아니다.
 - `select` 의 `innerText` 는 옵션 전체를 포함한다 — 문구 판정은 `inputValue()` 로.
 - Edge 채널: `chromium.launch({ channel: 'msedge' })` — 브라우저 다운로드 없이 로컬 Edge 를 쓴다.
+- **Git Bash 는 `--scope /attendance,/tickets` 의 맨 앞 경로를 윈도 경로(`C:/Program Files/…`)로 바꿔** 첫 항목이 검사 범위에서 조용히 빠진다(2026-09-17 T3 실사고) → `MSYS_NO_PATHCONV=1` 을 붙이거나 PowerShell 로 실행한다.
+- **실패 주입(네트워크 차단·강제 오류) 뒤 안내 문구는 10초까지 기다린다** — 3.5초에 샘플링해 「안내 없음」으로 오판했는데 실제로는 8초에 정상 안내가 떴다(2026-09-17 D-20). 느린 것과 없는 것을 가르고 나서 결함으로 적는다.
 
 ## 다음 단계(v1 후보 · 👤 결정)
 - **TestSprite MCP**(testsprite.com · CLI Apache-2.0 · MCP 서버 · 실행 중 URL + 자격증명 + PRD 입력 → 50~100 e2e 자동 생성·클라우드 실행 · 실패 번들(스크린샷·DOM·원인 가설·수정 제안)·영상 · 무료 티어): 스토리 AC 를 PRD 로 넣어 **테스트 생성**을 맡기고, 이 스킬은 「격리 환경 + 판정 기록」만 맡기는 분업이 가능. 단 자격증명이 클라우드로 나간다(QA 계정 한정 · 운영 계정 금지).

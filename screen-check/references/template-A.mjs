@@ -28,8 +28,15 @@ const { check, shot, login, wire, browser, BASE, finish, data } = t
 const slug = (p) => p.replace(/^\//, '').replace(/\//g, '_') || 'home'
 const inScope = (d) => !SCOPE.length || SCOPE.includes(d.path)
 const pages = {}; const contexts = {}
+// ── 실행 계획(먼저 확정한다) — 「무엇을 돌리려 했는가」를 알아야 중간에 끊겼을 때 미실행 건수를 셀 수 있다.
+//    2026-09-17 T3 실사고: 마지막 역할에서 예외가 나 AC 시나리오 19건이 통째로 안 돌았는데 결과 파일은 정상처럼 보였다.
+const plannedRoles = t.availableRoles().map((r) => r.role)
+const plannedScenarios = SCEN ? ((await import(pathToFileURL(resolve(SCEN)).href)).scenarios ?? []) : []
+let ranScenarios = 0
+let step = '시작'
 try {
   for (const { role, key } of t.availableRoles()) {
+    step = `${role} 로그인`
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'ko-KR' })
     const page = await ctx.newPage(); wire(page, role)
     await login(page, key); contexts[role] = ctx; pages[role] = page; data.roles.push(role)
@@ -37,6 +44,7 @@ try {
     const targets = dests.filter((d) => inScope(d) || LINKS === 'all')
     // ── 1440 전수: 열림 · 거절 · 타이틀 · 사이드바 활성 · 문구
     for (const d of targets) {
+      step = `${role} 1440 ${d.path}`
       const errBefore = t.pageErrors.length
       const s = await judgeScreen(page, d)
       const tag = `${role} ${d.path}`
@@ -65,6 +73,7 @@ try {
       const mctx = await browser.newContext({ viewport: { width: w, height: w < 768 ? 844 : 768 }, hasTouch: w < 768, isMobile: w < 768, locale: 'ko-KR', storageState: await ctx.storageState() })
       const mp = await mctx.newPage(); wire(mp, `${role}@${w}`)
       for (const d of targets.filter((x) => x.visible && !x.filledBy && inScope(x))) {
+        step = `${role} @${w} ${d.path}`
         const s = await judgeScreen(mp, d)
         const tag = `${role} ${d.path} @${w}`
         check('responsive', `[${tag}] 렌더(가로 넘침 0 · 빈 화면 0)`, !s.overflow && !s.blank && !s.notFound, s.overflow ? `scrollWidth 초과` : s.text.slice(0, 80))
@@ -78,6 +87,7 @@ try {
       await mctx.close()
     }
     // ── 접근성 기본(역할당 1회): 홈에서 Tab 이동이 보이는 요소로 가는가 · 이미지 alt · 버튼 접근 가능 이름
+    step = `${role} 접근성 기본`
     await page.goto(`${BASE}/`); await page.waitForSelector('main'); await page.waitForTimeout(400)
     const a11y = await page.evaluate(() => ({
       noName: [...document.querySelectorAll('button, a')].filter((e) => e.getBoundingClientRect().height > 0 && !(e.textContent.trim() || e.getAttribute('aria-label') || e.getAttribute('title') || e.querySelector('img[alt]'))).length,
@@ -90,21 +100,32 @@ try {
     check('a11y', `[${role}] Tab 이동이 보이는 요소로 간다`, await page.evaluate(() => { const e = document.activeElement; return !!e && e !== document.body && e.getBoundingClientRect().height > 0 }))
   }
   // ── 스토리 AC 시나리오(배치별 파일)
-  if (SCEN) {
-    const mod = await import(pathToFileURL(resolve(SCEN)).href)
-    for (const sc of mod.scenarios ?? []) {
-      try {
-        const r = await sc.run({ pages, check, shot, BASE, judge: judgeScreen, t })
-        if (typeof r === 'boolean' || (r && typeof r === 'object' && 'ok' in r)) check(sc.cat ?? 'ac', `[${sc.story}] ${sc.name}`, typeof r === 'boolean' ? r : r.ok, typeof r === 'object' ? r.detail ?? '' : '')
-      } catch (e) { check(sc.cat ?? 'ac', `[${sc.story}] ${sc.name}`, false, `예외: ${String(e.message).slice(0, 160)}`) }
-    }
+  for (const sc of plannedScenarios) {
+    step = `시나리오 [${sc.story}] ${sc.name}`
+    ranScenarios += 1
+    try {
+      const r = await sc.run({ pages, check, shot, BASE, judge: judgeScreen, t })
+      if (typeof r === 'boolean' || (r && typeof r === 'object' && 'ok' in r)) check(sc.cat ?? 'ac', `[${sc.story}] ${sc.name}`, typeof r === 'boolean' ? r : r.ok, typeof r === 'object' ? r.detail ?? '' : '')
+    } catch (e) { check(sc.cat ?? 'ac', `[${sc.story}] ${sc.name}`, false, `예외: ${String(e.message).slice(0, 160)}`) }
   }
+  step = '정리'
   for (const c of Object.values(contexts)) await c.close()
+} catch (e) {
+  // 예외를 삼키지 않는다 — 어디서 끊겼는지 결과 JSON·보고서·종료 코드 셋 다에 남긴다(2026-09-17 T3 §6-3 ①).
+  data.fatal = { role: data.roles[data.roles.length - 1] ?? '(없음)', step, message: String(e?.message ?? e).slice(0, 300), stack: String(e?.stack ?? '').split('\n').slice(0, 3).join(' | ') }
+  console.error('[e2e] ✗✗ 중단 —', step, '·', data.fatal.message)
+  console.error(data.fatal.stack)
+  check('errors', `실행 중단(${step})`, false, data.fatal.message)
 } finally {
-  const missing = ['team_lead', 'sales', 'office', 'executive'].filter((r) => !data.roles.includes(r))
+  // ── 미실행 계수는 정상 종료에도 항상 낸다(0건이면 0건이라고 적는다)
+  const rolesNotRun = plannedRoles.filter((r) => !data.roles.includes(r))
+  data.notRun = { scenarios: Math.max(0, plannedScenarios.length - ranScenarios), scenariosPlanned: plannedScenarios.length, roles: rolesNotRun }
+  console.log(`[e2e] 실행 계수 — 역할 ${data.roles.length}/${plannedRoles.length} · 시나리오 ${ranScenarios}/${plannedScenarios.length} · 미실행 시나리오 ${data.notRun.scenarios}건`)
+  if (data.notRun.scenarios || rolesNotRun.length) data.unmeasured.push(`미실행: 시나리오 ${data.notRun.scenarios}건${rolesNotRun.length ? ` · 역할 ${rolesNotRun.join('·')}` : ''}`)
+  const missing = ['team_lead', 'sales', 'office', 'executive'].filter((r) => !plannedRoles.includes(r))
   if (missing.length) data.unmeasured.push(`역할 ${missing.join('·')} 화면(QA 계정 없음 — .env.local 에 QA_<ROLE>_EMAIL/PASSWORD 추가 시 자동 편입)`)
   data.unmeasured.push('쓰기 경로(벌 B 독점) · 실기기·PWA·GPS · 로딩 스켈레톤')
   data.leftovers.push('없음 — 벌 A 는 읽기 전용(개발 DB 쓰기 0)')
-  data.manual.honesty = { score: 10, why: '미측정·잔여물 기재 · 막다른 골목 판정 기준 5종 명시' }
+  data.manual.honesty = { score: data.fatal ? 4 : 10, why: data.fatal ? `실행이 ${data.fatal.step} 에서 끊겨 계획의 일부만 측정했다(미실행 시나리오 ${data.notRun.scenarios}건)` : '미측정·잔여물 기재 · 막다른 골목 판정 기준 5종 명시' }
   await finish()
 }

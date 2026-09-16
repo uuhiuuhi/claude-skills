@@ -38,16 +38,24 @@ export function score(data) {
 
 export function report(data) {
   const { rows, total, counted, max } = score(data)
+  // 중단·미실행은 총점보다 먼저 읽혀야 한다 — 반쪽 실행을 정상 결과로 읽는 사고 방지(2026-09-17 T3 §6-3 ①)
+  const notRun = data.notRun ?? null
+  const banner = []
+  if (data.fatal) banner.push(`> ⚠️ **중단 — 미실행 시나리오 ${notRun?.scenarios ?? '?'}건**. \`${data.fatal.step}\` 에서 예외로 끊겼다: ${data.fatal.message}` +
+    (notRun?.roles?.length ? ` · 미실행 역할: ${notRun.roles.join('·')}` : ''), '')
+  else if (notRun?.scenarios) banner.push(`> ⚠️ **미실행 시나리오 ${notRun.scenarios}건**(계획 ${notRun.scenariosPlanned ?? '?'}건) — 결과는 계획의 일부만 담고 있다.`, '')
   const lines = [
     `## 화면 확인 평가 — ${data.story ?? ''} (${data.when ?? ''})`,
     '',
+    ...banner,
     `**총점 ${total} / ${max}** (평가 항목 ${counted}개 × 10점 · 미측정 항목은 합계에서 제외)`,
     '',
     '| # | 평가 항목 | 점수 | 근거 |',
     '|---|---|---|---|',
     ...rows.map((r, i) => `| ${i + 1} | ${r.label} | ${r.score === null ? '—' : `**${r.score}** / 10`} | ${r.score === null ? '미측정 — ' + r.what : r.why} |`),
     '',
-    `- 자동 체크 ${(data.results ?? []).length}건 · 통과 ${(data.results ?? []).filter((r) => r.ok).length}건`,
+    `- 자동 체크 ${(data.results ?? []).length}건 · 통과 ${(data.results ?? []).filter((r) => r.ok).length}건` +
+      (notRun ? ` · 시나리오 ${(notRun.scenariosPlanned ?? 0) - (notRun.scenarios ?? 0)}/${notRun.scenariosPlanned ?? 0} 실행(미실행 ${notRun.scenarios ?? 0}건)` : ''),
     ...(data.unmeasured?.length ? ['- **미측정**: ' + data.unmeasured.join(' · ')] : []),
     ...(data.leftovers?.length ? ['- **잔여물(개발 DB)**: ' + data.leftovers.join(' · ')] : []),
     ...(data.screenshots ? [`- 스크린샷: ${data.screenshots}`] : []),
