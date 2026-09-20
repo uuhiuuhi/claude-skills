@@ -12,8 +12,11 @@ function toolingPath(cwd, toolingDir) {
  * "Complete API surfaces": `quality.config.json` `apiEndpoints` is bound to the current source SHA-256). A dev worker
  * must be able to refresh it without turning the reviewed runtime pin red (2026-09-10: every Edge Function story
  * would otherwise stop the runner at the next boundary). Engine code stays pinned; only this file is excluded. */
-const PROJECT_OWNED = ['quality.config.json']
-const toolingChanged = (stdout, path) => String(stdout ?? '').split(/\r?\n/).filter(Boolean).some((f) => !PROJECT_OWNED.includes(f.replace(/\\/g, '/').slice(path.length + 1)))
+export const PROJECT_OWNED = ['quality.config.json']
+/** 엔진 사본 폴더(`tools/auto/`) 기준 상대 경로가 프로젝트 소유인가. 같은 판정을 `worktree-refresh.mjs` 의
+ * STOP 잔여물 보존도 쓴다 — 두 곳이 갈리면 한쪽이 되돌린 파일을 다른 쪽이 핀 불일치로 세운다. */
+export const isProjectOwned = (relPath) => PROJECT_OWNED.includes(String(relPath ?? '').replace(/\\/g, '/'))
+const toolingChanged = (stdout, path) => String(stdout ?? '').split(/\r?\n/).filter(Boolean).some((f) => !isProjectOwned(f.replace(/\\/g, '/').slice(path.length + 1)))
 
 function git(cwd, args, runGit, allowed = [0]) {
   const result = runGit('git', ['--literal-pathspecs', ...args], { cwd, encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024 });

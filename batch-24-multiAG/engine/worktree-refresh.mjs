@@ -4,9 +4,14 @@ import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { inheritPlan } from './runner-rules.mjs'
+import { isProjectOwned } from './runtime-pin.mjs'
 import { isDeniedPath, secretHits } from './runtime/push-guard.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
+
+/** 날짜 체인이 아닌 「주제 갈래」(`auto/<날짜>-<주제>` · local 과 `origin/` 둘 다) — 승계 후보에서 제외한다.
+ *  정확히 `auto/YYYY-MM-DD` 만 체인이고, 날짜조차 없는 `auto/<이름>` 은 종전대로 사람 reconcile 대상이다. */
+const TOPIC_CHAIN_RE = /^(?:origin\/)?auto\/\d{4}-\d{2}-\d{2}-.+$/
 
 /** Startup must never hide unfinished work, discard local commits, or replace loaded code. */
 export function refreshWorktree({ cwd = process.cwd(), branch, date, dryRun = false,
@@ -66,7 +71,13 @@ export function refreshWorktree({ cwd = process.cwd(), branch, date, dryRun = fa
   let inheritance = null
   if (!ref) {
     // Preserve date-based chain inheritance, but choose the ahead local/remote tip for that date.
-    const unmerged = refs.filter((name) => Number(output(['rev-list', '--count', `origin/main..${name}`])) > 0)
+    const unmergedAll = refs.filter((name) => Number(output(['rev-list', '--count', `origin/main..${name}`])) > 0)
+    // 2026-09-20 09:20~09-21 07:xx 22시간 정지(09-15 에도 같은 사고): 지휘 세션의 수리 갈래 `auto/<날짜>-<주제>` 가 같은 날짜 체인 후보로
+    // 섞여 `divergent or unrelated refs` 로 매 슬롯이 중단됐다. 체인 후보는 **정확히 `auto/YYYY-MM-DD`** 만이다. 주제 갈래는 후보에서도
+    // divergent 판정에서도 빼고 무시한다(사람이 따로 소유하는 갈래이므로 러너가 reconcile 할 대상이 아니다).
+    const topics = unmergedAll.filter((name) => TOPIC_CHAIN_RE.test(name))
+    if (topics.length) console.log(`ℹ 체인 후보 제외(주제 갈래): ${topics.join(', ')}`)
+    const unmerged = unmergedAll.filter((name) => !topics.includes(name))
     inheritance = inheritPlan(unmerged, date)
     if (unmerged.length && !inheritance) {
       throw new Error(`worktree refresh: non-date auto branches need explicit reconciliation (${unmerged.join(', ')})`)
@@ -203,7 +214,13 @@ function preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGi
   // 2026-09-08(같은 날 2회 실사고 · 18시간 + 2.5시간 정지): 스토리 워커가 엔진 사본(tools/auto/**)을 고치면 이 잔여물 커밋이 그 변경을
   // 브랜치 HEAD 에 실어 다음 슬롯부터 런타임 핀 불일치(exit 3)로 러너가 선다. 엔진 사본 변경은 잔여물에 싣지 않는다 — 추적 파일은 HEAD 로
   // 되돌리고 diff 를 로그 폴더에 patch 로 보존한다(아침에 정본 반영 여부는 사람이 판단). 미추적 파일은 그대로 둔다(핀 검사는 추적 파일만 본다).
-  const isEngine = (p) => /^tools\/auto\//.test(p.replaceAll('\\', '/'))
+  // 2026-09-19 밤 실사고(스토리 5건 · patch 5건 · 수리 횟수 소모): `tools/auto/quality.config.json` 은 엔진 사본이 아니라 **프로젝트 소유**다
+  // (api 인벤토리 — 워커가 `npm run api:inventory` 로 갱신하는 것이 규약이고 runtime-pin 의 PROJECT_OWNED 예외). 이것까지 되돌리면 새 Edge
+  // Function 이 러너 인벤토리에 영영 등록되지 않아 회수 라운드마다 api 게이트가 RED 로 재발한다. 프로젝트 소유 파일은 잔여물 커밋에 그대로 싣는다.
+  const isEngine = (p) => {
+    const u = p.replaceAll('\\', '/')
+    return /^tools\/auto\//.test(u) && !isProjectOwned(u.slice('tools/auto/'.length))
+  }
   const engineTracked = paths.filter((p) => isEngine(p) && git(['ls-files', '--error-unmatch', '--', literalPathspec(p)]).status === 0)
   let enginePatch = null
   if (engineTracked.length) {
