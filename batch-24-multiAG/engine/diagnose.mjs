@@ -57,12 +57,95 @@ export const SECRET_VALUE_RE = /(sk-[A-Za-z0-9]{16,}|eyJ[A-Za-z0-9_-]{20,}\.|---
 export const SECRET_ASSIGN_RE = /((?:service[_-]?role|api[_-]?key|secret|token|password|passwd|pwd)[A-Za-z_]*)\s*[:=]\s*(['"`]?)([A-Za-z0-9._\-/+]{16,})\2/i
 /** 에픽 헤더 — BMad 문서에는 `## Epic 2:` 와 `### Epic 3:` 가 **혼재**할 수 있다(설계 §0). */
 export const EPIC_HEADER_RE = /^#{2,3} Epic (\d+):\s*(.*)$/
-/** epics.md 의 스토리 절 — `### Story 11.3: …` */
-export const EPIC_STORY_RE = /^#{3} Story (\d+)\.(\d+):\s*(.*)$/
+/** epics.md 의 스토리 절 — `### Story 11.3: …` 와 `#### Story 1.31: …` 가 **혼재**한다.
+ *  현황판(`dev-status/scan.mjs` PATTERNS.story = `/^#{3,4} Story (\d+)\.(\d+): (.+?)\s*$/`)과 **같은 단계**를 읽는다 —
+ *  `###` 만 읽던 종전 그물은 「## Epic List」 요약 절 아래 `#### Story` 로 적힌 Story 1.12~1.31 **20건을 통째로 못 봐서**
+ *  전부 `sprint-only-story`(에픽 목록에 없는 스토리)로 올렸다(2026-09-21 실측 · DIAGNOSIS-CLEANUP.md 4장 2번). */
+export const EPIC_STORY_RE = /^#{3,4} Story (\d+)\.(\d+):\s*(.*)$/
 /** 스토리 형태의 문서 이름 — `11-5-관리팀-질의서-….md` 같은 **고아 문서**도 이 형태다. */
 export const STORY_DOC_RE = /^(\d+)-(\d+)-.+$/
 
 const CODE_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.vue', '.svelte'])
+
+// ── 짝 테스트 판정에서 빼는 파일 (2026-09-21 실측) ───────────────────────────
+/** 「고친 파일에 짝이 되는 테스트가 없다」(`untested-files`)에서 **원래 vitest 짝을 두지 않는 부류**를 뺀다.
+ *  실측: 운영선 잔여 77건 중 67스토리가 이 지적이었고 상위는 전부 아래 5종이었다 —
+ *  `src/App.tsx` 39회(라우트 뼈대 · 조립만 한다) · `src/types/database.ts` 25회(`supabase gen types` **생성물** ·
+ *  손으로 쓰지 않는다 = 앱 규약 4) · 로그 폴더의 1회용 스크립트 32종 · Edge Function(Deno 런타임이라 vitest 로
+ *  못 물고 `tests/authz` 가 실요청으로 검증한다 = 앱 규약 6) · `src/components/ui/*`(shadcn 생성 프리미티브).
+ *  프로젝트가 `auto.config.json` 의 `autonomy.diagnose.untestedExclude` 로 갈아 끼울 수 있다. */
+export const DEFAULT_UNTESTED_EXCLUDE = Object.freeze([
+  'src/App.tsx',
+  'src/types/database.ts',
+  'src/components/ui/**',
+  'supabase/functions/**',
+  '**/auto-pipeline-logs/**',
+  '_bmad-output/**',
+])
+
+/** 글롭 1개 → 정규식. `**` = 경로 구분자 포함 아무거나 · `*` = 한 구간 안 · `?` = 한 글자. */
+export function globToRegExp(glob) {
+  const s = norm(glob)
+  let re = ''
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === '*') {
+      if (s[i + 1] === '*') { re += '.*'; i++; if (s[i + 1] === '/') i++ }
+      else re += '[^/]*'
+    } else if (c === '?') re += '[^/]'
+    else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  }
+  return new RegExp(`^${re}$`)
+}
+const GLOB_CACHE = new Map()
+const globRe = (g) => { let r = GLOB_CACHE.get(g); if (!r) { r = globToRegExp(g); GLOB_CACHE.set(g, r) } return r }
+/** 경로가 제외 글롭 목록 중 하나에 걸리는가. */
+export function isTestPairingExempt(path, globs = DEFAULT_UNTESTED_EXCLUDE) {
+  const p = norm(path)
+  return (globs ?? []).some((g) => globRe(g).test(p))
+}
+
+// ── File List 토큰 필터 (2026-09-21 실측) ────────────────────────────────────
+// File List 절의 백틱 토큰 중 **슬래시가 든 것을 전부 파일로 읽던** 종전 규칙은 사람이 읽기 좋게 쓴 표기를
+// 파일로 오해했다 — 실측 280건 중 **진짜 파일은 13종뿐**이고 나머지는 와일드카드 104 · 중괄호 묶음 48 ·
+// 화면 주소 27 · 말줄임 17 · 코드 조각 7+ 였다(DIAGNOSIS-CLEANUP.md 2장).
+/** `a/{x.ts, y.ts}` → `a/x.ts`·`a/y.ts`. 중첩·불균형이면 원문 그대로(아래 필터가 `{` 로 떨어뜨린다). */
+export function expandBraceGroup(token) {
+  const m = /^([^{}]*)\{([^{}]+)\}([^{}]*)$/.exec(String(token ?? ''))
+  if (!m) return [String(token ?? '')]
+  const parts = m[2].split(',').map((s) => s.trim()).filter(Boolean)
+  return parts.length ? parts.map((s) => `${m[1]}${s}${m[3]}`) : [String(token)]
+}
+
+/** 파일 후보가 아닌 이유(없으면 null). 순수. */
+export function fileTokenRejection(token) {
+  const p = norm(token).trim()
+  if (!p) return '빈 토큰'
+  if (!p.includes('/')) return '경로가 아니다(슬래시 없음)'
+  if (/[{}]/.test(p)) return '중괄호 묶음 표기'
+  if (/[*?]/.test(p)) return '와일드카드 표기'
+  if (p.endsWith('/')) return '폴더 표기'
+  if (/…|\.\.\./.test(p)) return '말줄임 축약'
+  if (/:\/\//.test(p)) return 'URL'
+  if (p.startsWith('/')) return '루트로 시작 — 화면 주소이지 저장소 경로가 아니다'
+  if (p.startsWith('@')) return '패키지·경로 별칭 지정자'
+  if (!/\.[A-Za-z0-9_]+$/.test(basename(p))) return '확장자가 없다 — 코드 조각·폴더 표기'
+  return null
+}
+
+/** File List 백틱 토큰 목록 → `{ files, ignored }`. 중괄호는 펼치고, 파일이 아닌 표기는 사유와 함께 뺀다. */
+export function normalizeDeclaredFiles(tokens) {
+  const files = []
+  const ignored = []
+  for (const raw of tokens ?? []) {
+    for (const cand of expandBraceGroup(norm(raw).trim())) {
+      const why = fileTokenRejection(cand)
+      if (why) { if (cand.includes('/')) ignored.push({ token: cand.slice(0, 200), why }); continue }
+      files.push(norm(cand))
+    }
+  }
+  return { files: uniq(files), ignored: ignored.slice(0, 200) }
+}
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.turbo', '.vite', '.review-tmp', '.wrangler'])
 const MAX_FILE_BYTES = 1024 * 1024
 
@@ -193,12 +276,15 @@ export function readProject(root, { config = null, maxLogBytes = 262144, now = n
 
   // ── 설정 ──────────────────────────────────────────────────────────────────
   const rawCfg = config ?? readJsonSafe(abs(P.config)) ?? {}
+  const rawExclude = rawCfg.autonomy?.diagnose?.untestedExclude ?? rawCfg.diagnose?.untestedExclude ?? null
+  const untestedExclude = Array.isArray(rawExclude) ? rawExclude.map(norm).filter(Boolean) : [...DEFAULT_UNTESTED_EXCLUDE]
   const cfg = {
     epicOrder: Array.isArray(rawCfg.epicOrder) ? rawCfg.epicOrder : (rawCfg.plan?.epicOrder ?? null),
     dailyCap: rawCfg.dailyCap ?? rawCfg.plan?.dailyCap ?? null,
     parallel: rawCfg.parallel ?? rawCfg.defaults?.parallel ?? null,
     mockupGate: rawCfg.mockupGate ?? null,
     providers: rawCfg.providers ?? null,
+    diagnose: { untestedExclude, untestedExcludeSource: Array.isArray(rawExclude) ? 'config' : 'default' },
     source: config ? 'injected' : existsRel(P.config) ? P.config : 'defaults',
   }
 
@@ -267,14 +353,16 @@ export function readProject(root, { config = null, maxLogBytes = 262144, now = n
   const disabled = detectDisabledTests(codeFiles)
 
   // ── 스토리 파일 ───────────────────────────────────────────────────────────
-  const stories = sprint.map((row) => readStory({ root, implDir: P.impl, row, testPaths, existsRel }))
+  const stories = sprint.map((row) => readStory({ root, implDir: P.impl, row, testPaths, existsRel, untestedExclude }))
   const epicSections = {}
   for (const row of sprint) epicSections[row.key] = sectionOfStory(epicsText, storyId(row.key), epicStories, epicHeaders)
   const epicOnly = epicStories
+    // 같은 스토리가 요약 절(`#### Story`)과 본문 절(`### Story`)에 겹쳐 적힐 수 있다 — 한 번만 센다.
+    .filter((s, i, a) => a.findIndex((x) => x.id === s.id) === i)
     .filter((s) => !sprintIds.includes(s.id))
     .map((s) => {
       const section = sectionOfStory(epicsText, s.id, epicStories, epicHeaders)
-      return { ...s, origin: 'epics', section: maskSecrets(section).slice(0, 4000), files: uniq([...section.matchAll(/`([^`\n]+)`/g)].map((m) => norm(m[1])).filter((p) => p.includes('/'))) }
+      return { ...s, origin: 'epics', section: maskSecrets(section).slice(0, 4000), files: normalizeDeclaredFiles([...section.matchAll(/`([^`\n]+)`/g)].map((m) => m[1])).files }
     })
 
   // ── git (읽기 명령만) ─────────────────────────────────────────────────────
@@ -368,7 +456,7 @@ export function readProject(root, { config = null, maxLogBytes = 262144, now = n
 }
 
 /** 스토리 md 1건 → 스냅숏 항목. 원장 해석은 전부 `story-ledger` 에 위임한다. */
-function readStory({ root, implDir, row, testPaths, existsRel }) {
+function readStory({ root, implDir, row, testPaths, existsRel, untestedExclude = DEFAULT_UNTESTED_EXCLUDE }) {
   const rel = `${implDir}/${row.key}.md`
   const text = readTextSafe(join(root, rel))
   if (text === null) {
@@ -377,7 +465,7 @@ function readStory({ root, implDir, row, testPaths, existsRel }) {
       hash: null, bytes: 0, mtime: null, baselineCommit: null,
       statusInFile: null, statusInSprint: row.status, sections: {}, acIds: [],
       signals: { openDecision: false, openPatches: 0, banPresent: false, unfinishedTasks: 0, files: [] },
-      fileList: { sectionPresent: false, declared: [], missing: [], untested: [] },
+      fileList: { sectionPresent: false, declared: [], missing: [], untested: [], ignored: [] },
       qaClaims: [],
     }
   }
@@ -391,9 +479,9 @@ function readStory({ root, implDir, row, testPaths, existsRel }) {
   const acIds = uniq([...acBlock.matchAll(/\*\*(AC-\d+)/g)].map((m) => m[1]))
   const signals = readStorySignals(text)
   const parsed = parseFileList(text)
-  const declared = uniq([...(parsed ?? []), ...signals.files].map(norm).filter((p) => p.includes('/')))
+  const { files: declared, ignored } = normalizeDeclaredFiles([...(parsed ?? []), ...signals.files])
   const missing = declared.filter((p) => !existsRel(p))
-  const untested = declared.filter((p) => CODE_EXT.has(extname(p)) && !TEST_FILE_RE.test(p) && !missing.includes(p) && !hasTestFor(p, testPaths))
+  const untested = declared.filter((p) => CODE_EXT.has(extname(p)) && !TEST_FILE_RE.test(p) && !missing.includes(p) && !isTestPairingExempt(p, untestedExclude) && !hasTestFor(p, testPaths))
   const qaClaims = text.split('\n').filter((l) => /qa[^\n]{0,60}exit\s*0/i.test(l)).slice(0, 5).map(maskLine)
 
   return {
@@ -403,7 +491,7 @@ function readStory({ root, implDir, row, testPaths, existsRel }) {
     statusInFile: /^Status:\s*(\S+)/m.exec(text)?.[1] ?? null,
     statusInSprint: row.status,
     sections, acIds, signals,
-    fileList: { sectionPresent: parsed !== null, declared, missing, untested },
+    fileList: { sectionPresent: parsed !== null, declared, missing, untested, ignored },
     qaClaims,
   }
 }

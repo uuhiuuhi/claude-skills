@@ -19,6 +19,7 @@ import {
   readProject, diagnose, evidenceRank, classifyStoryCompletion,
   detectTempCode, detectDisabledTests, detectDeployBlockers, detectDocMismatch, detectSecurityRisks,
   runGateProbe, GATE_EXIT_OVERFLOW, npmInvocation, assertNoShellMeta, maskSecrets, deepRedact, lineContextAt, hasTestFor, sectionOfStory,
+  normalizeDeclaredFiles, isTestPairingExempt, globToRegExp,
 } from './diagnose.mjs'
 import { deepRedact as sharedDeepRedact, redactSecrets as sharedRedactSecrets } from './runtime/providers/redact.mjs'
 
@@ -569,6 +570,99 @@ test('진단 스키마·지문 — 같은 스냅숏이면 지문이 같다(진�
     assert.deepEqual(a.findings.map((f) => f.id), b.findings.map((f) => f.id))
     const c = diagnose(snap, { gates: { qa: { exit: 0 } }, prevDiagnosis: a })
     assert.equal(c.progress.delta, 0)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// E2. 진단 규칙 보강(2026-09-21 실측 — DIAGNOSIS-CLEANUP.md)
+//     ① 짝 테스트 제외 ② epics 스토리 단계 인식 ③ File List 토큰 필터
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('File List 토큰 필터: 와일드카드·폴더·중괄호·화면주소·말줄임·코드조각은 파일 후보가 아니다', () => {
+  const { files, ignored } = normalizeDeclaredFiles([
+    'src/feature/a.ts',                              // 진짜 파일
+    'src/features/customers/{logic.ts, api.ts}',     // 중괄호 묶음 → 펼친다
+    'src/**', 'supabase/migrations/*',               // 와일드카드
+    'samples/billing/',                              // 폴더 표기
+    '/tickets', '/customers/new',                    // 화면 주소
+    '…/11-3-qa.log',                                 // 말줄임
+    'try/catch', 'bg-black/50', 'audio/mp4',         // 코드·명령 조각
+    '@pdf-lib/fontkit',                              // 패키지 지정자
+    'https://example.invalid/a.ts',                  // URL
+    'README',                                        // 슬래시 없음 — 조용히 무시
+  ])
+  assert.deepEqual(files, ['src/feature/a.ts', 'src/features/customers/logic.ts', 'src/features/customers/api.ts'])
+  const why = Object.fromEntries(ignored.map((i) => [i.token, i.why]))
+  assert.match(why['src/**'], /와일드카드/)
+  assert.match(why['samples/billing/'], /폴더/)
+  assert.match(why['/tickets'], /화면 주소/)
+  assert.match(why['…/11-3-qa.log'], /말줄임/)
+  assert.match(why['try/catch'], /확장자/)
+  assert.match(why['@pdf-lib/fontkit'], /별칭|패키지/)
+  assert.match(why['https://example.invalid/a.ts'], /URL/)
+  assert.ok(!('README' in why), '경로가 아닌 토큰은 사유 목록에도 싣지 않는다')
+  // 중괄호 안에 말줄임이 섞인 실물 표기 — 펼친 뒤 말줄임만 떨어진다
+  const mixed = normalizeDeclaredFiles(['src/features/customers/{logic.ts, …}'])
+  assert.deepEqual(mixed.files, ['src/features/customers/logic.ts'])
+})
+
+test('짝 테스트 제외 글롭: 기본값 5종과 프로젝트 설정 교체', () => {
+  for (const p of ['src/App.tsx', 'src/types/database.ts', 'src/components/ui/button.tsx',
+    'supabase/functions/outbox-dispatch/index.ts', 'auto-pipeline-logs/4-2-check.mjs',
+    '_bmad-output/implementation-artifacts/auto-pipeline-logs/x.mjs', '_bmad-output/tmp/one-off.mjs']) {
+    assert.equal(isTestPairingExempt(p), true, `기본 제외 대상인데 걸렸다: ${p}`)
+  }
+  for (const p of ['src/features/customers/logic.ts', 'src/AppRoutes.tsx', 'src/types/domain.ts', 'tools/qa/test-api.mjs']) {
+    assert.equal(isTestPairingExempt(p), false, `제외 대상이 아닌데 빠졌다: ${p}`)
+  }
+  // 목록을 갈아 끼우면 기본값은 더 이상 적용되지 않는다
+  assert.equal(isTestPairingExempt('src/App.tsx', ['tools/**']), false)
+  assert.equal(isTestPairingExempt('tools/a/b/c.mjs', ['tools/**']), true)
+  assert.equal(globToRegExp('src/components/ui/*').test('src/components/ui/a/b.tsx'), false, '`*` 는 한 구간만이다')
+})
+
+test('untested-files: 생성물·뼈대·Deno EF·1회용 스크립트는 세지 않는다(설정으로 교체 가능)', () => {
+  const FL = [
+    '### File List', '',
+    '- `src/App.tsx` · `src/types/database.ts`',
+    '- `src/components/ui/button.tsx` · `supabase/functions/notify/index.ts`',
+    '- `auto-pipeline-logs/1-1-check.mjs`',
+    '- `src/reports/monthly.ts`', '', // ← 짝 테스트가 정말 없는 파일(tests/reports 가 아예 없다)
+  ].join('\n')
+  withFreshFx({}, (fx) => {
+    for (const p of ['src/App.tsx', 'src/types/database.ts', 'src/components/ui/button.tsx',
+      'supabase/functions/notify/index.ts', 'auto-pipeline-logs/1-1-check.mjs', 'src/reports/monthly.ts']) {
+      fx.write(p, 'export const x = 1\n')
+    }
+    const md = fx.read(`_bmad-output/implementation-artifacts/${K.ok}.md`)
+    fx.write(`_bmad-output/implementation-artifacts/${K.ok}.md`, md.replace(/### File List[\s\S]*?(?=## Change Log)/, `${FL}\n`))
+
+    const st = readProject(fx.root).stories.find((s) => s.key === K.ok)
+    assert.deepEqual(st.fileList.untested, ['src/reports/monthly.ts'], '제외 대상까지 「테스트 없는 파일」로 셌다')
+    assert.ok(st.fileList.declared.includes('src/App.tsx'), '제외는 짝 테스트 판정에서만이지 선언 목록에서 지우는 것이 아니다')
+
+    // 설정으로 목록을 비우면 종전처럼 전부 센다 — 규칙이 설정에서 온다는 증명
+    const wide = readProject(fx.root, { config: { autonomy: { diagnose: { untestedExclude: [] } } } })
+    const st2 = wide.stories.find((s) => s.key === K.ok)
+    assert.equal(st2.fileList.untested.length, 6)
+    assert.equal(wide.config.diagnose.untestedExcludeSource, 'config')
+    assert.equal(readProject(fx.root).config.diagnose.untestedExcludeSource, 'default')
+  })
+})
+
+test('epics.md 의 `#### Story` 도 읽는다 — 요약 절 아래 스토리를 통째로 놓치지 않는다(2026-09-21 실사고)', () => {
+  withFreshFx({}, (fx) => {
+    const epics = '_bmad-output/planning-artifacts/epics.md'
+    // 실물 형태: 「## Epic List」 요약 절(`### Epic 1`) 아래에 `#### Story 1.12` 가 적힌다.
+    fx.write(epics, `${fx.read(epics)}\n### Epic 1: 토대 (요약 절)\n\n#### Story 1.12: 목록 관리 승인 화면\n\n본문 한 줄.\n`)
+    const snap = readProject(fx.root)
+    assert.ok(snap.epicStories.some((s) => s.id === '1-12'), '`#### Story` 를 못 읽었다')
+    assert.equal(snap.epicStories.filter((s) => s.id === '1-1').length, 1, '같은 스토리를 두 번 세지 않는다')
+    // sprint 에 없으므로 epicOnly 에 한 번만 오른다(요약/본문 중복 방지)
+    assert.equal(snap.epicOnly.filter((e) => e.id === '1-12').length, 1)
+    // 반대 방향: sprint 에 있는 키가 `####` 로만 적혀 있어도 sprint-only-story 로 올리지 않는다
+    const d = diagnose(readProject(fx.root))
+    assert.equal(d.findings.filter((f) => f.kind === 'sprint-only-story').length, 0, '에픽 목록에 있는 스토리를 「목록 밖」으로 올렸다')
   })
 })
 
