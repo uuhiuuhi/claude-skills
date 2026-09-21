@@ -17,6 +17,10 @@
 //   - Git for Windows 의 **래퍼** `Git\bin\sh.exe`·`Git\bin\bash.exe` 는 시작할 때 `/mingw64/bin:/usr/bin` 을
 //     PATH 맨 앞에 끼워 넣어 shim 을 지나친다(진짜 `Git\usr\bin\sh.exe` 는 PATH 순서를 지킨다 — 실측 확인).
 //   - 절대경로로 `C:\Program Files\Git\cmd\git.exe push` 를 직접 부르면 shim 을 우회한다.
+//   - 하위 명령 앞의 전역 옵션(`-c key=val` 등)은 건너뛰고 판정한다(2026-09-21 오탐 수정). 그래서
+//     `-c core.pager=…`·`-c core.fsmonitor=…` 로 **다른 프로그램을 띄우는** 경로는 여기서 걸러지지 않는다 —
+//     다만 그렇게 띄운 프로그램의 `git` 도 같은 PATH shim 을 타고, 원격은 `GIT_ALLOW_PROTOCOL=none` 이 막는다.
+//     (워커는 이미 자유 셸을 쥐고 있으므로 이 옵션이 새 권한을 주지는 않는다 — 정직 기록.)
 //   위 세 우회 경로에서도 `GIT_ALLOW_PROTOCOL=none`(원격 차단) · **원격 자격증명 제거**(H3 ·
 //   `stripRemoteCredentials`) · 종전의 사후 HEAD/브랜치/stash 가드 · Codex 샌드박스(review=read-only ·
 //   dev=workspace-write 는 네트워크 기본 차단)가 남는다.
@@ -30,11 +34,29 @@ import { tmpdir } from 'node:os'
 /** 읽기 전용 허용 목록 — 두 낱말 항목(`stash list`)은 서브명령까지 본다. */
 export const GIT_GUARD_ALLOW = Object.freeze([
   'status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'ls-tree', 'blame', 'grep',
-  'cat-file', 'describe', 'symbolic-ref', 'rev-list', 'shortlog', 'var', 'stash list', 'stash show',
+  'cat-file', 'describe', 'name-rev', 'symbolic-ref', 'rev-list', 'shortlog', 'var',
+  'stash list', 'stash show', 'branch --show-current', 'remote -v',
 ])
 /** 차단 시 종료 코드 — 일반 git 실패(1·128)와 구분되게 고른다. */
 export const GIT_GUARD_EXIT = 86
 export const GIT_GUARD_PREFIX = '[GIT-GUARD] blocked:'
+/**
+ * shim 이 **stderr 에 직접 쓰는 줄**의 꼴. 판정은 반드시 이 정규식(줄 시작)으로 한다.
+ * 부분 문자열 검색(`stdout.includes(prefix)`)은 **워커가 옛 로그 파일을 읽어 출력한 것**까지
+ * 「차단됐다」로 오판한다 — 2026-09-21 낮 실사고(6-7 리뷰: git 명령 0건 · exit 0 인데 COMMIT GUARD STOP).
+ */
+export const GIT_GUARD_BLOCKED_LINE_RE = /^\[GIT-GUARD\] blocked:/m
+
+/**
+ * 「워커가 금지된 git 을 실행하려다 shim 에 막혔는가」 판정(순수).
+ * 두 증거만 인정한다 — ① shim 의 종료 코드 ② **stderr 의 줄 시작** 프리픽스.
+ * stdout 은 보지 않는다(워커가 읽어 되뱉은 파일 내용이 섞인다 · 위 실사고).
+ */
+export function isGuardBlocked({ code, stderr } = {}, guard = null) {
+  if (!guard) return false
+  if (code === guard.exitCode) return true
+  return GIT_GUARD_BLOCKED_LINE_RE.test(String(stderr ?? ''))
+}
 
 /** 진짜 git 절대경로 — `where git`(win) / `which git`(posix). shim 디렉터리는 아직 PATH 에 없다. */
 export function resolveRealGit({ platform = process.platform, env = process.env, exec = spawnSync } = {}) {
@@ -62,17 +84,35 @@ export function renderCmdShim(realGit, allow = GIT_GUARD_ALLOW) {
     'set "SUB=%~1"',
     'set "SUB2=%~2"',
     // cmd 는 `if cond a & b` 를 `(if cond a) & b` 로 파싱한다 — 조건부 묶음은 반드시 괄호로.
-    'if /I "%SUB%"=="-C" ( shift & shift & goto gg_scan )',
+    // 하위 명령 앞의 **git 전역 옵션**은 건너뛰고 첫 하위 명령으로 판정한다(2026-09-21 오탐 수정).
+    // `-c` 와 `-C` 는 건너뛸 토큰 수가 다르므로 **대소문자를 구분하는 맨 if**(= `/I` 없음)로 가른다.
+    'if "%SUB%"=="-c" goto gg_cfg',
+    'if "%SUB%"=="-C" ( shift & shift & goto gg_scan )',
     'if /I "%SUB%"=="--no-pager" ( shift & goto gg_scan )',
+    'if /I "%SUB%"=="--paginate" ( shift & goto gg_scan )',
     'if /I "%SUB%"=="-P" ( shift & goto gg_scan )',
     'if /I "%SUB%"=="--literal-pathspecs" ( shift & goto gg_scan )',
+    'if /I "%SUB:~0,10%"=="--git-dir=" ( shift & goto gg_scan )',
+    'if /I "%SUB:~0,12%"=="--work-tree=" ( shift & goto gg_scan )',
+    'if /I "%SUB%"=="--git-dir" ( shift & shift & goto gg_scan )',
+    'if /I "%SUB%"=="--work-tree" ( shift & shift & goto gg_scan )',
     `for %%A in (${singles.join(' ')}) do if /I "%SUB%"=="%%A" goto gg_allow`,
     ...pairs.map(([a, b]) => `if /I "%SUB%"=="${a}" if /I "%SUB2%"=="${b}" goto gg_allow`),
     `>&2 echo ${GIT_GUARD_PREFIX} git %*`,
     `exit /b ${GIT_GUARD_EXIT}`,
     ':gg_allow',
+    // SHIFT 는 `%*` 에 영향을 주지 않는다 — 진짜 git 은 **원래 인자 전부**를 받는다.
     '"%GITGUARD_REAL%" %*',
     'exit /b %ERRORLEVEL%',
+    // `-c key=value` — cmd 는 배치 인자를 공백뿐 아니라 **`=` 에서도 쪼갠다**(2026-09-21 실측:
+    // `-c a=b status` → %1=-c %2=a %3=b %4=status). 호출자가 인용해 한 토큰으로 왔으면(`%~2` 안에 `=` 가 있음)
+    // 2개, 쪼개져 왔으면 3개를 건너뛴다. 빗나가면 하위 명령을 못 찾아 **차단**으로 떨어진다(fail-closed).
+    ':gg_cfg',
+    'set "GG_HEAD="',
+    'for /f "tokens=1 delims==" %%x in ("%SUB2%") do set "GG_HEAD=%%x"',
+    'if "%GG_HEAD%"=="%SUB2%" ( shift & shift & shift & goto gg_scan )',
+    'shift & shift',
+    'goto gg_scan',
     '',
   ]
   return lines.join('\r\n') // 배치 파일은 CRLF 여야 안전하다
@@ -88,10 +128,15 @@ export function renderShShim(realGit, allow = GIT_GUARD_ALLOW) {
     'sub=""; sub2=""; skip=0',
     'for a in "$@"; do',
     '  if [ "$skip" = "1" ]; then skip=0; continue; fi',
-    '  case "$a" in',
-    '    -C) skip=1; continue ;;',
-    '    --no-pager|-P|--literal-pathspecs) continue ;;',
-    '  esac',
+    '  if [ -z "$sub" ]; then',
+    '    case "$a" in',
+    // 하위 명령 앞의 **git 전역 옵션**만 건너뛴다(`-c key=val`·`-C <path>` 는 값이 따로 오므로 2토큰).
+    // 2026-09-21 실사고: `git -c core.excludesFile=NUL diff …`(읽기 전용)가 `-c` 를 하위 명령으로 오인해 차단됐다.
+    '      -c|-C) skip=1; continue ;;',
+    '      --no-pager|-P|-p|--paginate|--literal-pathspecs|--no-replace-objects) continue ;;',
+    '      --git-dir=*|--work-tree=*|--namespace=*|--config-env=*) continue ;;',
+    '    esac',
+    '  fi',
     '  if [ -z "$sub" ]; then sub="$a"; continue; fi',
     '  sub2="$a"; break',
     'done',

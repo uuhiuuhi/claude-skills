@@ -245,6 +245,8 @@ run-night --queue  기존 러너 계약 그대로(워크트리 · `auto/*` 브�
 | `run.json` 의 `budget.exhausted: true` | 예산(`--budget-min`)을 다 썼다 | `budget.stops` 에 무엇을 건너뛰었는지 있다(보고서 ⑧ 에도 실린다). 예산을 늘리거나 범위를 줄인다 |
 | 러너가 `exit 3` · `pipeline-settings.json 이 없다` | nested 워커 deny 설정이 없다 | `.claude/pipeline-settings.json` 을 만든다(`Bash(git commit:*)` 등 deny) |
 | 러너가 `exit 6` · `COMMIT GUARD STOP` | 시작 시점 작업 트리가 dirty | 사람이 먼저 커밋·정리한다 |
+| `COMMIT GUARD STOP` 인데 워커 로그에 git 명령이 하나도 없다 | (2026-09-21 수정 완료) 판정이 **stdout 에서 `[GIT-GUARD] blocked:` 부분 문자열**을 찾아, 워커가 읽어 출력한 옛 로그 파일 내용을 차단으로 오판했다 | 판정은 이제 `isGuardBlocked`(shim 종료 코드 86 + **stderr 줄 시작** 프리픽스)만 본다. 옛 사본이 러너에 깔려 있으면 재설치한다 |
+| `[GIT-GUARD] blocked: git -c … diff` — 읽기 전용인데 막힌다 | (2026-09-21 수정 완료) shim 이 전역 옵션 `-c` 를 하위 명령으로 오인했다 | shim 이 `-c key=val`·`-C <path>`·`--no-pager`·`--paginate`·`--git-dir=`·`--work-tree=` 를 건너뛰고 첫 하위 명령으로 판정한다. **cmd 한계**: cmd 는 배치 인자를 `=` 에서도 쪼개므로(`-c a=b` → `-c`,`a`,`b`) `%~2` 에 `=` 가 있는지로 2토큰/3토큰을 가른다 — 빗나가면 차단(fail-closed) 이다 |
 | 러너가 `exit 4` · `NO-OP STOP … 읽은 증거 없이 clean` | 교차 리뷰가 파일을 읽지 않고 「문제 없음」을 냈다 | 리뷰 무효가 정상 동작이다 — 리뷰 모델·프롬프트를 확인한다 |
 | 한 라운드만에 `escalation.md` 가 나왔다 | 인증·한도·네트워크(환경 실패) | 원인을 풀고 같은 명령을 다시 돌린다(끝난 단계는 자동으로 건너뛴다) |
 | codex 를 켰는데 `codex 폴백 → claude` | 엔진은 Codex 를 **배치 워크트리에서만** 돌린다(본 트리 실데이터 반출 방지) | 병렬 배치로 돌리거나, 위험을 이해한 뒤에만 `AUTO_CODEX_ALLOW_CWD=1` |

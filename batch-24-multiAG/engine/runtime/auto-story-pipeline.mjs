@@ -82,7 +82,7 @@ import { fileURLToPath } from "node:url";
 import { parseModelSpec, formatModelSpec, shownSpec, detectProviders, providersLine, resolveWorkerSpec, nextWorkerDown, enforceCrossSpec } from "./providers/index.mjs";
 import { buildClaudeCommand, runClaudeWorker } from "./providers/claude.mjs";
 import { buildCodexCommand, runCodexWorker, classifyCodexFailure, codexFailureText, inspectCwdForCodex, codexReviewPrompt, codexDevPrompt, codexRepairPrompt, renderReviewFindings, parseReviewJson, validateReviewRun, redactSecrets, isSensitivePath, stripSensitiveFileSections, hideSensitiveFiles, restoreEnvFiles, withCodexSlot, slotStaleMsFor } from "./providers/codex.mjs";
-import { createGitGuard, findCredentialRemotes, stripRemoteCredentials, localGitFingerprintFor } from "./providers/git-guard.mjs";
+import { createGitGuard, findCredentialRemotes, stripRemoteCredentials, localGitFingerprintFor, isGuardBlocked } from "./providers/git-guard.mjs";
 import { assertSafeModel, assertSafePath, normalizeCommand, spawnSafe } from "./providers/spawn-safe.mjs";
 import { safeGitPush } from "./push-guard.mjs";
 import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes, reviewPendingOnly, recoveryPendingOnly } from "./completion-rules.mjs";
@@ -1183,7 +1183,9 @@ function runClaude(stage, story, variant = null) {
   // (#3) ① 실행 단계 차단이 걸렸는가(shim 이 exit 86 + `[GIT-GUARD] blocked:` 를 남긴다) ② 원격 ref 가 움직였는가.
   //      둘 중 하나라도면 워커가 git 상태를 바꾸려 했다는 뜻이다 — 사람 게이트.
   //      ③ (N2) 로컬 reflog·ref 지문이 달라졌는가 — 절대경로 git 으로 `commit → reset` 을 해도 reflog 는 자란다.
-  const guardBlocked = Boolean(guard) && (code === guard.exitCode || `${res.stderr || ""}\n${res.stdout || ""}`.includes(guard.blockedPrefix));
+  // 판정 정본 = providers/git-guard.mjs isGuardBlocked — shim 종료 코드 + **stderr 의 줄 시작** 프리픽스만 본다.
+  // stdout 부분 문자열 검색은 2026-09-21 낮 오탐의 원인이었다(리뷰어가 옛 로그 파일을 읽어 출력하자 exit 0 인데 STOP).
+  const guardBlocked = isGuardBlocked({ code, stderr: res.stderr }, guard);
   const remoteAfter = remoteHeads();
   const localAfter = localGitFingerprint();
   if (guardBlocked || remoteBefore !== remoteAfter || localBefore !== localAfter) {

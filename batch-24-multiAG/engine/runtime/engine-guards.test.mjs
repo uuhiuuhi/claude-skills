@@ -96,7 +96,9 @@ describe('[engine-guards] v3 다중 프로바이더 규율', () => {
     assert.ok(has('guard = createGitGuard({ baseEnv: process.env });'))
     assert.ok(has('const workerEnv = guard ? workerEnvWithGuard(guard) : undefined;'))
     assert.ok(has('res = w.run(workerEnv);'), '워커 spawn 에 guard env 가 실제로 넘어간다')
-    assert.ok(has('code === guard.exitCode || `${res.stderr || ""}\\n${res.stdout || ""}`.includes(guard.blockedPrefix)'))
+    // 2026-09-21: 판정은 git-guard.mjs 의 isGuardBlocked 가 소유한다 — stdout 부분 문자열 검색은 폐지(읽기 전용 워커 오탐).
+    assert.ok(has('const guardBlocked = isGuardBlocked({ code, stderr: res.stderr }, guard);'))
+    assert.ok(!/res\.stdout \|\| ""\}`\.includes\(guard\.blockedPrefix\)/.test(src), 'stdout 부분 문자열 판정이 되살아났다')
     assert.ok(has('const remoteBefore = remoteHeads();') && has('const remoteAfter = remoteHeads();'))
     assert.ok(has('guard?.cleanup();'), 'finally 에서 shim 정리')
   })

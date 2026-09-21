@@ -20,8 +20,8 @@ import { buildClaudeCommand, runClaudeWorker } from './providers/claude.mjs'
 import { defaultExec, parseModelSpec } from './providers/index.mjs'
 import { normalizeCommand, planSpawn, quoteWindowsArg, spawnSafe, tokenizeCommand } from './providers/spawn-safe.mjs'
 import {
-  GIT_GUARD_EXIT, createGitGuard, findCredentialRemotes, remoteUrlHasCredentials, renderCmdShim, renderShShim,
-  resolveRealGit, stripRemoteCredentials,
+  GIT_GUARD_EXIT, GIT_GUARD_PREFIX, createGitGuard, findCredentialRemotes, isGuardBlocked, remoteUrlHasCredentials,
+  renderCmdShim, renderShShim, resolveRealGit, stripRemoteCredentials,
 } from './providers/git-guard.mjs'
 import { deepRedact, redactSecrets as redactSecretsShared } from './providers/redact.mjs'
 
@@ -656,13 +656,26 @@ describe('[git-guard] 워커의 git 상태 변경을 실행 단계에서 막는�
     assert.ok(cmd.includes('if /I "%SUB%"=="stash" if /I "%SUB2%"=="list" goto gg_allow'))
     // cmd 는 `if cond a & b` 를 `(if cond a) & b` 로 파싱한다 — 조건부 shift 는 반드시 괄호 안
     assert.ok(!/if [^\n]*"==[^\n]*" shift &/.test(cmd), '괄호 없는 조건부 shift 가 있다')
+    // 하위 명령 앞의 전역 옵션은 건너뛴다 — `-c key=val` 은 값까지 2토큰(2026-09-21)
+    // `-c` 는 대소문자를 구분하는 맨 if 로 갈라 :gg_cfg 로 보낸다(`-C` 와 건너뛸 토큰 수가 다르다)
+    assert.ok(cmd.includes('if "%SUB%"=="-c" goto gg_cfg') && cmd.includes(':gg_cfg'))
+    assert.ok(cmd.includes('if "%SUB%"=="-C" ( shift & shift & goto gg_scan )'))
     const sh = renderShShim('C:\\Program Files\\Git\\cmd\\git.exe')
     assert.ok(sh.startsWith('#!/bin/sh'))
     assert.ok(sh.includes("GITGUARD_REAL='C:/Program Files/Git/cmd/git.exe'"))
     assert.ok(sh.includes('exit 86'))
+    assert.ok(sh.includes('-c|-C) skip=1; continue ;;'), 'sh 심이 -c 를 하위 명령으로 오인한다')
+    assert.ok(sh.includes('if [ "$sub" = "branch" ] && [ "$sub2" = "--show-current" ]; then allowed=1; fi'))
   })
 
-  const READ_OK = [['status', '--porcelain'], ['rev-parse', 'HEAD'], ['log', '--oneline', '-1'], ['diff', '--name-only'], ['stash', 'list']]
+  const READ_OK = [
+    ['status', '--porcelain'], ['rev-parse', 'HEAD'], ['log', '--oneline', '-1'], ['diff', '--name-only'], ['stash', 'list'],
+    // 2026-09-21 실사고: 하위 명령 앞의 전역 옵션을 하위 명령으로 오인해 읽기 전용 리뷰를 exit 86 으로 끊었다.
+    ['-c', 'core.excludesFile=NUL', 'diff', '--stat'],
+    ['--no-pager', 'log', '-1', '--format=%H'],
+    ['branch', '--show-current'],
+    ['remote', '-v'],
+  ]
   const BLOCKED = [
     ['commit', '--allow-empty', '-m', 'sneaky'],
     ['push', 'origin', 'HEAD:main'],
@@ -680,6 +693,11 @@ describe('[git-guard] 워커의 git 상태 변경을 실행 단계에서 막는�
     ['config', '--global', 'user.email', 'x@y.z'],
     ['clean', '-fdx'],
     ['-c', 'alias.z=!sh -c "git push"', 'z'],
+    // 전역 옵션을 건너뛰어도 **쓰기 하위 명령**은 그대로 막힌다(전역 옵션이 우회 수단이 되면 안 된다)
+    ['-c', 'a=b', 'push', 'origin', 'HEAD:main'],
+    ['-c', 'a=b', 'stash'],
+    ['--no-pager', 'commit', '--allow-empty', '-m', 'sneaky'],
+    ['remote', 'set-url', 'origin', 'https://example.com/x.git'],
   ]
 
   it('Windows cmd 심: 읽기 전용은 통과 · 상태 변경은 exit 86 · HEAD 불변 (win32 전용)', { skip: !isWin ? 'win32 전용' : false }, (t) => {
@@ -743,6 +761,40 @@ describe('[git-guard] 워커의 git 상태 변경을 실행 단계에서 막는�
     const which = (sh) => String(spawnSync(sh, ['-c', 'command -v git'], { env: guard.env, encoding: 'utf8' }).stdout).trim()
     assert.ok(!which(SH_WRAPPER).includes('git-guard-'), '래퍼가 shim 을 탄다면 이 한계 주석을 지워야 한다')
     assert.ok(which(SH).includes('git-guard-'), '진짜 sh 는 PATH 순서를 지켜 shim 을 타야 한다')
+  })
+
+  // ── 2026-09-21 오탐 회귀: 읽기 전용 워커가 옛 로그를 **출력**했다고 COMMIT GUARD STOP 이 되면 안 된다 ──
+  describe('[2026-09-21] 차단 판정은 shim 종료 코드 + stderr 줄 시작만 본다', () => {
+    const guard = { exitCode: GIT_GUARD_EXIT, blockedPrefix: GIT_GUARD_PREFIX }
+
+    it('워커가 옛 로그 파일 내용을 출력해 stdout·stderr 에 문구가 섞여도 exit 0 이면 차단이 아니다', () => {
+      // 실사고 재현 — 리뷰어(codex astra)가 Get-Content 로 13-4 리뷰 로그를 읽어 그대로 뱉었다.
+      const quoted = `## stdout\n로그 인용: "${GIT_GUARD_PREFIX} git -c core.excludesFile=NUL diff" 라는 줄이 있었다\n`
+      assert.equal(isGuardBlocked({ code: 0, stderr: '' }, guard), false)
+      assert.equal(isGuardBlocked({ code: 0, stderr: quoted }, guard), false, '줄 시작이 아니면 인용이다')
+      assert.equal(isGuardBlocked({ code: 1, stderr: quoted }, guard), false)
+      // stdout 은 아예 보지 않는다 — 넘겨도 판정이 바뀌지 않는다
+      assert.equal(isGuardBlocked({ code: 0, stderr: '', stdout: `${GIT_GUARD_PREFIX} git push` }, guard), false)
+    })
+
+    it('shim 이 실제로 막으면 차단이다 — exit 86 또는 stderr 줄 시작 프리픽스', () => {
+      assert.equal(isGuardBlocked({ code: GIT_GUARD_EXIT, stderr: '' }, guard), true)
+      assert.equal(isGuardBlocked({ code: 0, stderr: `${GIT_GUARD_PREFIX} git push origin HEAD:main\n` }, guard), true)
+      assert.equal(isGuardBlocked({ code: 0, stderr: `앞 줄\n${GIT_GUARD_PREFIX} git stash\n` }, guard), true, '여러 줄 모드')
+      assert.equal(isGuardBlocked({ code: GIT_GUARD_EXIT, stderr: '' }, null), false, 'guard 가 없으면 판정하지 않는다')
+    })
+
+    it('실제 shim 이 남기는 stderr 는 줄 시작 규칙을 만족한다(자기 RED 방지)', { skip: !isWin && !SH ? '셸 없음' : false }, (t) => {
+      const repo = makeRepo(t)
+      const g = createGitGuard({ tmpRoot: tmpdir() })
+      t.after(() => g.cleanup())
+      const r = isWin
+        ? spawnSync('git', ['push', 'origin', 'HEAD:main'], { cwd: repo.dir, env: g.env, encoding: 'utf8', shell: true })
+        : spawnSync(SH, ['-c', 'git push origin HEAD:main'], { cwd: repo.dir, env: g.env, encoding: 'utf8' })
+      assert.equal(r.status, GIT_GUARD_EXIT)
+      assert.equal(isGuardBlocked({ code: r.status, stderr: r.stderr }, g), true)
+      assert.equal(isGuardBlocked({ code: 0, stderr: r.stderr }, g), true, 'stderr 만으로도 잡힌다')
+    })
   })
 
   it('cleanup() 은 shim 디렉터리를 지운다 · env 는 원본 PATH 를 보존한 채 shim 을 맨 앞에 둔다', () => {
