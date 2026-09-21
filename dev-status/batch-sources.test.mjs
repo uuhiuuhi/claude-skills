@@ -10,6 +10,7 @@ import {
   assignByStory, collectBatchSources, findAutofinishDir, lastNightManifests, nightKey,
   parseAssignHistory, parseBatchManifest, parseEvidenceSummary, parseInbox, parseMetrics,
   parseMetricsHistory, parseQueue, parseReadiness, parseVerification, resolveStateDir, slotHeartbeat,
+  findAutofinishFile,
 } from './batch-sources.mjs'
 
 let dir
@@ -390,5 +391,65 @@ describe('수집기 — 전부 없어도 예외 0', () => {
     assert.equal(b.manifests.length, 1)
     assert.equal(b.errors.length, 1)
     assert.equal(b.errors[0].kind, 'broken')
+  })
+})
+
+describe('⑨ 자율 진단 · 엔진이 쓰는 이름·모양으로 읽는다 (2026-09-21)', () => {
+  const PROJECT = {
+    schema: 'night-batch-ops/readiness/1', at: '2026-09-03T13:00:23.203Z', kind: 'project',
+    verdict: 'not-ready', counts: { pass: 0, fail: 5, notVerified: 3, total: 8 },
+    criteria: [], blockers: [], notVerified: [],
+  }
+
+  test('readiness 가 { project, tasks } 모양이어도 project 를 읽는다', () => {
+    const p = put('af2/readiness.json', JSON.stringify({ project: PROJECT, tasks: [{ a: 1 }] }))
+    const r = parseReadiness(p)
+    assert.equal(r.error, null)
+    assert.equal(r.value.verdict, 'not-ready')
+    assert.equal(r.value.counts.fail, 5)
+  })
+
+  test('project 안도 최상위도 판정표가 아니면 schema 오류다', () => {
+    const q = put('af2/bad2.json', JSON.stringify({ project: { verdict: 'ready' }, tasks: [] }))
+    assert.equal(parseReadiness(q).error.kind, 'schema')
+  })
+
+  test('findAutofinishFile — final 우선 · 없으면 가장 나중 라운드 · 하나도 없으면 null', () => {
+    const d = join(dir, 'afk'); mkdirSync(d, { recursive: true })
+    assert.equal(findAutofinishFile(d, 'diagnosis'), null)
+    writeFileSync(join(d, 'round-0-diagnosis.json'), '{}')
+    writeFileSync(join(d, 'round-2-diagnosis.json'), '{}')
+    writeFileSync(join(d, 'round-10-diagnosis.json'), '{}')
+    assert.equal(findAutofinishFile(d, 'diagnosis'), join(d, 'round-10-diagnosis.json'))
+    writeFileSync(join(d, 'final-diagnosis.json'), '{}')
+    assert.equal(findAutofinishFile(d, 'diagnosis'), join(d, 'final-diagnosis.json'))
+  })
+
+  test('한 겹 더 깊은 옛 폴더(autofinish/autofinish/<runId>)를 runId 최신으로 고른다', () => {
+    const st = join(dir, 'stnest')
+    const old = join(st, 'autofinish', 'autofinish', '2026-09-03-130022')
+    mkdirSync(old, { recursive: true })
+    writeFileSync(join(old, 'run.json'), '{}')
+    assert.equal(findAutofinishDir(st, join(dir, 'nolog')).runId, '2026-09-03-130022')
+    const fresh = join(st, 'autofinish', '2026-09-21-090000')
+    mkdirSync(fresh, { recursive: true })
+    writeFileSync(join(fresh, 'run.json'), '{}')
+    assert.equal(findAutofinishDir(st, join(dir, 'nolog')).runId, '2026-09-21-090000')
+  })
+
+  test('collectBatchSources — round-N·{project,tasks} 로만 있어도 3종이 다 읽힌다', () => {
+    const root = join(dir, 'afrun')
+    const logs = join(root, 'logs'); const st = join(root, 'st')
+    const run = join(st, 'autofinish', '2026-09-21-091500')
+    mkdirSync(logs, { recursive: true }); mkdirSync(run, { recursive: true })
+    writeFileSync(join(run, 'run.json'), '{}')
+    writeFileSync(join(run, 'round-0-diagnosis.json'), JSON.stringify({ schema: 'night-batch-ops/diagnosis/1', counts: { findings: { 1: 0 } } }))
+    writeFileSync(join(run, 'round-0-backlog.json'), JSON.stringify({ schema: 'night-batch-ops/backlog/1', byTier: { 4: 2 }, items: [] }))
+    writeFileSync(join(run, 'readiness.json'), JSON.stringify({ project: PROJECT, tasks: [] }))
+    const b = collectBatchSources({ root, logDir: logs, stateDir: st })
+    assert.equal(b.diagnosis.error, null)
+    assert.equal(b.backlog.error, null)
+    assert.equal(b.readiness.error, null)
+    assert.equal(b.readiness.value.verdict, 'not-ready')
   })
 })

@@ -30,6 +30,7 @@ const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0 }
 // 고유의 릴리스 규약이라, 프로젝트 루트의 `tools/dev-status/sources.json` 에 `opsLineEpics`
 // 가 적혀 있을 때만 이 가르기가 켜진다. 값이 없으면 `opsEpics = []` 이고, 그때는
 // **아무것도 접지 않는다**(종전 동작 그대로 전건을 센다 — 가릴 근거가 없으면 가리지 않는다).
+// 아래 `lineOfFinding`(진단 항목)·`splitChain`(미머지 갈래)도 같은 규칙을 따른다.
 
 /** 스토리 슬러그·번호의 에픽 번호. '13-2-…' → 13 · '1.29' → 1 · 못 읽으면 null */
 export function epicOfStory(slug) {
@@ -100,23 +101,29 @@ export function splitCheckFails(verifications, gatesSince = null) {
  * 않는 것이 정상**이고 릴리스 묶음으로만 나간다. 그걸 「미머지 체인 N일」로 세면 릴리스 사이 내내
  * 헤더가 AMBER 로 잠긴다(2026-09-21 실측 7일). 운영선 수리 갈래(`auto/<날짜>-<주제>`)는 종전대로 센다.
  *
+ * 주제 갈래는 이름만으로 갈래를 가릴 수 없다(`-fix-` 규약을 안 지킨 것이 섞여 있다). 그래서
+ * **개발선으로 확인된 것만** `devLineBranches`(sources.json)에 이름으로 적어 접는다 — 목록에 없으면
+ * 종전대로 센다. 가릴 근거가 없으면 가리지 않는다.
+ *
  * 날짜를 못 읽는 이름(`auto/tooling` 등)은 어느 쪽으로도 세지 않는다 — 추측하지 않는다.
  * 나이 = 가장 오래된 날짜 → 오늘(엔진 `inheritPlan` 과 같은 셈법).
  *
  * @param {string[]} branches `origin/` 접두는 떼고 같은 이름으로 합친다
  * @param {string} todayYmd 오늘(YYYY-MM-DD)
+ * @param {string[]} devLineBranches 개발선으로 확인된 주제 갈래 이름(`origin/` 접두는 무시)
  * @returns {{dev:{days:number|null,branches:string[]}, ops:{days:number|null,branches:string[]}}}
  */
-export function splitChain(branches, todayYmd) {
+export function splitChain(branches, todayYmd, devLineBranches = []) {
   const day = (ymd) => Math.floor(Date.parse(ymd + 'T00:00:00Z') / 86400000)
   const today = /^\d{4}-\d{2}-\d{2}$/.test(String(todayYmd ?? '')) ? day(todayYmd) : null
+  const known = new Set(arr(devLineBranches).map((b) => String(b ?? '').trim().replace(/^origin\//, '')).filter(Boolean))
   const dev = []
   const ops = []
   for (const raw of arr(branches)) {
     const name = String(raw ?? '').trim().replace(/^origin\//, '')
     const m = /^auto\/(\d{4}-\d{2}-\d{2})(-.+)?$/.exec(name)
     if (!m) continue
-    ;(m[2] ? ops : dev).push({ name, date: m[1] })
+    ;(m[2] && !known.has(name) ? ops : dev).push({ name, date: m[1] })
   }
   const pack = (list) => ({
     days: list.length && today !== null
@@ -170,6 +177,7 @@ export function splitBatchMaterial(items, { opsEpics = [], lastReleaseAt = null 
  *   diagnosis / backlog / readiness  자율 진단 산출물(없으면 null)
  *   chainAgeDays   미머지 auto/* 체인 나이(큐 `_편성.chainAgeDays` · 모르면 null)
  *   chainBranches  미머지 갈래 이름 목록(chain-info.json `branches` · 비면 위 숫자 하나로 센다)
+ *   devLineBranches 개발선으로 확인된 주제 갈래 이름(sources.json 의 devLineBranches · 비면 전건을 센다)
  *   qualityGatesSince 검사 종류별 도입일 맵({security:'2026-09-10',…} · 없으면 아무것도 접지 않는다)
  *   opsEpics       운영선 에픽 번호(sources.json 의 opsLineEpics · 비면 아무것도 접지 않는다)
  *   lastReleaseAt  마지막 운영 릴리스 시각(ISO · lastRelease() 산출 · 모르면 null)
@@ -181,7 +189,7 @@ export function deployVerdict({
   manifests = [], lastNight = [], metrics = [], queue = null,
   verifications = [], inbox = null,
   diagnosis = null, backlog = null, readiness = null,
-  chainAgeDays = null, chainBranches = null, qualityGatesSince = null,
+  chainAgeDays = null, chainBranches = null, devLineBranches = null, qualityGatesSince = null,
   opsEpics = [], lastReleaseAt = null, lastReleaseLabel = '', now = new Date(),
 } = {}) {
   const red = []
@@ -231,12 +239,27 @@ export function deployVerdict({
     if (n(m?.worst) === 8) amber.push('배치 ' + (m.label || m.batchId || '?') + ' 이 리뷰 대기(exit 8)로 끝났습니다 — 교차 검토만 미충족 · 다음 라운드가 review 를 잇습니다')
     else if (n(m?.worst) >= 7) red.push('배치 ' + (m.label || m.batchId || '?') + ' 이 exit ' + m.worst + ' 로 끝났습니다')
   }
-  const topTiers = tierRemaining(diagnosis, backlog, [1, 2, 3])
+  const topTiers = tierRemaining(diagnosis, backlog, [1, 2, 3], opsEpics)
+  const midTiers = tierRemaining(diagnosis, backlog, [4, 5], opsEpics)
   if (topTiers.known && topTiers.count > 0) {
     red.push('자율 진단 우선순위 ①②③(비밀정보·빌드 실패·배포 차단) 잔여 ' + topTiers.count + '건')
   }
-  if (readiness && readiness.verdict === 'not-ready') {
-    red.push('자율 마무리 판정이 「배포 불가」입니다 — 미달 ' + n(readiness.counts?.fail) + '건')
+  // 자율 마무리 판정은 **프로젝트 전체** 기준이라 개발선까지 합산돼 있다. 그 판정을 그대로 쓰지 않고
+  // 운영선 잔여로 다시 본다 — 운영선에 남은 것이 하나도 없으면 그 미달은 개발선 몫이라 참고 줄로 접는다.
+  // 원본 판정·미달 수는 버리지 않고 참고 줄에 그대로 남긴다(원본 파일은 손대지 않는다).
+  // 접는 조건은 **보이는 것으로 증명될 때만**이다:
+  //   ⓐ 항목 목록이 실제로 있고(집계 숫자만 있으면 갈래를 가릴 근거가 없다)
+  //   ⓑ 운영선 잔여가 0 이고 ⓒ 개발선 잔여가 실제로 있다.
+  // 「확인 못 함(not-verified)」은 **절대 접지 않는다** — 그건 「검사를 안 돌렸다」는 뜻이고,
+  // 접으면 화면이 안 돌린 검사를 통과로 그린다(이 파일 머리말 ①).
+  const opsLeft = (topTiers.known ? topTiers.count : 0) + (midTiers.known ? midTiers.count : 0)
+  const devLeft = (topTiers.dev ?? 0) + (midTiers.dev ?? 0)
+  const hasItems = arr(backlog?.items).length > 0 || arr(diagnosis?.findings).length > 0
+  const readyFolded = Boolean(readiness) && readiness.verdict === 'not-ready'
+    && hasItems && opsLeft === 0 && devLeft > 0
+  if (readiness && readiness.verdict === 'not-ready' && !readyFolded) {
+    red.push('자율 마무리 판정이 「배포 불가」입니다 — 운영선 잔여 ' + opsLeft
+      + '건(프로젝트 전체 미달 ' + n(readiness.counts?.fail) + '건)')
   }
 
   // ── AMBER ────────────────────────────────────────────────────────────────
@@ -261,7 +284,7 @@ export function deployVerdict({
   if (gates > 0) amber.push('사람 게이트 ' + gates + '건')
   // 미머지 체인 — 갈래 목록이 있으면 두 갈래로 가른다(개발선 날짜 체인은 릴리스 열차 대기 = 정상).
   // 목록이 없으면 종전대로 숫자 하나로 센다 — 모르는 것을 접지 않는다.
-  const chain = arr(chainBranches).length ? splitChain(chainBranches, kstYmd(now)) : null
+  const chain = arr(chainBranches).length ? splitChain(chainBranches, kstYmd(now), devLineBranches) : null
   if (chain) {
     if (n(chain.ops.days) >= 1) {
       amber.push('미머지 운영선 수리 갈래가 ' + n(chain.ops.days) + '일째입니다 — ' + chain.ops.branches.join(' · '))
@@ -271,12 +294,19 @@ export function deployVerdict({
         + chain.dev.branches.join(' · ') + ' 는 main 에 머지하지 않으므로 막는 것으로 세지 않습니다')
     }
   } else if (n(chainAgeDays) >= 1) amber.push('미머지 auto/* 체인이 ' + n(chainAgeDays) + '일째입니다')
-  const midTiers = tierRemaining(diagnosis, backlog, [4, 5])
   if (midTiers.known && midTiers.count > 0) {
     amber.push('자율 진단 우선순위 ④⑤(핵심 흐름 미완·회귀 누락) 잔여 ' + midTiers.count + '건')
   }
   if (readiness && readiness.verdict === 'not-verified') {
     amber.push('자율 마무리 판정이 「확인 못 함」입니다 — 확인 못 한 항목 ' + n(readiness.counts?.notVerified) + '건')
+  }
+  if (devLeft > 0) {
+    notes.push('개발선 진단 잔여 ' + devLeft + '건(릴리스 묶음 열 때 정리) — 개발선 에픽 몫이라 운영 배포 판정에 넣지 않습니다')
+  }
+  if (readyFolded) {
+    notes.push('참고 — 자율 마무리 판정 원본은 「' + (readiness.verdict || '값 없음') + '」(프로젝트 전체 미달 '
+      + n(readiness.counts?.fail) + '건 · 확인 못 함 ' + n(readiness.counts?.notVerified)
+      + '건)입니다 — 운영선 잔여가 0 이라 개발선 몫으로 보고 막는 것으로 세지 않습니다')
   }
 
   // ── 재료 유무 ─────────────────────────────────────────────────────────────
@@ -319,8 +349,9 @@ export function deployVerdict({
 
   const DIAG_MISSING = '자율 마무리 진단(diagnosis) 산출물이 없습니다'
   if (!diagnosis) greenBlocks.push(DIAG_MISSING)
+  // readyFolded = 미달이 전부 개발선 몫이라고 판정한 경우(위) — 운영선 기준으로는 막는 것이 없다.
   if (!readiness) greenBlocks.push('자율 마무리 판정(readiness) 산출물이 없습니다')
-  else if (readiness.verdict !== 'ready') greenBlocks.push('자율 마무리 판정이 「' + (readiness.verdict || '값 없음') + '」이라 ready 가 아닙니다')
+  else if (readiness.verdict !== 'ready' && !readyFolded) greenBlocks.push('자율 마무리 판정이 「' + (readiness.verdict || '값 없음') + '」이라 ready 가 아닙니다')
 
   if (amber.length) return done({ level: AMBER, label: LABEL[AMBER], why: amber[0], reasons: amber, capped: false })
 
@@ -351,21 +382,54 @@ export function deployVerdict({
   })
 }
 
-/** 진단·백로그의 우선순위 단계별 잔여 수. 재료가 없으면 known=false(0 으로 세지 않는다). */
-export function tierRemaining(diagnosis, backlog, tiers) {
+/**
+ * 진단 findings·백로그 항목 1건이 어느 갈래인가. 근거 = 항목의 `epic` 숫자, 없으면 `story` 슬러그의 에픽.
+ * **스토리·에픽을 모르는 항목은 운영선으로 센다**(`db-drift-pending` 처럼 프로젝트 전역인 것이 여기다).
+ * 운영선 목록이 비면 아무것도 가리지 않는다 — 가릴 근거가 없으면 가리지 않는다.
+ */
+export function lineOfFinding(item, opsEpics = []) {
+  const set = new Set(arr(opsEpics).map(Number).filter((x) => Number.isFinite(x)))
+  if (!set.size) return 'ops'
+  const raw = item?.epic
+  const e = raw == null || raw === '' ? epicOfStory(item?.story) : Number(raw)
+  if (e == null || !Number.isFinite(e)) return 'ops'
+  return set.has(e) ? 'ops' : 'dev'
+}
+
+/**
+ * 진단·백로그의 우선순위 단계별 잔여 수 — **운영선만** 센다(`count`), 개발선은 따로 담는다(`dev`).
+ *
+ * 왜 — 배포 판정은 운영선이 지금 나가도 되느냐의 물음이다. 진단은 프로젝트 전체를
+ * 훑어서 개발선 몫까지 한 숫자로 내는데, 그걸 그대로 「막는 것」으로 세면
+ * 릴리스 묶음이 열리기 전까지 헤더가 RED 로 잠긴다(원 프로젝트 2026-09-21 실측 — 항목 136건 중 43건이 개발선).
+ *
+ * 항목 목록(`backlog.items`·`diagnosis.findings`)이 있으면 **항목마다** 갈래를 가른다.
+ * 목록 없이 집계값(`byTier`·`counts.findings`)만 있으면 가릴 근거가 없으므로 **전건을 운영선으로** 센다.
+ * 재료가 아예 없으면 known=false(0 으로 세지 않는다).
+ */
+export function tierRemaining(diagnosis, backlog, tiers, opsEpics = []) {
   const want = new Set(tiers)
+  const split = (items, from) => {
+    let ops = 0
+    let dev = 0
+    for (const it of arr(items)) {
+      if (!want.has(Number(it?.tier))) continue
+      if (lineOfFinding(it, opsEpics) === 'dev') dev += 1
+      else ops += 1
+    }
+    return { known: true, count: ops, dev, from }
+  }
+  if (arr(backlog?.items).length) return split(backlog.items, 'backlog.items')
+  if (arr(diagnosis?.findings).length) return split(diagnosis.findings, 'diagnosis.findings')
+  const sum = (o) => Object.entries(o).reduce((c, [t, v]) => (want.has(Number(t)) ? c + n(v) : c), 0)
   if (backlog && backlog.byTier && typeof backlog.byTier === 'object') {
-    let c = 0
-    for (const [t, v] of Object.entries(backlog.byTier)) if (want.has(Number(t))) c += n(v)
-    return { known: true, count: c, from: 'backlog.byTier' }
+    return { known: true, count: sum(backlog.byTier), dev: 0, from: 'backlog.byTier' }
   }
   const f = diagnosis?.counts?.findings
   if (f && typeof f === 'object') {
-    let c = 0
-    for (const [t, v] of Object.entries(f)) if (want.has(Number(t))) c += n(v)
-    return { known: true, count: c, from: 'diagnosis.counts.findings' }
+    return { known: true, count: sum(f), dev: 0, from: 'diagnosis.counts.findings' }
   }
-  return { known: false, count: 0, from: null }
+  return { known: false, count: 0, dev: 0, from: null }
 }
 
 const ts = (v) => { const t = Date.parse(String(v ?? '')); return Number.isFinite(t) ? t : null }

@@ -1,7 +1,7 @@
 // dev-status 배포 판정 — RED 5경로 · AMBER 8경로 · GREEN 1 · 재료 0 → 판정 불가 (설계 §7.2)
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { AMBER, GREEN, RED, UNKNOWN, batchWarnings, deployVerdict, epicOfStory, lastRelease, releaseLineOf, splitBatchMaterial, splitChain, splitCheckFails, tierRemaining } from './verdict.mjs'
+import { AMBER, GREEN, RED, UNKNOWN, batchWarnings, deployVerdict, epicOfStory, lastRelease, lineOfFinding, releaseLineOf, splitBatchMaterial, splitChain, splitCheckFails, tierRemaining } from './verdict.mjs'
 
 const pass = (over = {}) => ({
   batchId: 'A', label: 'AUTO-1', at: '2026-09-03T01:00:00.000Z',
@@ -231,7 +231,7 @@ describe('H2 · 증거 없는 GREEN 차단', () => {
 describe('tierRemaining', () => {
   test('backlog.byTier 가 우선 · 없으면 diagnosis · 둘 다 없으면 known=false', () => {
     assert.deepEqual(tierRemaining({ counts: { findings: { 1: 9 } } }, { byTier: { 1: 2, 2: 1 } }, [1, 2]),
-      { known: true, count: 3, from: 'backlog.byTier' })
+      { known: true, count: 3, dev: 0, from: 'backlog.byTier' })
     assert.equal(tierRemaining({ counts: { findings: { 1: 4, 3: 1 } } }, null, [1, 3]).count, 5)
     assert.equal(tierRemaining(null, null, [1]).known, false)
   })
@@ -520,5 +520,75 @@ describe('규칙 4 — 개발선 날짜 체인은 미머지로 세지 않는다'
     const v = deployVerdict({ ...GREEN_INPUT(), chainAgeDays: 3, chainBranches: [] })
     assert.equal(v.level, AMBER)
     assert.match(v.why, /미머지 auto\/\* 체인이 3일째입니다/)
+  })
+})
+
+describe('규칙 5 — 개발선으로 확인된 주제 갈래는 목록으로 접는다 (2026-09-21)', () => {
+  const NOW = new Date('2026-09-21T00:30:00.000Z') // KST 2026-09-21 09:30
+  const BR = ['auto/2026-09-21', 'origin/auto/2026-09-14-devline-5-1-browser-hint', 'origin/auto/2026-09-19-marketing-pilot']
+  const DEV = ['auto/2026-09-14-devline-5-1-browser-hint', 'auto/2026-09-19-marketing-pilot']
+
+  test('목록에 적힌 주제 갈래는 개발선으로 센다(origin/ 접두 무시)', () => {
+    const s = splitChain(BR, '2026-09-21', DEV)
+    assert.deepEqual(s.ops.branches, [])
+    assert.equal(s.ops.days, null)
+    assert.equal(s.dev.days, 7) // 가장 오래된 09-14 부터
+    const v = deployVerdict({ ...GREEN_INPUT(), chainBranches: BR, devLineBranches: DEV, now: NOW })
+    assert.equal(v.level, GREEN)
+    assert.deepEqual(v.reasons, [])
+  })
+
+  test('목록에 없는 주제 갈래는 종전대로 센다', () => {
+    const br = BR.concat(['origin/auto/2026-09-16-billing-dev-load'])
+    const s = splitChain(br, '2026-09-21', DEV)
+    assert.deepEqual(s.ops.branches, ['auto/2026-09-16-billing-dev-load'])
+    assert.equal(s.ops.days, 5)
+    const v = deployVerdict({ ...GREEN_INPUT(), chainBranches: br, devLineBranches: DEV, now: NOW })
+    assert.equal(v.level, AMBER)
+    assert.match(v.why, /5일째입니다 — auto\/2026-09-16-billing-dev-load/)
+  })
+})
+
+describe('규칙 6 — 진단 잔여도 운영선만 센다 (2026-09-21)', () => {
+  const OPSE = [1, 2, 3, 11, 4]
+  const bl = (items) => ({ schema: 'night-batch-ops/backlog/1', items, byTier: {} })
+  const item = (tier, story, epic) => ({ tier, story, epic: epic ?? null })
+
+  test('개발선 항목만 남으면 접는다 — 막는 것 0 · 참고 줄', () => {
+    const t = tierRemaining(null, bl([item(3, '13-2-x', 13), item(5, '5-1-y', 5)]), [1, 2, 3], OPSE)
+    assert.equal(t.count, 0)
+    assert.equal(t.dev, 1)
+    const v = deployVerdict({
+      ...GREEN_INPUT(), opsEpics: OPSE,
+      backlog: bl([item(3, '13-2-x', 13), item(4, '5-1-y', 5), item(5, '6-3-z', 6)]),
+      readiness: { verdict: 'not-ready', counts: { fail: 5, notVerified: 3 } },
+    })
+    assert.equal(v.level, GREEN)
+    assert.deepEqual(v.reasons, [])
+    assert.ok(v.notes.some((t2) => /개발선 진단 잔여 3건/.test(t2)))
+    assert.ok(v.notes.some((t2) => /자율 마무리 판정 원본은 「not-ready」/.test(t2)))
+  })
+
+  test('운영선 잔여는 종전대로 센다 — 판정 문구에 운영선 수를 적는다', () => {
+    const v = deployVerdict({
+      ...GREEN_INPUT(), opsEpics: OPSE,
+      backlog: bl([item(3, '2-15-a', 2), item(5, '13-2-x', 13)]),
+      readiness: { verdict: 'not-ready', counts: { fail: 5, notVerified: 3 } },
+    })
+    assert.equal(v.level, RED)
+    assert.match(v.reasons[0], /①②③.*잔여 1건/)
+    assert.ok(v.reasons.some((r) => /운영선 잔여 1건\(프로젝트 전체 미달 5건\)/.test(r)))
+    assert.ok(v.notes.some((t2) => /개발선 진단 잔여 1건/.test(t2)))
+  })
+
+  test('스토리·에픽을 모르는 항목은 운영선으로 센다(db-drift-pending 류)', () => {
+    const t = tierRemaining(null, bl([{ tier: 3, story: null, epic: null }]), [1, 2, 3], OPSE)
+    assert.equal(t.count, 1)
+    assert.equal(t.dev, 0)
+    assert.equal(lineOfFinding({ tier: 3, story: null, epic: null }, OPSE), 'ops')
+    // 항목 목록 없이 집계값만 있으면 가릴 근거가 없어 전건을 운영선으로 센다(뒤로 호환)
+    const agg = tierRemaining(null, { byTier: { 3: 4 } }, [1, 2, 3], OPSE)
+    assert.equal(agg.count, 4)
+    assert.equal(agg.dev, 0)
   })
 })

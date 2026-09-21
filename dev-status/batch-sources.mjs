@@ -332,7 +332,22 @@ export function parseInbox(file, text, { now = new Date() } = {}) {
 // ── ⑨ 자율 마무리 진단 ──────────────────────────────────────────────────────
 export const parseDiagnosis = (file, text) => parseJsonFile(file, { schema: DIAGNOSIS_SCHEMA, text })
 export const parseBacklog = (file, text) => parseJsonFile(file, { schema: BACKLOG_SCHEMA, text })
-export const parseReadiness = (file, text) => parseJsonFile(file, { schema: READINESS_SCHEMA, text })
+/**
+ * readiness.json — 엔진은 `{ project, tasks }` 로 쓴다(autofinish.mjs `writeJson('readiness.json', { project, tasks })`).
+ * 현황판이 읽는 것(판정·기준·막는 항목·확인 못 한 것)은 전부 `project` 안에 있고, 최상위에는 schema 가
+ * 없어서 종전 파서가 「알 수 없는 형식」으로 버렸다(2026-09-21 실측 — 진단을 돌려도 화면에 안 들어왔다).
+ * 그 모양이면 `project` 를 꺼내 읽고, 최상위가 판정표면 종전대로 읽는다.
+ */
+export function parseReadiness(file, text) {
+  const r = parseJsonFile(file, { text })
+  if (r.error) return r
+  const p = r.value.project
+  const v = (p && typeof p === 'object' && !Array.isArray(p) && schemaMatches(p.schema, READINESS_SCHEMA)) ? p : r.value
+  if (!schemaMatches(v.schema, READINESS_SCHEMA)) {
+    return err(file, '알 수 없는 형식 — schema 가 ' + (v.schema ? '"' + v.schema + '"' : '없음') + ' 입니다(기대: "' + READINESS_SCHEMA + '")', 'schema')
+  }
+  return ok(v)
+}
 export const parseReport = (file, text) => parseJsonFile(file, { schema: REPORT_SCHEMA, text })
 
 // ── 슬롯 심박 ────────────────────────────────────────────────────────────────
@@ -392,18 +407,59 @@ export function resolveStateDir(root, { env = process.env, home = homedir() } = 
 const lsSafe = (dir) => { try { return readdirSync(dir) } catch { return [] } }
 const mtimeSafe = (p) => { try { return statSync(p).mtimeMs } catch { return null } }
 
-/** 자율 진단 산출물 폴더 — <stateDir>/autofinish/<최신 runId>/ 우선, auto-pipeline-logs 폴백. */
+/** 실행 1회분 폴더인가 — 엔진이 반드시 남기는 세 파일 중 하나라도 있으면 그렇다. */
+const isAutofinishRun = (p) => ['run.json', 'report.json', 'readiness.json'].some((f) => existsSync(join(p, f)))
+
+/**
+ * 자율 진단 산출물 폴더 — `<stateDir>/autofinish/<최신 runId>/` 우선, auto-pipeline-logs 폴백.
+ *
+ * 한 겹 더 깊은 옛 폴더(`<stateDir>/autofinish/autofinish/<runId>/`)도 본다 — 엔진이
+ * `outDir = <state>/autofinish/<runId>` 라서 `--state …/autofinish` 로 부르면 한 겹 더 들어간다
+ * (2026-09-03 실행이 그랬고, 종전 판정은 `autofinish` 를 runId 로 잡아 빈 폴더를 읽었다).
+ *
+ * 고르는 순서 = **runId(`YYYY-MM-DD-HHmmss`) 최신 우선**, 없으면 폴더 시각. 폴더 시각만 보면
+ * 옛 폴더를 나중에 복사한 것이 최신을 이긴다.
+ */
 export function findAutofinishDir(stateDir, logDir) {
   const base = join(stateDir, 'autofinish')
-  const runs = lsSafe(base)
-    .map((n) => ({ n, p: join(base, n), m: mtimeSafe(join(base, n)) }))
-    .filter((x) => x.m != null)
-    .sort((a, b) => b.m - a.m)
+  const runs = []
+  for (const n of lsSafe(base)) {
+    const p = join(base, n)
+    const m = mtimeSafe(p)
+    if (m == null) continue
+    runs.push({ n, p, m })
+    if (isAutofinishRun(p)) continue
+    // 산출물이 없는 폴더는 한 겹 더 본다 — 옛 `--state …/autofinish` 실행이 여기에 runId 를 남겼다.
+    for (const n2 of lsSafe(p)) {
+      const p2 = join(p, n2)
+      const m2 = mtimeSafe(p2)
+      if (m2 != null && isAutofinishRun(p2)) runs.push({ n: n2, p: p2, m: m2 })
+    }
+  }
+  const stamp = (n) => (/^\d{4}-\d{2}-\d{2}-\d{6}$/.test(String(n)) ? String(n) : '')
+  runs.sort((a, b) => stamp(b.n).localeCompare(stamp(a.n)) || b.m - a.m)
   if (runs.length) return { dir: runs[0].p, runId: runs[0].n, from: 'stateDir' }
   if (existsSync(join(logDir, 'readiness.json')) || existsSync(join(logDir, 'diagnosis.json'))) {
     return { dir: logDir, runId: null, from: 'logDir' }
   }
   return { dir: null, runId: null, from: null }
+}
+
+/**
+ * 진단·백로그의 실제 파일 이름을 고른다. 엔진은 `final-<종류>.json`(마지막 라운드 뒤)과
+ * `round-N-<종류>.json`(라운드마다)로 쓰는데(autofinish.mjs `writeJson`), 현황판은 한 종류만 읽는다.
+ * 찾는 차례 = `<종류>.json` → `final-<종류>.json` → **가장 나중 라운드** `round-N-<종류>.json`.
+ * 하나도 없으면 null(「아직 없습니다」로 적는다 — 추측하지 않는다).
+ */
+export function findAutofinishFile(dir, kind) {
+  if (!dir) return null
+  for (const n of [kind + '.json', 'final-' + kind + '.json']) {
+    if (existsSync(join(dir, n))) return join(dir, n)
+  }
+  const re = new RegExp('^round-(\\d+)-' + kind + '\\.json$')
+  const rounds = lsSafe(dir).map((n) => ({ n, m: re.exec(n) })).filter((x) => x.m)
+    .sort((a, b) => Number(b.m[1]) - Number(a.m[1]))
+  return rounds.length ? join(dir, rounds[0].n) : null
 }
 
 /**
@@ -489,11 +545,13 @@ export function collectBatchSources({ root = '.', logDir, stateDir, inboxPath = 
 
   // ⑨ 자율 진단
   const af = findAutofinishDir(stateDir, logDir)
-  const afRead = (name, parser) => (af.dir
-    ? parser(join(af.dir, name))
-    : err(join(stateDir, 'autofinish', '<runId>', name), '자율 진단 산출물이 아직 없습니다', 'missing'))
-  const diagnosis = afRead('diagnosis.json', parseDiagnosis)
-  const backlog = afRead('backlog.json', parseBacklog)
+  const afRead = (name, parser, kind = null) => {
+    if (!af.dir) return err(join(stateDir, 'autofinish', '<runId>', name), '자율 진단 산출물이 아직 없습니다', 'missing')
+    const f = kind ? findAutofinishFile(af.dir, kind) : join(af.dir, name)
+    return f ? parser(f) : err(join(af.dir, name), '파일이 없습니다', 'missing')
+  }
+  const diagnosis = afRead('diagnosis.json', parseDiagnosis, 'diagnosis')
+  const backlog = afRead('backlog.json', parseBacklog, 'backlog')
   const readiness = afRead('readiness.json', parseReadiness)
   const report = afRead('report.json', parseReport)
   for (const r of [diagnosis, backlog, readiness, report]) if (r.error && r.error.kind !== 'missing') note(r.error)

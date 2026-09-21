@@ -30,7 +30,7 @@ description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현
 - `{planning_artifacts}/epics.md` — 에픽·스토리 목록 SoT
 - `{implementation_artifacts}/sprint-status.yaml` — 상태 SoT(`development_status:` 블록). `story_location`·`last_updated` 는 주석줄로 와도 읽는다. **`last_updated:` 가 여러 줄이면 날짜가 가장 최근인 것**을 고른다(2026-09-21 — 같은 키가 머리에 수십 줄 쌓이고 맨 위가 최신이 아니다). 이 값은 참고일 뿐이고 헤더의 「상태 파일 날짜」는 **파일 시각·커밋 시각**을 쓴다(신선도 F2).
 - `{implementation_artifacts}/RELEASE-LOG.md` — **있으면** 읽는다. 절 머리 `## YYYY-MM-DD [HH:MM] · …` 에서 가장 최근 릴리스 시각을 뽑아 「마지막 릴리스 이후만 센다」의 기준선으로 쓴다. 없으면 **아무것도 접지 않는다**(종전대로 전건을 센다).
-- `{프로젝트루트}/tools/dev-status/sources.json` — **있으면** 읽는 프로젝트 소유 설정(이 스킬 폴더에는 두지 않는다 — 계층화 정책). 읽는 키는 셋뿐이고 전부 **있을 때만** 동작한다: `opsLineEpics`(운영선 에픽 번호 → 운영선/개발선 가르기) · `integrationGateSince`(통합 게이트 도입일) · `qualityGatesSince`(검사 종류별 도입일 맵). 없으면 전부 종전 동작이다.
+- `{프로젝트루트}/tools/dev-status/sources.json` — **있으면** 읽는 프로젝트 소유 설정(이 스킬 폴더에는 두지 않는다 — 계층화 정책). 읽는 키는 넷뿐이고 전부 **있을 때만** 동작한다: `opsLineEpics`(운영선 에픽 번호 → 운영선/개발선 가르기) · `devLineBranches`(개발선으로 확인된 주제 갈래 이름) · `integrationGateSince`(통합 게이트 도입일) · `qualityGatesSince`(검사 종류별 도입일 맵). 없으면 전부 종전 동작이다.
 - 스토리 `.md` 파일 — File List(겹침 판정)·수용기준
 - `auto-pipeline-logs/state.json`(단계 배지)·`run-summary.log`(배치 가동 판정 **+ 스토리별 리뷰 실행 횟수**) — 없으면 단계 배지·배치바·리뷰 반복 판정만 빠지고 나머지는 정상.
   - `run-summary.log` 의 스테이지 시작 줄 `[ISO] → [슬러그] <stage>` 중 `stage` 가 정확히 `review` 이고 **바로 뒤 `[ISO]    exit=0` 줄로 완료가 확인된 것만** 슬러그별로 센다. 시작 줄만 세면 `--dry-run` 예행연습(엔진이 시작 줄을 찍고 즉시 반환한다)과 인증 만료로 죽은 실행까지 리뷰 1회로 잡힌다. 이 줄 서식은 무인 배치 엔진(auto-story-finish)이 찍는 것이라 프로젝트 문서 서식과 무관하다.
@@ -60,6 +60,8 @@ description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현
 | ⑤ 오늘 밤 예정 | 편성 방식 · 자기 검증 경고 · 빠진 스토리 · 배치 순서 · 병렬 짝 · 배정 이유 · 사용 LLM | `auto-queue-*.json`(없으면 `tools/auto/night-queue.json`) + `assign-history.json` |
 | ⑥ 얼마나 잘 돌았나 | 지표 6종 + 모델 호출량을 **지난 1/2/3일**(18:00 접기)로 · 추세 · 「제외 N」 | `metrics-history.jsonl` + 위 매니페스트 2종 |
 | ⑦ 자율 마무리 진단 | 5분류 · 우선순위 7단계 · 배포 차단 목록 · 확인 못 한 것 | `<state>/autofinish/<runId>/{diagnosis,backlog,readiness,report}.json` |
+
+**⑦ 의 파일 이름·모양은 엔진이 정한다**(2026-09-21). 엔진은 라운드마다 `round-N-<종류>.json` 을, 마지막 라운드 뒤에 `final-<종류>.json` 을 쓴다. 현황판은 `<종류>.json` → `final-<종류>.json` → **가장 나중 라운드** `round-N-<종류>.json` 순으로 하나만 골라 읽고, 하나도 없으면 「아직 없습니다」로 적는다(추측하지 않는다). `readiness.json` 은 최상위가 `{project, tasks}` 이고 판정은 `project` 안에 있어서, 최상위에 `schema` 가 없는 모양이면 `project` 를 꺼내 읽는다 — 종전 파서는 이걸 「알 수 없는 형식」으로 버려서 **진단을 돌려도 화면에 안 들어왔다**. 실행 폴더도 한 겹 더 깊은 옛 배치(`…/autofinish/autofinish/<runId>/`)까지 보고, 고르는 순서는 **runId(`YYYY-MM-DD-HHmmss`) 최신 우선**이다(폴더 시각만 보면 옛것을 나중에 복사한 것이 이긴다).
 
 스토리 표에는 **워커 · 라운드 · 마지막 리뷰어** 3칸을 덧붙인다 — 값이 하나라도 있을 때만 그린다(빈 칸 3개는 화면만 좁힌다).
 
@@ -108,8 +110,14 @@ description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현
 | 개발선(별도 갈래에서만 도는) 배치의 리뷰 대기·STOP | `sources.json` 의 `opsLineEpics` | 전건을 센다 |
 | 통합 게이트 **도입 전**에 만들어진 검증 기록의 빈 통합 칸 | `sources.json` 의 `integrationGateSince` | 전건을 센다 |
 | 그 검사가 **생기기 전** 기록의 「스크립트 없음」 | `sources.json` 의 `qualityGatesSince` | 전건을 센다 |
+| 자율 진단 잔여(`tierRemaining`) 중 **개발선 에픽 몫** | 항목의 `epic`·`story` + `opsLineEpics` | 전건을 운영선으로 센다 |
+| 자율 마무리 판정 `not-ready` 가 **전부 개발선 몫**일 때 | 항목 목록이 있고 · 운영선 잔여 0 · 개발선 잔여 > 0 | 그대로 RED |
 
-미머지 갈래도 같다 — 상태 폴더 `chain-info.json` 의 갈래 이름이 있으면 `auto/YYYY-MM-DD`(개발선 날짜 체인)와 `auto/<날짜>-<주제>`(운영선 수리 갈래)를 갈라 **뒤엣것만** 센다. 이름을 모르거나 git 이 없으면 **미머지로 본다**(나쁜 쪽이 이긴다).
+진단 잔여는 **항목마다** 갈래를 가른다(`lineOfFinding`). 근거는 항목의 `epic` 숫자, 없으면 `story` 슬러그의 에픽이고, **에픽을 모르는 항목은 운영선으로 센다**(프로젝트 전역 항목이 여기 온다). 항목 목록 없이 집계값(`byTier`·`counts.findings`)만 있으면 가릴 근거가 없으므로 **전건을 운영선으로** 센다.
+
+**「확인 못 함(not-verified)」은 절대 접지 않는다.** 그건 「검사를 안 돌렸다」는 뜻이고, 접으면 화면이 안 돌린 검사를 통과로 그린다. 접는 것은 `not-ready`(미달이 실제로 세어진 것) 뿐이고, 그때도 원본 판정·미달 수를 참고 줄에 그대로 남긴다.
+
+미머지 갈래도 같다 — 상태 폴더 `chain-info.json` 의 갈래 이름이 있으면 `auto/YYYY-MM-DD`(개발선 날짜 체인)와 `auto/<날짜>-<주제>`(운영선 수리 갈래)를 갈라 **뒤엣것만** 센다. 다만 주제 갈래는 이름만으로 갈래를 가릴 수 없으므로(수리 규약을 안 지킨 이름이 섞인다) `devLineBranches` 에 **확인된 것만** 적어 접고, 적지 않은 것은 종전대로 센다. 이름을 모르거나 git 이 없으면 **미머지로 본다**(나쁜 쪽이 이긴다).
 
 ### 손상 내성
 
@@ -125,8 +133,8 @@ JSON 하나가 깨져도 **그 블록만** 「읽지 못했습니다(파일 · �
 
 | 파일 | export | 성격 |
 |---|---|---|
-| `batch-sources.mjs` | `collectBatchSources` · `parse*` 9종 · `resolveStateDir` · `nightKey`/`lastNightManifests` · `slotHeartbeat` · `assignByStory` · `findAutofinishDir` | 파서(읽기 전용) |
-| `verdict.mjs` | `deployVerdict` · `batchWarnings` · `tierRemaining` · `lastRelease` · `epicOfStory`/`storySlugs`/`releaseLineOf`/`splitBatchMaterial` · `splitCheckFails` · `splitChain` | 순수 함수 |
+| `batch-sources.mjs` | `collectBatchSources` · `parse*` 9종(`parseReadiness` 는 엔진의 `{project,tasks}` 모양도 읽는다) · `resolveStateDir` · `nightKey`/`lastNightManifests` · `slotHeartbeat` · `assignByStory` · `findAutofinishDir`/`findAutofinishFile` | 파서(읽기 전용) |
+| `verdict.mjs` | `deployVerdict` · `batchWarnings` · `tierRemaining` · `lastRelease` · `epicOfStory`/`storySlugs`/`releaseLineOf`/`lineOfFinding`/`splitBatchMaterial` · `splitCheckFails` · `splitChain` | 순수 함수 |
 | `freshness.mjs` | `freshnessChecks`(7항목) · `freshnessVerdict` · `ms`/`ago`/`stamp` | 순수 함수(fs 접근 0) |
 | `daily-metrics.mjs` | `dailyMetrics` · `nightKeys` · `trendOf` · `formatValue`/`formatDuration` | 순수 함수 |
 | `render-batch.mjs` | `renderHero`/`renderInbox`/`renderNight`/`renderQueue`/`renderMetrics`/`renderDiagnosis`/`renderVerdictTick`/`renderError` · `storyExtras` · `BATCH_CSS` · `esc` | 순수 문자열 |
@@ -181,6 +189,7 @@ CSS 클래스는 전부 `b-` 접두다 — 목업의 `.chip`·`.it`·`.row`·`.s
 
 - **신선도 F1 은 `origin/main` 을 정본 갈래로 가정한다.** 다른 이름(`master`·`trunk`)을 쓰는 저장소에서는 `behind` 가 `null` 이 되어 `unknown` 으로 뜬다 — 틀린 초록을 그리지는 않지만 맞는 초록도 못 그린다. 미머지 갈래 판정(`splitChain` 배선)의 `merge-base … main` 도 같다.
 - **신선도는 `git fetch` 를 하지 않는다.** 이미 받아 둔 원격 기록과만 견주므로, 오래 fetch 하지 않은 폴더에서는 「최신입니다」가 **그 시점 기준**이다. 새로고침 경로에 네트워크·인증을 넣지 않기 위한 의도적 선택이고, 견줄 기록이 아예 없으면 `unknown` + 「한 번 `git fetch origin` 을 돌리세요」로 적는다.
+- **`scan.mjs` 의 JSON 출력은 1 MB 를 넘을 수 있다**(산출물이 쌓인 저장소에서 실측 1.11 MB). 다른 도구가 `child_process.spawnSync`/`execSync` 로 이 출력을 받아 쓴다면 **`maxBuffer` 를 반드시 올려야 한다** — 기본값 1 MB 를 넘으면 자식이 SIGTERM 으로 죽고 `status` 가 `null` 이 되는데, 그 모습이 「원천을 못 읽어 실패」와 구분되지 않아 원인을 엉뚱한 데서 찾게 된다(이 스킬의 `scan.test.mjs` 가 실제로 그렇게 한 번 걸렸다). 파이프·리다이렉트로 받으면 해당 없다.
 - **접는 규칙 넷은 설정이 있어야 켜진다.** `sources.json` 이 없는 프로젝트에서는 개발선 가르기·게이트 도입 전 접기가 **전부 꺼진 채 종전대로 전건을 센다**. 안전한 쪽(과하게 세는 쪽)으로 기운 것이지 버그가 아니다.
 - 제목 어긋남 경고의 임계값이 한글 4음절(정규화 후 공통 접두 4자) 기준이라, 스토리 슬러그가 영문인 프로젝트에서는 경고가 뜨지 않는다.
 - **리뷰 반복 게이트에는 해제 조건이 없다.** `run-summary.log` 는 누적 로그라 카운터가 줄지 않는다. `in-progress` 인 동안 **적용되지 않을 뿐**이고(게이트는 `status === 'review'` 일 때만 본다), 그 스토리가 `review` 로 돌아오면 다시 게이팅된다 — 풀리는 것이 아니다. 원본에는 자동 해제 조건이 있지만(원장 문서의 종결 선언을 읽는다) 이 스킬에는 그와 동등한 근거가 되는 원천이 없다. 사라지는 것은 버튼뿐이고 사람이 직접 리뷰를 부르는 길은 막지 않는다.
@@ -202,6 +211,8 @@ CSS 클래스는 전부 `b-` 접두다 — 목업의 `.chip`·`.it`·`.row`·`.s
    - 원본의 한국어 관례 문구(`### 사람 대기` 절, `검증 전용`·`마지막 라운드` 같은 문장)를 탐지 패턴으로 옮기지 말 것 — 특정 프로젝트 규칙의 역주입이다. UI 표시 문구가 한국어인 것은 무관하다(스킬 전체가 한국어다).
    - **프로젝트 원장 → 설정 키 갈아끼우기**(2026-09-21 추가): 원본이 프로젝트 문서에서 읽어 내는 기준선은 스냅샷에서 **`tools/dev-status/sources.json` 의 키**로 바꾸고, 키가 없으면 **종전 동작(전건을 센다)** 으로 떨어뜨린다. 현재 셋 — `opsLineEpics`(원본은 `RELEASE-LINES.md` §0 을 정규식으로 읽는다 · 스냅샷은 설정만) · `integrationGateSince` · `qualityGatesSince`. `RELEASE-LOG.md`(마지막 릴리스 시각)는 **문서 이름·절 서식이 중립적이라 그대로 가져온다** — 없으면 아무것도 접지 않는다.
    - **신선도 블록**(2026-09-21 추가): `freshness.mjs`·`freshness.test.mjs` 를 복사하되 **F6(마이그레이션 실측)은 통째로 빼고**, **F5 는 러너 클론 대조 절반을 빼고** 이 폴더 기록만 보게 고친다(번호는 당기지 않는다 — 위 「현황판 신선도 검토」 참조). 재료는 `scan.mjs` 의 `gitInfo`·`fileAge`·`unmergedChainBranches` 가 모으고, 화면은 `build.mjs` 의 `renderFreshness` + CSS `b-fr*`·`.rulenote` 가 그린다. 히어로 아래 참고 줄은 `render-batch.mjs` 의 `verdict.notes` + `.b-hnote` 다.
+   - **자율 진단 산출물 읽기 규격**(2026-09-21 추가): 파일 이름(`final-*`/`round-N-*`)·`readiness` 의 `{project,tasks}` 모양·이중 폴더 내성은 **엔진이 쓰는 모양**이라 중립 코어다 — `batch-sources.mjs` 를 그대로 복사하면 된다(이 파일은 이식판이 정본이다).
+   - **진단 잔여의 갈래 가르기**(2026-09-21 추가): `lineOfFinding`·`tierRemaining(…, opsEpics)`·`readyFolded` 도 `opsEpics` 가 비면 전건을 운영선으로 세므로 그대로 가져온다. 다만 사람에게 보이는 문구에서 **프로젝트 고유 에픽 번호**(「Epic 5~9·13 몫」 같은 것)는 중립 표현으로 바꾼다.
    - **제목 단계 인식**(2026-09-21 추가): `PATTERNS.epic` 은 `#{2,3}`, `PATTERNS.story` 는 `#{3,4}` 이고, 같은 에픽 번호의 절은 스토리를 합집합으로 합친다. 이건 특정 프로젝트 문서의 사고가 아니라 **문서가 손으로 커지면 어디서나 생기는 모양**이라 중립 코어로 가져온다.
 4. **검증**(전부 통과해야 한다):
    - `node dev-status/build.mjs --root <원본저장소> --out <임시폴더>` 가 화면을 만들고, 「에픽 문서에 없습니다」 오탐 0 · 신선도 블록(`class="b-fresh"`) 존재 · 신선도 줄 수가 항목 수와 같을 것.

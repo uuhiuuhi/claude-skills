@@ -182,8 +182,9 @@ const P = {
 
 /**
  * `tools/dev-status/sources.json` — **프로젝트가 소유하는** 현황판 설정. 없거나 깨지면 빈 객체다
- * (추측하지 않는다). 이 스킬이 읽는 키는 셋뿐이고 전부 **있을 때만** 동작한다.
+ * (추측하지 않는다). 이 스킬이 읽는 키는 넷뿐이고 전부 **있을 때만** 동작한다.
  *   · opsLineEpics       운영선 에픽 번호 배열 — 두 갈래(운영선/개발선) 가르기를 켠다
+ *   · devLineBranches    개발선으로 확인된 주제 갈래 이름 — 그 갈래만 미머지 계수에서 접는다
  *   · integrationGateSince  통합 게이트 도입일(YYYY-MM-DD) — 그 전 검증 기록의 빈 통합 칸을 접는다
  *   · qualityGatesSince  검사 종류별 도입일 맵 — 그 검사가 생기기 전 기록의 「스크립트 없음」을 접는다
  * 값이 없으면 전부 **종전 동작**(전건을 센다)이다.
@@ -795,6 +796,7 @@ function scanInner() {
     diagnosis: B.diagnosis.value, backlog: B.backlog.value, readiness: B.readiness.value,
     chainAgeDays: B.queue.value?.plan?.chainAgeDays ?? null,
     chainBranches: unmergedChainBranches(STATE.dir),
+    devLineBranches: Array.isArray(cfg.devLineBranches) ? cfg.devLineBranches : null,
     qualityGatesSince: cfg.qualityGatesSince || null,
     opsEpics, lastReleaseAt: release.at, lastReleaseLabel: release.heading, now,
   })
