@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { inheritPlan } from './runner-rules.mjs'
-import { isProjectOwned } from './runtime-pin.mjs'
+import { isProjectOwned, toolingChanged } from './runtime-pin.mjs'
 import { isDeniedPath, secretHits } from './runtime/push-guard.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -105,11 +105,12 @@ export function refreshWorktree({ cwd = process.cwd(), branch, date, dryRun = fa
   if (toolingCommit && !ancestor(tip(toolingCommit), target)) {
     throw new Error(`worktree refresh: selected tip does not contain reviewed tooling commit ${toolingCommit}`)
   }
-  if (toolingCommit && output(['diff', '--name-only', tip(toolingCommit), target, '--', toolingPath])) {
+  if (toolingCommit && toolingChanged(output(['diff', '--name-only', tip(toolingCommit), target, '--', toolingPath]), toolingPath)) {
     throw new Error('worktree refresh: installed tooling differs from the reviewed runtime pin; review and repin at a stopped batch boundary')
   }
   const toolingDiff = output(['diff', '--name-only', initialHead, target, '--', toolingPath])
-  if (toolingDiff) throw new Error(`worktree refresh: target changes running tooling; apply reviewed tooling at a stopped batch boundary and restart (${toolingDiff.split('\n')[0]})`)
+  const changedTooling = toolingDiff.split(/\r?\n/).filter(Boolean).filter((file) => !isProjectOwned(file.replaceAll('\\', '/').slice(toolingPath.length + 1)))
+  if (toolingChanged(toolingDiff, toolingPath)) throw new Error(`worktree refresh: target changes running tooling; apply reviewed tooling at a stopped batch boundary and restart (${changedTooling[0]})`)
   clean()
   if (tip('HEAD') !== initialHead || fingerprint() !== loadedTooling) {
     throw new Error('worktree refresh: HEAD or running tooling changed during inspection; restart from a stable installation')

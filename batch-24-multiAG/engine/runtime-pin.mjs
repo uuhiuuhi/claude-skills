@@ -16,7 +16,8 @@ export const PROJECT_OWNED = ['quality.config.json']
 /** 엔진 사본 폴더(`tools/auto/`) 기준 상대 경로가 프로젝트 소유인가. 같은 판정을 `worktree-refresh.mjs` 의
  * STOP 잔여물 보존도 쓴다 — 두 곳이 갈리면 한쪽이 되돌린 파일을 다른 쪽이 핀 불일치로 세운다. */
 export const isProjectOwned = (relPath) => PROJECT_OWNED.includes(String(relPath ?? '').replace(/\\/g, '/'))
-const toolingChanged = (stdout, path) => String(stdout ?? '').split(/\r?\n/).filter(Boolean).some((f) => !isProjectOwned(f.replace(/\\/g, '/').slice(path.length + 1)))
+/** Shared with worktree-refresh so runtime pin and refresh boundaries classify tooling changes identically. */
+export const toolingChanged = (stdout, path) => String(stdout ?? '').split(/\r?\n/).filter(Boolean).some((f) => !isProjectOwned(f.replace(/\\/g, '/').slice(path.length + 1)))
 
 function git(cwd, args, runGit, allowed = [0]) {
   const result = runGit('git', ['--literal-pathspecs', ...args], { cwd, encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024 });

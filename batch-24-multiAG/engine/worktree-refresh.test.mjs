@@ -207,6 +207,35 @@ test('runtime pin boundary allows application descendants but rejects unreviewed
   assert.equal(readFileSync(join(f.cwd, 'tools/auto/runtime.mjs'), 'utf8'), 'export const version = 3\n')
 })
 
+test('project-owned inventory descendants pass refresh boundaries but engine descendants remain pinned', (t) => {
+  const f = fixture(t)
+  f.git('checkout', '-qb', branch)
+  f.write('tools/auto/quality.config.json', '{"apiEndpoints":[]}\n')
+  const pin = f.commit('reviewed tooling with inventory')
+  f.write('tools/auto/quality.config.json', '{"apiEndpoints":[{"source":"supabase/functions/new-fn/index.ts"}]}\n')
+  const inventory = f.commit('refresh API inventory')
+  f.git('push', '-q', 'origin', `HEAD:refs/heads/${branch}`)
+
+  assert.equal(f.run({ toolingCommit: pin }).head, inventory)
+  assert.equal(f.git('rev-parse', 'HEAD'), inventory)
+  let checkedUnpinnedBoundary = false
+  const runGit = (file, args, options) => {
+    const result = f.options.runGit(file, args, options)
+    if (args[2] !== 'diff') return result
+    checkedUnpinnedBoundary = true
+    return { ...result, stdout: 'tools/auto/quality.config.json\n' }
+  }
+  assert.equal(f.run({ runGit }).head, inventory)
+  assert.equal(checkedUnpinnedBoundary, true)
+
+  f.git('checkout', branch)
+  f.write('tools/auto/engine.mjs', 'export const changed = true\n')
+  const unreviewed = f.commit('unreviewed engine descendant')
+  f.git('push', '-q', 'origin', `HEAD:refs/heads/${branch}`)
+  assert.throws(() => f.run({ toolingCommit: pin }), /differs from the reviewed runtime pin/)
+  assert.equal(f.git('rev-parse', 'HEAD'), unreviewed)
+})
+
 test('tooling directory cannot be the worktree root or escape the worktree', (t) => {
   const f = fixture(t)
   for (const toolingDir of [f.cwd, dirname(f.cwd), join(dirname(f.cwd), 'sibling-tooling')]) {
