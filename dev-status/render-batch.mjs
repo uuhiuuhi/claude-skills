@@ -57,7 +57,10 @@ export function renderHero({ verdict, heartbeat, lastNight = [], inbox = null, q
     '<div><div class="b-heros">' +
     '<span class="b-hbeat' + hbCls + '"><i></i>' + esc(heartbeat.label) + '</span>' +
     stats.map(([k, v, warn]) => '<span class="b-hs' + (warn ? ' warn' : '') + '">' + esc(k) + ' <b>' + esc(v) + '</b></span>').join('') +
-    '</div><p class="b-why">' + esc(verdict.why) + (heartbeat.why ? ' · ' + esc(heartbeat.why) : '') + '</p></div>' +
+    '</div><p class="b-why">' + esc(verdict.why) + (heartbeat.why ? ' · ' + esc(heartbeat.why) : '') + '</p>' +
+    // 참고 줄 — 판정에 넣지 않은 개발선·지난 릴리스 이전 재료를 감추지 않고 한 줄로 적는다.
+    arr(verdict.notes).map((t) => '<p class="b-hnote">' + esc(t) + '</p>').join('') +
+    '</div>' +
     '</section>'
 }
 
@@ -371,6 +374,7 @@ export const BATCH_CSS = `
 .b-hbeat.ok{color:var(--green);border-color:rgba(34,197,94,.45)}.b-hbeat.ok i{background:var(--green)}
 .b-hbeat.off{color:var(--t3);border-color:var(--line)}.b-hbeat.off i{background:var(--t3)}
 .b-why{font-size:12px;color:var(--t2);margin-top:8px;line-height:1.6}
+.b-hnote{font-size:11px;color:var(--t3);margin-top:4px;line-height:1.6}
 .b-sec{background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:16px;overflow:hidden}
 .b-sh{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--line)}
 .b-sh h2{font-size:16px;font-weight:600}

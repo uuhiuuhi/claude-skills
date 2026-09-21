@@ -1,20 +1,25 @@
 // dev-status — BMad 프로젝트 개발 현황판: 데이터 수집기 (읽기 전용)
 // 원천: epics.md(목록 SoT) + sprint-status.yaml(상태 SoT) + 스토리 .md + auto-pipeline-logs/
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { join, resolve, dirname, relative, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { assignByStory, collectBatchSources, resolveStateDir } from './batch-sources.mjs'
-import { batchWarnings, deployVerdict } from './verdict.mjs'
+import { batchWarnings, deployVerdict, lastRelease } from './verdict.mjs'
 import { dailyMetrics } from './daily-metrics.mjs'
 
 // ── 원천 계약 — BMad v6 에픽·스토리 템플릿의 구조 패턴 ──────────
 // 문서 언어가 한국어여도 이 구조 키워드는 영어로 남는다. SKILL.md "원천 계약" 참조.
+// **제목 단계(#의 개수)로 자르지 않는다** — 실제 문서가 한 규격이 아니기 때문이다
+// (원 프로젝트 2026-09-21 실측): 에픽 절이 `## Epic N:` 과 `### Epic N:`(「## Epic List」 요약 절
+// 안)에 나뉘고, 스토리 절도 `### Story N.M:` 94건 + `#### Story N.M:` 19건이 섞였다.
+// 단계만 보던 종전 규칙은 스토리 30건을 「에픽 문서에 없습니다」로 오탐했다.
 const PATTERNS = {
-  epic: /^## Epic (\d+): (.+?)\s*$/,           // epics.md 의 에픽 절
-  story: /^### Story (\d+)\.(\d+): (.+?)\s*$/, // epics.md 의 스토리 절
-  ac: /^\*\*Given\*\*/gm,                      // 수용기준 개수 = **Given** 개수
-  goal: /^\s*So that (.+)$/m,                  // 스토리 목표 문장
-  deferred: /^## Deferred from:/,              // 이 사본에서는 미사용 — 원천 계약 문서화용
+  epic: /^#{2,3} Epic (\d+): (.+?)\s*$/,          // epics.md 의 에픽 절(## · ### 둘 다)
+  story: /^#{3,4} Story (\d+)\.(\d+): (.+?)\s*$/, // epics.md 의 스토리 절(### · #### 둘 다)
+  ac: /^\*\*Given\*\*/gm,                         // 수용기준 개수 = **Given** 개수
+  goal: /^\s*So that (.+)$/m,                     // 스토리 목표 문장
+  deferred: /^## Deferred from:/,                 // 이 사본에서는 미사용 — 원천 계약 문서화용
 }
 
 // ── 안전 읽기 ────────────────────────────────────────────────────────────────
@@ -42,6 +47,11 @@ export function readSafe(p, { required = false } = {}) {
   }
 }
 const read = (p, opt) => readSafe(p, opt).value
+
+/** mtime(ms). 못 읽으면 null — 호출부가 「모름」으로 그린다. */
+function mtimeSafe(p) {
+  try { return statSync(p).mtimeMs } catch { return null }
+}
 
 // ── 경로 탐지: --root 인자(없으면 cwd) → 상위 최대 6단 → BMad config ──────────
 // 실패는 **CLI 로 실행했을 때만** exit 2 다. 라이브러리로 import 되었을 때 process.exit 하면
@@ -164,6 +174,22 @@ const P = {
   state: join(LOG_DIR, 'state.json'),
   runLog: join(LOG_DIR, 'run-summary.log'),
   inbox: join(found.impl, 'DECISIONS-INBOX.md'),
+  // 있으면 읽고 없으면 그만 — 「마지막 릴리스 이후만 센다」의 기준선이다(없으면 아무것도 접지 않는다).
+  releaseLog: join(found.impl, 'RELEASE-LOG.md'),
+  // 프로젝트가 두는 현황판 전용 설정(이 스킬 폴더에는 두지 않는다 — 계층화 정책).
+  sources: join(rootDir, 'tools', 'dev-status', 'sources.json'),
+}
+
+/**
+ * `tools/dev-status/sources.json` — **프로젝트가 소유하는** 현황판 설정. 없거나 깨지면 빈 객체다
+ * (추측하지 않는다). 이 스킬이 읽는 키는 셋뿐이고 전부 **있을 때만** 동작한다.
+ *   · opsLineEpics       운영선 에픽 번호 배열 — 두 갈래(운영선/개발선) 가르기를 켠다
+ *   · integrationGateSince  통합 게이트 도입일(YYYY-MM-DD) — 그 전 검증 기록의 빈 통합 칸을 접는다
+ *   · qualityGatesSince  검사 종류별 도입일 맵 — 그 검사가 생기기 전 기록의 「스크립트 없음」을 접는다
+ * 값이 없으면 전부 **종전 동작**(전건을 센다)이다.
+ */
+function readSources() {
+  try { return JSON.parse(read(P.sources) || '{}') || {} } catch { return {} }
 }
 // 새 배치 하네스 산출물의 상태 폴더 — 러너·편성기와 같은 3단계(그 다음이 jng-os 호환 폴백).
 const STATE = resolveStateDir(rootDir)
@@ -195,9 +221,12 @@ function storyPathOf(slug) {
 const norm = (s) => s.replace(/[\s·\-—()[\]{}/,.:]/g, '').toLowerCase()
 
 // ── epics.md: 에픽 본문 절과 스토리 ─────────────────────────────
+// 같은 에픽 번호가 두 절(요약 목록 + 본문)로 나뉘어 각각 다른 스토리를 들고 있을 수 있다.
+// 그래서 **단계가 아니라 머리말 종류**로 가르고, 같은 번호의 절은 스토리를 합친다.
+// epics.md 자체는 절대 고치지 않는다 — 이 스킬은 읽기 전용이다.
 function parseEpics() {
   const lines = read(P.epics, { required: true }).split(/\r?\n/)
-  const epics = []
+  const sections = []                       // 문서에 나온 순서대로의 에픽 절(번호 중복 가능)
   let epic = null
   let story = null
   let buf = []
@@ -214,9 +243,10 @@ function parseEpics() {
       flush()
       story = null
       epic = { num: Number(em[1]), title: em[2], desc: '', stories: [] }
-      epics.push(epic)
+      sections.push(epic)
       continue
     }
+    // 에픽이 아닌 `## ` 머리말만 절을 닫는다(`### `·`#### `는 본문으로 본다).
     if (/^## /.test(line)) {
       flush()
       story = null
@@ -228,7 +258,8 @@ function parseEpics() {
     const sm = PATTERNS.story.exec(line)
     if (sm) {
       flush()
-      story = { id: sm[1] + '.' + sm[2], epic: Number(sm[1]), num: Number(sm[2]), title: sm[3], body: '' }
+      story = { id: sm[1] + '.' + sm[2], epic: Number(sm[1]), num: Number(sm[2]), title: sm[3], body: '',
+        deep: line.startsWith('#### ') }
       epic.stories.push(story)
       continue
     }
@@ -236,6 +267,39 @@ function parseEpics() {
     else if (!epic.desc && line.trim()) epic.desc = line.trim()
   }
   flush()
+
+  // 같은 에픽 번호의 절을 하나로 합친다. 제목·설명은 **스토리가 더 많은 절**(동점이면 뒤의 것)이
+  // 맡고, 스토리는 번호 기준 합집합이다(먼저 나온 절의 본문이 이긴다).
+  // 자리(진행 순서)는 그 번호가 **처음 나온** 자리다 — 요약 절의 차례가 곧 사람이 정한 진행 순서다.
+  const byNum = new Map()
+  for (const sec of sections) {
+    if (!byNum.has(sec.num)) byNum.set(sec.num, [])
+    byNum.get(sec.num).push(sec)
+  }
+  const duplicateEpics = [...byNum.entries()]
+    .filter(([, list]) => list.length > 1)
+    .map(([num, list]) => ({ num, sections: list.length }))
+  const seenNum = new Set()
+  const epics = []
+  for (const sec of sections) {
+    if (seenNum.has(sec.num)) continue
+    seenNum.add(sec.num)
+    const list = byNum.get(sec.num)
+    if (list.length === 1) { epics.push(sec); continue }
+    const head = list.reduce((a, b) => (b.stories.length >= a.stories.length ? b : a))
+    const stories = []
+    const ids = new Set()
+    for (const part of list) {
+      for (const st of part.stories) {
+        if (ids.has(st.id)) continue
+        ids.add(st.id)
+        stories.push(st)
+      }
+    }
+    stories.sort((a, b) => a.num - b.num)   // 두 절에서 합쳤으니 번호 순으로 다시 세운다
+    epics.push({ num: sec.num, title: head.title, desc: head.desc || sec.desc, stories, merged: list.length })
+  }
+  epics.forEach((e) => { e.deepStories = e.stories.filter((s) => s.deep).length })
 
   // 진행 순서 = epics.md 에 적힌 차례. 나중에 끼어든 에픽이 있으면 번호와 다를 수 있다.
   epics.forEach((e, i) => { e.order = i + 1 })
@@ -250,7 +314,7 @@ function parseEpics() {
       s.acCount = (s.body.match(PATTERNS.ac) || []).length
     }
   }
-  return epics
+  return { epics, duplicateEpics }
 }
 
 // ── sprint-status.yaml: development_status 블록 ─────────────────
@@ -283,9 +347,20 @@ function parseSprint() {
     extra.push(key)
   }
 
-  // last_updated 는 헤더 주석줄로 오는 서식도 있다(# last_updated: … 꼬리 주석 포함) — 완화해 읽는다
-  const upd = /^#?\s*last_updated:\s*(\S+)/m.exec(txt)
-  return { epicStatus, storyStatus, extra, updated: upd ? upd[1] : '' }
+  // 「상태 파일 날짜」의 근거는 이 파일이 스스로 적은 값이라 낡을 수 있다 — 같은 키
+  // (`# last_updated:`)가 머리에 여러 줄 쌓이고 맨 위가 최신도 아니다(원 프로젝트 2026-09-21 실측).
+  // 주석·평문 어느 쪽이든 **날짜가 가장 최근인 것**을 고르고, 화면의 진짜 근거는
+  // 파일 시각·커밋 시각이 맡는다(freshness F2).
+  const stamps = (txt.match(/^#?\s*last_updated:\s*(\d{4}-\d{2}-\d{2})/gm) || [])
+    .map((l) => /(\d{4}-\d{2}-\d{2})/.exec(l)[1])
+    .sort()
+  // 날짜가 아닌 서식(버전 문자열 등)도 종전대로 받는다 — 날짜가 하나도 없을 때만 첫 줄을 쓴다.
+  const any = /^#?\s*last_updated:\s*(\S+)/m.exec(txt)
+  return {
+    epicStatus, storyStatus, extra,
+    updated: stamps.length ? stamps[stamps.length - 1] : (any ? any[1] : ''),
+    updatedLines: stamps.length,
+  }
 }
 
 // ── auto-pipeline-logs/state.json: 단계별 통과 시각 ──────────────
@@ -516,6 +591,75 @@ function buildBoard(epics, sprint) {
   return { next, batch, bulk, writesSprint: WRITES_SPRINT }
 }
 
+// ── 신선도 재료 ────────────────────────────────────────────────
+// 「이 화면이 지금을 반영하는가」의 판정은 freshness.mjs 가 하고, 여기서는 **재료만** 모은다.
+// git 은 **읽기 명령만** 쓰고 fetch 하지 않는다(새로고침 경로에 네트워크·인증을 넣지 않는다).
+// git 이 없거나 저장소가 아니면 전부 null 이고 판정은 「확인 불가(unknown)」다 — 없다고 죽지 않는다.
+function gitInfo() {
+  const run = (args) => {
+    try {
+      return execFileSync('git', args, { cwd: rootDir, encoding: 'utf8', timeout: 4000,
+        stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim()
+    } catch { return null }
+  }
+  const head = run(['rev-parse', 'HEAD'])
+  if (!head) return { available: false }
+  const origin = run(['rev-parse', 'origin/main'])
+  let behind = null
+  let ahead = null
+  if (origin) {
+    const lr = run(['rev-list', '--left-right', '--count', 'HEAD...origin/main'])
+    const m = lr && /^(\d+)\s+(\d+)$/.exec(lr)
+    if (m) { ahead = Number(m[1]); behind = Number(m[2]) }
+  }
+  const dirtyTxt = run(['status', '--porcelain'])
+  return {
+    available: true,
+    head,
+    headShort: head.slice(0, 8),
+    headAt: run(['log', '-1', '--format=%cI']) || '',
+    branch: run(['rev-parse', '--abbrev-ref', 'HEAD']) || '',
+    originMain: origin || '',
+    originShort: origin ? origin.slice(0, 8) : '',
+    behind,
+    ahead,
+    dirty: dirtyTxt == null ? null : dirtyTxt.split(/\r?\n/).filter(Boolean).length,
+  }
+}
+
+/** 파일 하나의 「언제 바뀌었나」 근거 — 파일 시각 + 마지막 커밋 시각(git 이 없으면 파일 시각만). */
+function fileAge(p) {
+  const mt = mtimeSafe(p)
+  let gitAt
+  try {
+    gitAt = execFileSync('git', ['log', '-1', '--format=%cI', '--', p],
+      { cwd: rootDir, encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim()
+  } catch { gitAt = '' }
+  return { file: p, mtime: mt == null ? null : new Date(mt).toISOString(), gitAt: gitAt || null }
+}
+
+/**
+ * 상태 폴더 `chain-info.json` 의 갈래 이름 중 **아직 정본(main)에 안 들어간 것**만 남긴다.
+ * 파일이 없으면 빈 배열이고, 그때 판정은 종전대로 큐가 적은 숫자 하나를 쓴다.
+ * git 이 없거나 이름을 못 찾으면 **미머지로 본다**(나쁜 쪽이 이긴다 — 접는 쪽으로 기울지 않는다).
+ */
+function unmergedChainBranches(stateDir) {
+  let names
+  try { names = JSON.parse(read(join(stateDir, 'chain-info.json')) || '{}').branches } catch { return [] }
+  if (!Array.isArray(names) || !names.length) return []
+  const run = (args) => {
+    try {
+      execFileSync('git', args, { cwd: rootDir, timeout: 4000, stdio: 'ignore', windowsHide: true })
+      return true
+    } catch { return false }
+  }
+  const has = (ref) => run(['rev-parse', '-q', '--verify', ref + '^{commit}'])
+  return names.map(String).filter(Boolean).filter((b) => {
+    const ref = has(b) ? b : (has('origin/' + b) ? 'origin/' + b : null)
+    return ref ? !run(['merge-base', '--is-ancestor', ref, 'main']) : true
+  })
+}
+
 // ── 조립 + 불일치(드리프트) 검사 ────────────────────────────────
 // 이 함수는 **던지지 않는다.** 원천이 없거나 읽다가 깨지면 `{error:{…}}` 를 돌려주고,
 // build.mjs 가 그 사유를 적은 화면 한 장을 만든다(2026-09-02 교차리뷰 M4).
@@ -547,18 +691,23 @@ function errorResult(error) {
     root: rootDir,
     error: { ...error, readErrors: READ_ERRORS.slice() },
     sprintUpdated: '', sources: {}, engineMismatch: false,
-    warnings: [], epics: [], drift: [],
+    warnings: [], epics: [], drift: [], driftNotes: [], freshness: {},
     board: { next: [], batch: { running: false, line: '', lastAt: '' }, bulk: [], writesSprint: [] },
     batch: null,
   }
 }
 
 function scanInner() {
-  const epics = parseEpics()
+  const { epics, duplicateEpics } = parseEpics()
   const sprint = parseSprint()
   const pipeline = parsePipeline()
+  const cfg = readSources()
   const drift = []
+  // driftNotes = **참고로 접은 것**(판정이 끝난 과거 기록). 건수로 세지 않되 숨기지도 않는다 —
+  // 숫자만 줄이고 말을 안 하면 다음 사람이 「왜 줄었지」를 다시 조사한다.
+  const driftNotes = []
   const seen = new Set()
+  let sprintOnly = 0
 
   for (const e of epics) {
     e.status = sprint.epicStatus[e.num] || 'unregistered'
@@ -601,6 +750,7 @@ function scanInner() {
 
   for (const id of Object.keys(sprint.storyStatus)) {
     if (!seen.has(id)) {
+      sprintOnly += 1
       drift.push({ level: 'high', where: 'Story ' + id, msg: '"' + sprint.storyStatus[id].slugTitle.replace(/-/g, ' ') + '" — 상태 파일에는 있으나 에픽 문서에 없습니다' })
     }
   }
@@ -614,8 +764,8 @@ function scanInner() {
   const totalStories = epics.reduce((n, e) => n + e.stories.length, 0)
   const acTotal = epics.reduce((n, e) => n + e.stories.reduce((m, s) => m + s.acCount, 0), 0)
   const sprintN = Object.keys(sprint.epicStatus).length + Object.keys(sprint.storyStatus).length
-  if (epics.length === 0) warnings.push('epics.md 는 읽었으나 `## Epic N:` 패턴이 0건 — 서식이 다를 수 있습니다')
-  else if (totalStories === 0) warnings.push('epics.md 에서 `### Story N.M:` 패턴이 0건 — 서식이 다를 수 있습니다')
+  if (epics.length === 0) warnings.push('epics.md 는 읽었으나 `## Epic N:`·`### Epic N:` 패턴이 0건 — 서식이 다를 수 있습니다')
+  else if (totalStories === 0) warnings.push('epics.md 에서 `### Story N.M:`·`#### Story N.M:` 패턴이 0건 — 서식이 다를 수 있습니다')
   if (sprintN === 0) warnings.push('sprint-status.yaml 은 읽었으나 development_status 항목이 0건 — 서식이 다를 수 있습니다')
   if (totalStories > 0 && acTotal === 0) warnings.push('스토리 본문에서 `**Given**`(수용기준) 패턴이 0건 — 서식이 다를 수 있습니다')
   // 리뷰 실행 기록은 있는데 어떤 식별자도 상태 파일 키와 맞지 않으면 리뷰 반복 게이트가 통째로
@@ -634,17 +784,53 @@ function scanInner() {
     root: rootDir, logDir: LOG_DIR, stateDir: STATE.dir, inboxPath: P.inbox, now,
   })
   const storyRows = Object.entries(sprint.storyStatus).map(([, r]) => ({ slug: r.slug, status: r.status }))
+  // 기준선 — 마지막 릴리스는 RELEASE-LOG.md(있으면), 나머지 셋은 sources.json 설정이다.
+  // **전부 「있을 때만」 동작**하고, 없으면 종전대로 전건을 센다(확인 못 한 것을 통과로 적지 않는다).
+  const release = lastRelease(read(P.releaseLog))
+  const opsEpics = Array.isArray(cfg.opsLineEpics)
+    ? cfg.opsLineEpics.map(Number).filter((x) => Number.isFinite(x)) : []
   const verdict = deployVerdict({
     manifests: B.manifests, lastNight: B.lastNight, metrics: B.metrics,
     queue: B.queue.value, verifications: B.verifications, inbox: B.inbox.value,
     diagnosis: B.diagnosis.value, backlog: B.backlog.value, readiness: B.readiness.value,
     chainAgeDays: B.queue.value?.plan?.chainAgeDays ?? null,
+    chainBranches: unmergedChainBranches(STATE.dir),
+    qualityGatesSince: cfg.qualityGatesSince || null,
+    opsEpics, lastReleaseAt: release.at, lastReleaseLabel: release.heading, now,
   })
   // ⑨ — 하네스가 만드는 경고 3종을 기존 4종 드리프트에 **더한다**(기존 렌더러가 그대로 그린다).
-  drift.push(...batchWarnings({ manifests: B.manifests, verifications: B.verifications, stories: storyRows }))
+  const bw = batchWarnings({
+    manifests: B.manifests, verifications: B.verifications, stories: storyRows,
+    lastReleaseAt: release.at, lastReleaseLabel: release.heading,
+    integrationGateSince: cfg.integrationGateSince || null,
+  })
+  drift.push(...bw.warnings)
+  driftNotes.push(...bw.notes)
   const metricsTable = dailyMetrics({
     history: B.history.rows, manifests: B.manifests, verifications: B.verifications, now,
   })
+
+  // ── 신선도 재료 ──────────────────────────────────────────────────────────
+  // 판정은 freshness.mjs 가 한다(7항목). 여기서는 재료만 모은다 — 못 모은 것은 null 로 둔다.
+  const allStories = epics.flatMap((e) => e.stories)
+  const freshness = {
+    git: gitInfo(),
+    sprint: { ...fileAge(P.sprint), commentDate: sprint.updated, commentCount: sprint.updatedLines },
+    docs: {
+      epics: epics.length,
+      stories: allStories.length,
+      hashStories: allStories.filter((s) => s.deep).length,
+      sprintOnly,
+      docOnly: allStories.filter((s) => s.status === 'unregistered').length,
+      duplicateEpics,
+    },
+    runner: {
+      stateDir: STATE.dir,
+      lastLine: (B.heartbeat.lines || []).filter(Boolean).slice(-1)[0] || '',
+    },
+    manifests: { lastAt: B.manifests[0]?.at ?? null, count: B.manifests.length },
+    inbox: fileAge(P.inbox),
+  }
 
   return {
     generatedAt: new Date().toISOString(),
@@ -657,6 +843,8 @@ function scanInner() {
     warnings,
     epics,
     drift,
+    driftNotes,
+    freshness,
     board: buildBoard(epics, sprint),
     // 새 블록 ①②④⑤⑥⑦⑧ 의 재료 한 덩어리 — build.mjs 와 (b)갈래 이식판이 같이 쓴다.
     batch: {

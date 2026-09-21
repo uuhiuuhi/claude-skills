@@ -7,6 +7,7 @@ import {
   BATCH_CSS, renderDiagnosis, renderHero, renderInbox, renderMetrics,
   renderNight, renderQueue, renderVerdictTick, storyExtras,
 } from './render-batch.mjs'
+import { freshnessChecks, freshnessVerdict, stamp as frStamp } from './freshness.mjs'
 
 const CSS = `
 *{margin:0;padding:0;box-sizing:border-box}
@@ -202,6 +203,34 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .empty{font-size:12px;color:var(--t3);padding:24px 0}
 .foot{margin-top:32px;font-size:12px;color:var(--t3);line-height:1.8}
 .foot code{font-family:var(--mono);color:var(--t2)}
+/* 참고로 접은 기록 한 줄 — 숫자에서는 뺐지만 숨기지는 않는다 */
+.rulenote{font-size:12px;color:var(--t3);padding:10px 16px;line-height:1.7;
+  border-bottom:1px solid rgba(51,65,85,.5)}
+
+/* 현황판 신선도 검토 — 「이 화면이 지금을 반영하는가」. 색은 기존 토큰만 쓴다
+   (빨강을 새로 만들지 않는다 — stale = 주황 채움 · warn = 주황 테두리 · ok = 초록 · unknown = 회색) */
+.b-fresh{background:var(--ticker);border:1px solid var(--line);border-radius:8px;margin-bottom:16px;overflow:hidden}
+.b-fresh.stale{border-color:var(--orange)}
+.b-frh{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line)}
+.b-frv{font-size:14px;font-weight:700;border-radius:999px;padding:4px 12px;
+  border:1px solid var(--line);color:var(--t3)}
+.b-frv.stale{background:var(--orange);color:#1A0700;border-color:var(--orange)}
+.b-frv.warn{color:var(--orange);border-color:rgba(232,92,13,.55)}
+.b-frv.ok{color:var(--green);border-color:rgba(34,197,94,.55)}
+.b-frwhy{font-size:12px;color:var(--t2)}
+.b-frc{font-size:12px;color:var(--t3);margin-left:auto;font-family:var(--mono)}
+.b-frrow{display:grid;grid-template-columns:34px 190px 1fr;gap:12px;align-items:start;
+  padding:10px 16px;border-bottom:1px solid rgba(51,65,85,.4)}
+.b-frrow:last-child{border-bottom:0}
+@media(max-width:760px){.b-frrow{grid-template-columns:34px 1fr;gap:8px}.b-frrow .b-frlab{grid-column:2}}
+.b-frid{font-family:var(--mono);font-size:12px;color:var(--t3)}
+.b-frlab{font-size:13px;font-weight:600;color:var(--t1)}
+.b-frd{font-size:12px;color:var(--t2);line-height:1.65;min-width:0;overflow-wrap:anywhere}
+.b-fra{display:block;font-size:12px;color:var(--orange);margin-top:4px}
+.b-frrow.ok .b-frid{color:var(--green)}
+.b-frrow.warn .b-frid{color:var(--orange)}
+.b-frrow.stale .b-frid{color:#1A0700;background:var(--orange);border-radius:4px;text-align:center}
+.b-frrow.unknown .b-fra{color:var(--t3)}
 `
 
 const JS = `
@@ -340,6 +369,27 @@ const fmt = (iso) => {
 
 const escHtml = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+// ── 현황판 신선도 검토 ───────────────────────────────────────────────────────
+// 「이 화면이 현재 시점을 반영하는가」를 화면 스스로 검토한 결과다(7줄 · F6 은 이 스킬에 없다 —
+// freshness.mjs 머리말 참조). 판정은 freshness.mjs(순수 함수)가 하고 여기서는 그리기만 한다.
+// 각 줄은 **무엇을 · 왜 · 다음에 뭘 하면 되는지** 순서다.
+const FR_MARK = { ok: '✅', warn: '⚠️', stale: '🔶', unknown: '❔' }
+export function renderFreshness(checks, verdict) {
+  const rows = checks.map((c) =>
+    '<div class="b-frrow ' + c.status + '">' +
+    '<span class="b-frid">' + (FR_MARK[c.status] || '?') + '</span>' +
+    '<span class="b-frlab">' + escHtml(c.id) + ' ' + escHtml(c.label) + '</span>' +
+    '<span class="b-frd">' + escHtml(c.detail) +
+    (c.action ? '<b class="b-fra">→ ' + escHtml(c.action) + '</b>' : '') +
+    '</span></div>').join('')
+  const n = verdict.counts
+  return '<section class="b-fresh' + (verdict.level === 'stale' ? ' stale' : '') + '">' +
+    '<div class="b-frh"><span class="b-frv ' + verdict.level + '">' + escHtml(verdict.label) + '</span>' +
+    '<span class="b-frwhy">' + escHtml(verdict.why) + '</span>' +
+    '<span class="b-frc">이상 없음 ' + n.ok + ' · 확인 ' + n.warn + ' · 낡음 ' + n.stale + ' · 판정 불가 ' + n.unknown + '</span>' +
+    '</div>' + rows + '</section>'
+}
 
 /**
  * 원천을 못 읽었을 때의 화면 한 장(M4). 여기서는 **어떤 파일이 왜 안 읽혔는지**만 적는다 —
@@ -529,6 +579,12 @@ export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
     }).join('')
     : '<div class="none3">에픽 문서와 상태 파일이 일치합니다 — 확인할 불일치 없음</div>'
 
+  // 접은 것 공시 — 판정이 끝난 과거 기록은 건수에서 빼되 **숨기지는 않는다**.
+  // 숫자만 줄이고 말을 안 하면 다음 사람이 「왜 줄었지」를 다시 조사한다.
+  const driftNoteHTML = (data.driftNotes || []).length
+    ? '<p class="rulenote">' + data.driftNotes.map((d) => esc2(d.where + ' — ' + d.msg)).join('<br>') + '</p>'
+    : ''
+
   const batchHTML = '<div class="batchbar' + (B.batch.running ? ' on' : '') + '"><em></em>' +
     '<b>' + (B.batch.running ? '무인 배치 가동 중' : '무인 배치 멈춤') + '</b>' +
     (B.batch.lastAt ? '<span>마지막 기록 ' + esc2(fmt(B.batch.lastAt)) + '</span>' : '') +
@@ -544,7 +600,7 @@ export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
     (gatedN ? ' · 리뷰 반복 ' + gatedN + '건은 버튼 없이 표시됩니다' : '') + '</span></div>' + bulkHTML + nextHTML + '</section>' +
     '<section class="sec3"><div class="s3-head"><h2>② 불일치</h2>' +
     '<span class="n' + (data.drift.length ? ' warn' : '') + '">' + data.drift.length + '건</span>' +
-    '<span class="sub">에픽 문서와 상태 파일이 서로 어긋난 지점</span></div>' + driftHTML + '</section>'
+    '<span class="sub">에픽 문서와 상태 파일이 서로 어긋난 지점</span></div>' + driftNoteHTML + driftHTML + '</section>'
 
   // 상단 배너 — 엔진 경로 불일치 + 매치 0건 경고(조용한 실패 방어)
   const bannerHTML =
@@ -559,6 +615,14 @@ export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
       return '<div class="warnbar">' + esc2(label) + ' 블록을 그리지 못했습니다 — ' + esc2(e?.message ?? e) + '</div>'
     }
   }
+  /** HTML 이 아닌 값(판정 목록 등)을 만드는 자리 — 던지면 빈 값이고 화면은 산다. */
+  const safeVal = (label, fn, fallback) => {
+    try { return fn() } catch { return fallback }
+  }
+  // 신선도 검토 — 다른 어떤 블록보다 먼저다. 아래 숫자들이 언제 것인지 여기서 밝힌다.
+  const frChecks = safeVal('신선도 검토', () => freshnessChecks(data), [])
+  const frVerdict = freshnessVerdict(frChecks)
+  const freshHTML = safe('신선도 검토', () => renderFreshness(frChecks, frVerdict))
   const blockers = (BA.readiness.value?.blockers ?? []).length
   const heroHTML = safe('배포 판정', () => renderHero({
     verdict: BA.verdict, heartbeat: BA.heartbeat, lastNight: BA.lastNight,
@@ -587,6 +651,13 @@ export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
     }
   }).join('')
 
+  // 「상태 파일 날짜」는 파일이 스스로 적은 주석이 아니라 **실제 근거**(커밋 시각 · 없으면 파일 시각)다 —
+  // 주석은 손으로 적는 기록이라 낡는다(원 프로젝트 2026-09-21 실측: 주석 09-18 · 실제 커밋 09-21).
+  const sp = data.freshness?.sprint ?? {}
+  const sprintStamp = (sp.gitAt || sp.mtime)
+    ? frStamp(sp.gitAt || sp.mtime) + (data.sprintUpdated ? ' (파일 주석은 ' + data.sprintUpdated + ')' : '')
+    : (data.sprintUpdated || '?')
+
   const json = JSON.stringify(data).replace(/</g, '\\u003c')
 
   const html = '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8">' +
@@ -595,9 +666,11 @@ export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
     '<header class="head"><div class="brand"><b>개발 현황판</b>' +
     '<span class="mono">' + esc2(data.root) + '</span></div>' +
     '<div class="stamp"><div id="live" class="live off"><i></i><span> 확인 중</span></div>' +
-    fmt(data.generatedAt) + ' 기준 · 상태 파일 ' + (data.sprintUpdated || '?') + '</div></header>' +
+    fmt(data.generatedAt) + ' 기준 · 상태 파일 ' + esc2(sprintStamp) + '</div></header>' +
 
     bannerHTML +
+
+    freshHTML +
 
     '<div class="ticker">' +
     '<span class="tk">에픽 <b class="mono">' + data.epics.length + '</b>개</span><span class="dot"></span>' +
