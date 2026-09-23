@@ -42,6 +42,7 @@ const STORIES = join(RUNNER, '_bmad-output', 'implementation-artifacts')
 const WD_LOG = join(STATE_DIR, 'watchdog.log')
 const WD_STATE = join(STATE_DIR, 'watchdog-state.json')
 const SILENT_MIN = Number(process.env.WD_SILENT_MIN ?? 75)      // 이 시간 이상 새 라운드가 없으면 「침묵」
+const SHELL_STUCK_MIN = Number(process.env.WD_SHELL_STUCK_MIN ?? 20) // 예약작업은 Running 인데 lock 없이 이 시간 동안 일지가 그대로면 「껍데기 정지」(2026-09-24 06:35 실사고)
 const LOCK_STALE_MIN = Number(process.env.WD_LOCK_STALE_MIN ?? 180)
 const REPEAT_FIX_AT = 2                                           // 같은 이유 2회 반복 → 수리
 const REPEAT_GATE_AT = 3                                          // 수리 뒤에도 3회 → 그 스토리만 편성 제외
@@ -124,6 +125,9 @@ const triedRecently = (sig) => { const t = wd.fixed[sig]; return Boolean(t && !t
 const downSyncDormant = !lock && slots.slice(-400).filter((l) => /하향 동기 코드 충돌/.test(l)).length >= 2
 let verdict = 'ok'
 if (lock && slotsMtimeMin > LOCK_STALE_MIN) verdict = 'lock-stale'
+// 2026-09-24 06:28~07:04 실사고: 밤 배치 node 가 종료 시 libuv 단언으로 죽고 슬롯 껍데기(powershell)가 안 끝나 예약작업이 Running 으로 남았다 —
+// MultipleInstances=IgnoreNew 라 06:35 트리거가 무시(0x800710E0)됐고 종전 판정은 taskState==='Ready' 만 침묵으로 봐 「정상」이었다.
+else if (!lock && slotsMtimeMin > SHELL_STUCK_MIN && taskState === 'Running') verdict = 'shell-stuck'
 else if (!lock && slotsMtimeMin > SILENT_MIN && taskState === 'Ready') verdict = 'silent'
 else if (isWeather(signature)) verdict = 'weather' // 한도·라우팅 차단은 반복이어도 정지가 아니다 — 다음 슬롯이 다시 집는다
 else if (lock) verdict = 'ok' // 러너가 살아 있으면(lock · 정체는 위 lock-stale 이 본다) 반복 정지 판정을 하지 않는다 — 09-11 05:50 오탐
@@ -416,6 +420,14 @@ if (verdict === 'repeat' || has('--force-restart')) {
   log(`하향 동기 휴면 — ${r}`)
   notify(`하향 동기 충돌로 러너가 일을 못 받고 있었습니다 — ${r}${/완료$/.test(r) ? ' · 러너 재기동.' : ''}`)
   if (/완료$/.test(r)) startRunner('하향 동기 충돌 해소 뒤')
+} else if (verdict === 'shell-stuck') {
+  notify(`예약작업은 실행 중(${taskInfo})인데 lock 없이 일지가 ${slotsMtimeMin.toFixed(0)}분째 그대로 — 슬롯 껍데기 정지로 보고 스케줄러로 끝낸 뒤 다시 기동합니다.`)
+  if (has('--dry-run')) log('(리허설) Stop-ScheduledTask → Start-ScheduledTask')
+  else {
+    const s = ps(`Stop-ScheduledTask -TaskName ${RUNNER_TASK}`)
+    log(`껍데기 정지 종료(Stop-ScheduledTask) exit ${s.status}`)
+    startRunner('껍데기 정지 뒤')
+  }
 } else if (verdict === 'silent') {
   notify(`러너 침묵 ${slotsMtimeMin.toFixed(0)}분(예약작업 ${taskState} · ${taskInfo}) — 즉시 기동합니다.`)
   startRunner('침묵')
