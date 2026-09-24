@@ -51,7 +51,15 @@ export function collectChanges(root, base = 'HEAD') {
   const git = args => { const r = spawnSync('git', ['-c', 'core.quotepath=false', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, windowsHide: true }); if (r.status !== 0) throw new Error(r.stderr || 'git diff failed'); return r.stdout; };
   // A caller-supplied revision is resolved before it can become a diff argument.
   const revision = git(['rev-parse', '--verify', `${base}^{commit}`]).trim();
-  let diff = git(['diff', '--no-ext-diff', '--no-renames', '--unified=3', revision, '--']);
+  // The diff body feeds only the judgement text (security triggers · test integrity · coverage lines). Engine artifacts
+  // (`_bmad-output/`, `coverage/`, `node_modules/`, any `auto-pipeline-logs/`) never take part in that judgement, yet a
+  // tracked 26MB state.json pushed `git diff` past the 64MB maxBuffer → spawnSync ENOBUFS → 'git diff failed' → the gate
+  // could not write its report and the engine re-read a stale one (2026-09-24 실사고 · 13.10 자동 수리 1차 · 러너 워커가
+  // 설치 사본을 고치고 tests/auto/quality-gates-collect.test.ts 로 물었으나 핀 보호로 사본 수정이 남지 못해 통합 게이트가
+  // 매 착지마다 RED 였다 · 2026-09-25 정본 반영). The change list below stays complete — only the body drops them.
+  // Pathspecs are prefix-at-directory matches, so `src/coverage/report.ts` and `coverage-report.ts` are not excluded.
+  const bodyExcludes = [':(exclude)_bmad-output', ':(exclude)coverage', ':(exclude)node_modules', ':(exclude,glob)**/auto-pipeline-logs/**'];
+  let diff = git(['diff', '--no-ext-diff', '--no-renames', '--unified=3', revision, '--', '.', ...bodyExcludes]);
   const changes = git(['diff', '--no-renames', '--name-status', revision, '--']).trim().split('\n').filter(Boolean).map(l => { const [status, path] = l.split('\t'); return { status, path }; });
   for (const path of git(['ls-files', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean)) {
     if (generated.test(path)) continue;
