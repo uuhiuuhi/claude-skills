@@ -83,13 +83,13 @@ describe('[자율운전] 편성기 full 모드 — 사람 대기 대신 replan',
     assert.match(r.batch('2-1-a').replanHint, /무진전 편성 2회/)
     assert.equal(r.state.replans['2-1-a'] ?? 0, 0)
   })
-  it('마감 재검수(closeout)가 무진전으로 replan 을 앞세우면 [replan, dev, review] — replan 이 dev 기록을 지우므로 review 만 붙이면 T6 STOP(2026-09-26 1-43)', () => {
+  it('마감 재검수(closeout)가 무진전으로 replan 을 앞세워도 [replan, review] — dev 를 강제로 끼우면 바꿀 것 없는 스토리가 NO-OP exit 4 로 선다(2026-09-26 1-44) · T6 구현자 기록 보존은 파이프라인 invalidate 몫(1-43)', () => {
     const r = run({
       sprint: { '2-1-a': 'review' }, stories: { '2-1-a': story() }, // 전부 [x] · Patch 0 · Decision 0 = closeout
       state: { days: { '2026-09-01': { planned: ['2-1-a', '2-1-a'], stops: 0 } } },
     })
-    assert.match(r.pick('2-1-a').why, /마감 재검수.*replan→dev→review/)
-    assert.deepEqual(r.batch('2-1-a').stages, ['replan', 'dev', 'review'])
+    assert.match(r.pick('2-1-a').why, /마감 재검수.*replan→review/)
+    assert.deepEqual(r.batch('2-1-a').stages, ['replan', 'review'])
     assert.match(r.batch('2-1-a').replanHint, /무진전 편성 2회/)
   })
   it('「재투입 금지」 문구가 있어도 미완 기계 Task 가 있으면 replan 없이 dev(무한 replan 방지 · 리뷰 #1)', () => {
