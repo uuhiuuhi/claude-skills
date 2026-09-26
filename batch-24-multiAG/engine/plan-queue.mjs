@@ -270,6 +270,10 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
       replanHint = [replanHint, '무진전 편성 ' + streak + '회 — 접근을 바꿔라(과제 재작성·분할·다른 구현 경로)'].filter(Boolean).join(' · ')
       notes.push('무진전 ' + streak + '회 → replan ' + (replansOf(r.key) + 1) + '/' + autoCfg.maxReplansPerStory)
     }
+    // 마감 재검수에 replan 이 앞서면 **dev 를 사이에 둔다**(리뷰 상한 경로와 같은 모양). 파이프라인의 replan 은 dev 완료 기록을
+    // 지우므로 [replan, review] 로 돌면 리뷰가 깨끗해도 T6(만든 쪽 ≠ 검토한 쪽)을 증명할 재료가 없어 COMPLETION STOP(exit 1)이
+    // 된다 — 성공 경로가 막히는 자리다(2026-09-26 1-43 실사고 · 무진전 3회 → replan→review → 구현자 기록 없음).
+    if (kind === 'closeout' && stages[0] === 'replan' && !stages.includes('dev')) stages = ['replan', 'dev', 'review']
     // 어떤 갈래로든 replan 이 앞섰는데 회차가 상한이면 replan 을 떼고 dev 만 돌린다(리뷰 #1-2 · replan 무한 반복 방지)
     if (stages[0] === 'replan' && streak >= 2 && replansOf(r.key) >= autoCfg.maxReplansPerStory) return gateOut(r.key, 'question', limitWhy())
     return { ...r, kind, files: s.files, stages, force: kind !== 'new', notes, ...(replanHint ? { replanHint } : {}) }

@@ -1827,7 +1827,9 @@ for (const story of stories) {
 
     // ---- 실행 전 하위 단계 기록 무효화 (재실행 정합) ----
     if (stage === "create") invalidate(story, "dev", "qa", "review");
-    if (stage === "replan" || stage === "mockup") invalidate(story, "dev", "qa", "review"); // 계획·화면이 바뀌면 구현부터 다시
+    // 계획·화면이 바뀌면 구현부터 다시 — 단 **이번 실행에 dev 가 없으면**(마감 재검수 replan→review) dev 완료·구현자 기록을 남긴다:
+    // 지우면 리뷰가 깨끗해도 T6(workers.dev.provider) 증명 재료가 없어 COMPLETION STOP 이 된다(2026-09-26 1-43 실사고).
+    if (stage === "replan" || stage === "mockup") invalidate(story, ...(stages.includes("dev") ? ["dev", "qa", "review"] : ["qa", "review"]));
     if (stage === "dev") invalidate(story, "qa", "review");
 
     runStage(stage, story); // 실패 시 내부에서 exit (인증 오류는 대기 모드 시 자동 재시도)
