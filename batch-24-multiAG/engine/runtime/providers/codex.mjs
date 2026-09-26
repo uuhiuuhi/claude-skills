@@ -552,6 +552,9 @@ export function validateReviewRun({ json, events, diffEmpty = false, storyFile =
 // ── 프롬프트(자립형 — Codex 는 /bmad-* 슬래시 스킬을 모른다) ────────────────────────────────
 const COMMON_RULES = [
   '[비대화형] 승인/질문 없이 합리적 기본값으로 끝까지 진행하고 마지막에 결과를 보고하라.',
+  // 2026-09-26 22:07 실사고(첫 Codex dev · 5-6): codex 가 「스토리 구현」 프롬프트에 설치된 전역 스킬 bmad-build 를 스스로 골라 `uv run render_skill.py` 를 돌리다
+  // 샌드박스 밖(AppData/uv) 쓰기 거부로 「즉시 중단」 → 변경 0 · NO-OP STOP(exit 4). 리뷰는 2026-09-09 에 같은 함정을 겪었다(메모리 codex-exec-skill-pitfall).
+  '⚠️ 이 프롬프트가 **완전한 절차**다. 설치된 스킬(bmad-build · bmad-* 등)·슬래시 명령·`uv`·`render_skill.py`·워크플로 렌더링을 호출하지 마라 — 그런 헬퍼가 실패해도 HALT 하지 말고 파일 도구와 셸로 아래 절차를 직접 수행하라.',
   '작업 루트의 CLAUDE.md 와 AGENTS.md 가 있으면 먼저 읽고 거기 적힌 절대 제약(보호 파일·보수성 규칙·마스킹)을 최우선으로 지켜라.',
   '⚠️ git commit · git push · git stash · git reset · git checkout · git clean · 브랜치 조작 절대 금지. 파괴적 명령(rm -rf 등) 금지. 엔진이 이를 감지하면 즉시 중단·사람 호출이다.',
   '`.env*` 파일과 자격증명(토큰·비밀번호·키)은 읽지도 출력하지도 마라.',
