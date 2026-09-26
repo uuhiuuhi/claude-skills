@@ -88,7 +88,7 @@ import { safeGitPush } from "./push-guard.mjs";
 import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes, reviewPendingOnly, recoveryPendingOnly } from "./completion-rules.mjs";
 import { StageRouter, preferredDevProvider } from './stage-router.mjs';
 import { readUsageSnapshot, reclassifySpend } from './usage-probe.mjs';
-import { MODEL_CATALOG, failureKind, providerOf, limitDowngradeMode } from './model-policy.mjs';
+import { MODEL_CATALOG, failureKind, providerOf, limitDowngradeMode, codexDevPolicy, codexDevAllowed, codexPairCross } from './model-policy.mjs';
 import { storyRisk, storyDifficulty } from '../assign.mjs';
 import { readEvidenceFor } from './providers/codex.mjs';
 import { deepRedact } from './providers/redact.mjs';
@@ -1025,8 +1025,12 @@ function prepareWorker(stage, story, variant) {
     models[stage] = formatModelSpec(resolved.spec);
   }
   const spec = resolved.spec;
-  if (!dryRun && role === 'review' && spec.provider === parseModelSpec(knownDevModel(story) || models.dev).provider) {
-    note(`✖ REVIEW STOP — same-provider review forbidden (${spec.provider})`);
+  const devSpecForCross = parseModelSpec(knownDevModel(story) || models.dev);
+  // 👤 2026-09-26 (나): codex 구현(sol) → codex 리뷰(astra)는 **모델**이 다르면 교차로 인정(설정 modelPolicy.codexDev 가 켜진 때만). claude 끼리는 종전대로 STOP.
+  const codexCrossOk = spec.provider === 'codex' && devSpecForCross.provider === 'codex' && codexDevPolicy(routingConfig.modelPolicy?.codexDev).enabled
+    && codexPairCross(formatModelSpec(spec), formatModelSpec(devSpecForCross));
+  if (!dryRun && role === 'review' && spec.provider === devSpecForCross.provider && !codexCrossOk) {
+    note(`✖ REVIEW STOP — same-provider review forbidden (${spec.provider}${spec.provider === 'codex' ? `/${spec.model || 'default'} · 구현 ${devSpecForCross.model || 'default'}` : ''})`);
     writeExitInfo({ code: 1, kind: 'review', story, stage, why: 'same-provider-review' });
     process.exit(1);
   }
@@ -1336,6 +1340,8 @@ function nextWorkerSpec(stage, story, avoid, limitMode = null) {
 // v3: 프로바이더 차원까지 본다(codex↔codex 면 claude 최상위) — 자동으로 codex 로 옮기지는 않는다(비용은 편성기 몫).
 function enforceCrossModel(stage) {
   if (stage !== "review" || !stages.includes("dev")) return;
+  // 👤 2026-09-26 (나) codex 끼리라도 모델이 다르면(sol 구현 → astra 리뷰) 교차 — 설정 modelPolicy.codexDev 가 켜진 때만
+  if (codexDevPolicy(routingConfig.modelPolicy?.codexDev).enabled && codexPairCross(models.dev, models.review)) return;
   const r = enforceCrossSpec({ dev: models.dev, review: models.review, ladder: MODEL_LADDER });
   if (r.changed) {
     const alt = formatModelSpec(r.review);
@@ -1418,7 +1424,7 @@ function runRoutedStage(stage, story, variant) {
   }]));
   if (noCodex || (!dryRun && providers.codex.available && !codexCwdInfo().ok)) providers.codex.available = false;
   const router = new StageRouter({ stateDir: modelStateDir, providers, exhausted: routingConfig.exhaustedModels ?? [],
-    claudeLadder: process.env.AUTO_MODEL_LADDER ? MODEL_LADDER : null });
+    claudeLadder: process.env.AUTO_MODEL_LADDER ? MODEL_LADDER : null, codexDev: routingConfig.modelPolicy?.codexDev ?? null });
   const attempted = [];
   let limitRelief = false; // 회수 dev 가 한도를 만나면 true — choose 의 품질 하한이 sonnet 까지 내려간다
   const avoid = stage === 'review' ? (knownDevModel(story) || (stages.includes('dev') ? models.dev : '')) : '';
@@ -1427,9 +1433,11 @@ function runRoutedStage(stage, story, variant) {
     writeExitInfo({ code: 5, kind: 'routing-blocked', story, stage, why: 'missing implementation provenance' });
     process.exit(5);
   }
-  const preferProvider = stage === 'dev' ? preferredDevProvider(story) : stage === 'review' && providerOf(avoid) === 'claude' ? 'codex' : 'claude';
+  // 👤 2026-09-26 (나) modelPolicy.codexDev 가 이 위험도의 구현을 허용하면 dev 는 codex(sol) 우선 — 아니면 종전(해시 홀짝 · 고위험 fable).
+  const codexDevHere = stage === 'dev' && codexDevAllowed(profile.risk, routingConfig.modelPolicy?.codexDev);
+  const preferProvider = stage === 'dev' ? (codexDevHere ? 'codex' : preferredDevProvider(story)) : stage === 'review' && providerOf(avoid) === 'claude' ? 'codex' : 'claude';
   let preferred = flag('policy-assigned') ? models[stage] :
-    stage === 'dev' && profile.risk >= 4 ? 'fable' : ['create', 'mockup', 'replan'].includes(stage) ? (models[stage] || 'fable') : '';
+    stage === 'dev' && profile.risk >= 4 && !codexDevHere ? 'fable' : ['create', 'mockup', 'replan'].includes(stage) ? (models[stage] || 'fable') : '';
   for (;;) {
     const selected = router.choose({ role: stage, ...profile, preferred, preferProvider, avoid, attempted, limitRelief });
     if (!selected) {

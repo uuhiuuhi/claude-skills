@@ -31,6 +31,21 @@
 
 설정으로 넓히거나 좁힌다: `"modelPolicy": { "limitDowngrade": { "review": false, "dev": { "recovery": true, "new": false } } }`. review 하한(고위험 tier 3 · 그 외 tier 2)은 어떤 설정으로도 내려가지 않는다 — `review: true` 는 「하한 안에서 다음 모델」까지만 연다. 라우팅을 끈(legacy) 경로와 스토리 경계 프로브도 같은 모드를 따른다 — `floor` 는 사다리에서 sonnet 을 빼고, dev 의 한도 전환은 어떤 모드든 Claude 안에서만이다(Codex 로 넘어가지 않는다).
 
+### Codex 구현 허용 — sol 구현 → astra 리뷰 (👤 2026-09-26 「astra·sol 을 더 써서 opus 사용량을 줄여줘」 → (나))
+
+기본은 종전 경계다: **구현은 Claude, 리뷰는 Codex**(고위험 risk ≥ 4 구현은 Claude 만 · codex 끼리 리뷰 금지). 설정 `modelPolicy.codexDev` 를 켜면 Codex 도 구현을 맡는다 — Claude(Opus) 주간 한도를 아끼기 위한 스위치다.
+
+```json
+"modelPolicy": { "codexDev": { "enabled": true, "maxRisk": 10, "models": ["codex:gpt-5.6-sol"] } }
+```
+
+- `enabled`(기본 false): 켜면 dev 후보에 `models`(기본 sol 하나)가 들고, 편성기 `models.new.dev / models.recovery.dev` 에 적힌 `codex:gpt-5.6-sol` 을 배정기가 claude 로 되돌리지 않는다.
+- `maxRisk`(기본 3): 이 위험도까지만 Codex 구현. 넘으면 종전대로 Claude(fable→opus). 10 이면 전부.
+- `models`: dev 를 맡을 Codex 모델. **astra 는 여기 넣지 않는다** — 리뷰 몫이다. dev 가 astra 면 고위험 리뷰 후보(tier 3 = astra 뿐)가 없어 보류(exit 5)된다.
+- 교차 검토(T6): dev·review 가 **둘 다 codex** 면 제공자가 아니라 **모델**이 다를 때 「만든 쪽과 다른 쪽」으로 인정한다(sol ≠ astra). claude 끼리는 여전히 미달(print 어댑터가 열람 증거를 못 낸다) · 같은 codex 모델·모델 기록 누락도 미달. `completion-rules.crossReviewResult` · `readiness.crossReviewVerdict` · 파이프라인 `REVIEW STOP — same-provider` · 배정기 · 편성기가 같은 잣대다.
+- 한도·실패: sol 이 한도(limit)면 라우터가 Claude 후보로 내려간다(배치가 서지 않는다). 같은 스토리에서 codex dev 가 연속 2회 실패하면 배정기가 claude 로 피한다(assign-history). 마감 재검수(closeout · review 만)는 구현자 기록(sol)을 보고 astra 를 고른다.
+- 되돌리기: `enabled: false`(또는 키 삭제) + `models.*.dev` 를 `opus` 로. 엔진 재설치 없이 설정만으로 종전 경계로 돌아간다.
+
 ### 리뷰 비용 상한 (👤 2026-09-07 「2 예」)
 
 편성기 `autonomy.maxReviewRoundsPerStory`(기본 2). 스토리 파일에서 **마지막 replan 표식(`### Replan <날짜>` · `### 회수 라운드 <날짜>`) 뒤의** Codex 교차리뷰 헤딩(`### Review Findings — Codex 교차리뷰`)을 센다. 상한에 닿은 스토리에 review 를 편성해야 하면 `replan` 을 먼저 세운다 — 마감 재검수는 `replan → dev → review`(replan 이 연 Task 를 dev 가 반영한 뒤에만 리뷰), 그 외는 `replan` 을 앞에 붙인다. replan 은 표식을 남기므로 그 뒤로 다시 상한만큼 리뷰할 수 있다(무한 replan 방지). 회수(dev 만) 배치는 review 단계가 없어 대상이 아니다. `0` 이면 끈다.

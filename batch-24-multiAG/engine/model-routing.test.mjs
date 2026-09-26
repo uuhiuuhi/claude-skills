@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { StageRouter } from './runtime/stage-router.mjs';
-import { failureKind, limitDowngradeMode, selectModel, MODEL_CATALOG } from './runtime/model-policy.mjs';
+import { codexDevPolicy, failureKind, limitDowngradeMode, modelCandidates, selectModel, MODEL_CATALOG } from './runtime/model-policy.mjs';
 import { recordModelEvent, readModelHealth } from './runtime/model-health.mjs';
 import { assignWorkers } from './assign.mjs';
 import { requestPlan } from './orchestrate.mjs';
@@ -186,4 +186,41 @@ test('pipeline/runner source contract: the runner passes --batch-kind on both ar
   assert.match(pipe, /const ladder = limitMode === "floor" \? MODEL_LADDER\.filter\(\(m\) => m !== "sonnet"\) : MODEL_LADDER;/);
   assert.match(pipe, /const probeMode = limitDowngradeMode\(\{ stage: "dev", batchKind/);
   assert.match(pipe, /nextModelDown\(models\.dev, null, probeLadder\)/);
+});
+
+test('codexDev (👤 2026-09-26 「astra·sol 을 더 써서 opus 사용량을 줄여줘」 (나)): sol 구현은 설정이 켜진 때만 · 리뷰는 codex 의 다른 모델(astra) · 같은 모델·claude 끼리는 여전히 금지', () => {
+  const codexDev = { enabled: true, maxRisk: 10 };
+  // 켜짐 — 고위험이라도 sol 구현 허용 · astra 는 dev 후보가 아니다(리뷰 몫)
+  assert.equal(selectModel({ role: 'dev', risk: 8, difficulty: 8, providers, preferred: 'codex:gpt-5.6-sol', codexDev }).model, 'codex:gpt-5.6-sol');
+  assert.equal(selectModel({ role: 'dev', risk: 8, difficulty: 8, providers, preferred: 'codex:gpt-6-astra', preferProvider: 'codex', codexDev }).model, 'codex:gpt-5.6-sol');
+  // 상한 밖이면 Claude — maxRisk 는 존중된다
+  assert.equal(selectModel({ role: 'dev', risk: 8, difficulty: 8, providers, preferred: 'codex:gpt-5.6-sol', codexDev: { enabled: true, maxRisk: 5 } }).provider, 'claude');
+  // 리뷰 — sol 구현 뒤 astra(모델이 다르다) · astra 구현이면 고위험 리뷰 후보가 없다(null · 리뷰 품질 하한은 내려가지 않는다)
+  assert.equal(selectModel({ role: 'review', risk: 8, difficulty: 8, providers, avoid: 'codex:gpt-5.6-sol', codexDev }).model, 'codex:gpt-6-astra');
+  assert.equal(selectModel({ role: 'review', risk: 8, difficulty: 8, providers, avoid: 'codex:gpt-6-astra', codexDev }), null);
+  assert.equal(selectModel({ role: 'review', risk: 8, difficulty: 8, providers, avoid: 'codex:gpt-5.6-sol', preferred: 'codex:gpt-5.6-sol', codexDev }).model, 'codex:gpt-6-astra');
+  // 꺼짐(기본) — 종전 경계: 고위험 codex dev 거부 · codex 구현 뒤 codex 리뷰 거부
+  assert.equal(selectModel({ role: 'dev', risk: 8, difficulty: 8, providers, preferred: 'codex:gpt-5.6-sol' }).provider, 'claude');
+  assert.equal(selectModel({ role: 'review', risk: 8, difficulty: 8, providers, avoid: 'codex:gpt-5.6-sol' }), null);
+  // 후보 목록 — 켜지면 dev 후보에 sol 이 들고(preferProvider codex 면 앞) · 꺼지면 Claude 만
+  assert.deepEqual(modelCandidates({ role: 'dev', risk: 8, preferProvider: 'codex', codexDev }), ['codex:gpt-5.6-sol', 'fable', 'opus']);
+  assert.deepEqual(modelCandidates({ role: 'dev', risk: 8, preferProvider: 'claude', codexDev }), ['fable', 'opus', 'codex:gpt-5.6-sol']);
+  assert.deepEqual(modelCandidates({ role: 'dev', risk: 8, preferProvider: 'codex' }), ['fable', 'opus']);
+  // 정책 정규화 — 잘못된 모델은 걸러지고 기본(sol)으로 · enabled 가 true 가 아니면 꺼짐
+  assert.deepEqual(codexDevPolicy({ enabled: true, models: ['opus', 'nope'] }).models, ['codex:gpt-5.6-sol']);
+  assert.equal(codexDevPolicy({ enabled: 'yes' }).enabled, false);
+  assert.equal(codexDevPolicy(null).maxRisk, 3);
+  // 라우터 — 한도로 sol 이 막히면 Claude 로 내려간다(배치가 서지 않는다)
+  const stateDir = mkdtempSync(join(tmpdir(), 'routing-codex-dev-'));
+  let now = 1000;
+  const router = new StageRouter({ stateDir, providers, codexDev, now: () => now });
+  const ask = { role: 'dev', risk: 8, difficulty: 8, preferred: 'codex:gpt-5.6-sol', preferProvider: 'codex' };
+  assert.equal(router.choose(ask).model, 'codex:gpt-5.6-sol');
+  router.record('codex:gpt-5.6-sol', 'limit', { retryAt: 5000 });
+  assert.equal(new StageRouter({ stateDir, providers, codexDev, now: () => now }).choose(ask).provider, 'claude');
+  now = 5000;
+  assert.equal(new StageRouter({ stateDir, providers, codexDev, now: () => now }).choose(ask).model, 'codex:gpt-5.6-sol');
+  // 배정기(정책 경로) — codexDev 가 켜지면 범위 미상(고위험 취급) 스토리도 sol/astra 짝
+  const [a] = assignWorkers({ stories: [{ key: 'x' }], providers, config: { modelPolicy: { enabled: true, codexDev } } });
+  assert.deepEqual([a.dev, a.review], ['codex:gpt-5.6-sol', 'codex:gpt-6-astra']);
 });

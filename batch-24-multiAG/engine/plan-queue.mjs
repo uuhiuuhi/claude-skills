@@ -412,7 +412,7 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
       stories: group.map((c) => ({ key: c.key, kind, files: c.files ?? [] })),
       providers: cfg.providers ?? {},
       history: assignHistory,
-      config: { split: Boolean(cfg.providers?.codex?.split) },
+      config: { split: Boolean(cfg.providers?.codex?.split), codexDev: cfg.modelPolicy?.codexDev ?? null }, // 👤 2026-09-26 (나) sol 구현 허용 정책
     })
     const assigned = res ? { ...res } : res
     if (AUTO && assigned) {

@@ -525,3 +525,39 @@ describe('[OPS-F1] 계획 검증·배정 배선 — 큐 형식은 그대로', ()
     assert.equal(plan({ ...off, config: CONFIG, max: 12, today: '2026-08-26' }).queue.batches[0].models.review, 'opus')
   })
 })
+
+// ── 👤 2026-09-26 (나) codexDev — 편성기가 sol 구현·astra 리뷰 짝을 낸다 ─────────────────────────
+describe('[codexDev] 👤 2026-09-26 (나) — 편성기가 sol 구현·astra 리뷰 짝을 내고, 꺼지면 종전 경계', () => {
+  const SOL = 'codex:gpt-5.6-sol', ASTRA = 'codex:gpt-6-astra'
+  const CFG = {
+    ...CONFIG, exhaustedModels: [],
+    models: { new: { dev: SOL, review: 'codex' }, recovery: { dev: SOL, review: ASTRA }, closeout: { review: 'codex' } },
+    providers: { claude: { enabled: true, max: 4 }, codex: { enabled: true, max: 3, roles: ['review', 'dev'], reviewKinds: ['new', 'closeout'] } },
+    modelPolicy: { enabled: true, codexDev: { enabled: true, maxRisk: 10 } },
+  }
+  // 고위험(마이그레이션 + auth 경로) 회수 스토리
+  const risky = story({ findings: '- [ ] [Review][Patch] a' }).replace('- `src/a.ts`', '- `supabase/migrations/20260926_x.sql`\n- `src/auth/guard.ts`')
+  const at = (fx, config) => plan({ ...fixture(fx), config, max: 12, today: '2026-08-26' })
+
+  it('회수·신규·마감 배치 모델 — 고위험이라도 sol/astra 짝을 claude 로 되돌리지 않는다', () => {
+    const rec = at({ sprint: '  2-1-a: review\n', stories: { '2-1-a': risky } }, CFG)
+    assert.ok(rec.queue.batches[0].stories.includes('2-1-a'))
+    assert.deepEqual(rec.queue.batches[0].models, { dev: SOL, review: ASTRA }, JSON.stringify(rec.queue.batches[0]))
+    const neu = at({ sprint: '  2-1-b: backlog\n', stories: {} }, CFG)
+    assert.equal(neu.queue.batches[0].models.dev, SOL)
+    assert.equal(neu.queue.batches[0].models.review, 'codex') // 엔진이 astra 로 정규화한다(sol 과 다른 모델)
+    const co = at({ sprint: '  2-1-c: review\n', stories: { '2-1-c': story() } }, CFG)
+    assert.deepEqual(co.queue.batches[0].models, { review: 'codex' })
+  })
+
+  it('꺼져 있으면(기본) 종전 경계 — 고위험 회수 dev 는 claude 폴백 · 소진 목록(sol)은 짝을 깨지 않는다', () => {
+    const off = at({ sprint: '  2-1-a: review\n', stories: { '2-1-a': risky } }, { ...CFG, modelPolicy: { enabled: true } })
+    const m = off.queue.batches[0].models
+    assert.notEqual(m.dev, SOL, JSON.stringify(m))
+    assert.equal(m.review, ASTRA)
+    const ex = at({ sprint: '  2-1-a: review\n', stories: { '2-1-a': risky } }, { ...CFG, exhaustedModels: [SOL] })
+    const e = ex.queue.batches[0].models
+    assert.notEqual(e.dev, SOL, JSON.stringify(e))
+    assert.notEqual(e.dev, e.review)
+  })
+})

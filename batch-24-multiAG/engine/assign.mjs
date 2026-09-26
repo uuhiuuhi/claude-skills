@@ -9,6 +9,8 @@ import { readRecord } from './runtime/schema-migration.mjs';
 //
 // 불변식 3개(깨지면 배정이 아니라 사고다):
 //   ① 고위험 스토리의 dev 는 Codex 에 주지 않는다(외부 벤더 · 실데이터 인접 · 롤백 비용).
+//      👤 2026-09-26 (나) 예외: config.codexDev(= auto.config modelPolicy.codexDev)가 켜지면 maxRisk 까지 Codex(sol) dev 를
+//      허용하고, 그때의 review 는 **codex 의 다른 모델**(astra)이다 — ② 의 「다른 눈」을 제공자가 아니라 모델로 센다.
 //   ② review 는 dev 와 **다른 눈**이어야 한다 — 다른 프로바이더가 있으면 프로바이더를,
 //      없으면 최소한 다른 모델을 쓴다(교차검증 · 자기 검증 금지).
 //   ③ 같은 프로바이더가 그 스토리에서 **연속 2회 실패**했으면 회피한다(핑퐁 방지).
@@ -17,7 +19,7 @@ import { readRecord } from './runtime/schema-migration.mjs';
 // 모든 함수는 순수·결정적이다(같은 입력 → 같은 출력).
 
 import { isValidModelSpec } from './plan-dag.mjs'
-import { selectModel } from './runtime/model-policy.mjs'
+import { canonicalModel, codexDevPolicy, codexPairCross, selectModel } from './runtime/model-policy.mjs'
 import { preferredDevProvider } from './runtime/stage-router.mjs'
 
 /** 모델 스펙의 프로바이더 — "codex"·"codex:m" 만 codex(엔진 parseModelSpec 과 같은 규칙) */
@@ -162,6 +164,10 @@ export function assignWorkers({ stories = [], roles = ['dev', 'review'], provide
     return ''
   }
   let codexBudget = codexOn ? codexMax : 0
+  const cd = codexDevPolicy(config.codexDev ?? config.modelPolicy?.codexDev)
+  const devRiskMax = cd.enabled ? cd.maxRisk : HIGH_RISK_MIN - 1
+  // codex 끼리 교차 — dev 와 다른 codex 모델(기본 astra · dev 가 astra 면 sol). 정책이 꺼져 있으면 빈 값(claude 교차).
+  const codexAlt = (avoid) => cd.enabled ? (['codex:gpt-6-astra', 'codex:gpt-5.6-sol'].find((m) => canonicalModel(m) !== canonicalModel(avoid)) ?? '') : ''
 
   return stories.map((s, i) => {
     const story = String(s.key ?? s.story ?? '')
@@ -179,13 +185,13 @@ export function assignWorkers({ stories = [], roles = ['dev', 'review'], provide
         dev = claudeAlt()
         why.push('codex dev 불가(미가용·역할 밖·연속 실패) → claude 폴백')
       }
-      if (specProvider(dev) === 'codex' && risk.score >= HIGH_RISK_MIN) {
+      if (specProvider(dev) === 'codex' && risk.score > devRiskMax) {
         dev = claudeAlt()
         why.push(`고위험(${risk.score}: ${risk.flags.join(',')}) — Codex dev 배제`)
       }
       // 명시 split: 난이도 낮고 위험 낮은 스토리부터 Codex dev 로 나눈다(교차는 review 가 맡는다)
       if (devCodexAllowed && Boolean(config.split) && specProvider(dev) !== 'codex' &&
-        risk.score < HIGH_RISK_MIN && diff.score <= (Number(config.splitMaxDifficulty ?? 6)) && i > 0) {
+        risk.score <= devRiskMax && diff.score <= (Number(config.splitMaxDifficulty ?? 6)) && i > 0) {
         dev = 'codex'
         why.push(`split — 난이도 ${diff.score}·위험 ${risk.score} 로 Codex dev 배정`)
       }
@@ -206,8 +212,15 @@ export function assignWorkers({ stories = [], roles = ['dev', 'review'], provide
         why.push('codex review 불가(미가용·역할 밖·연속 실패) → claude 폴백')
       }
       if (specProvider(review) === 'codex' && specProvider(dev) === 'codex') {
-        review = claudeAlt(dev)
-        why.push('dev·review 가 같은 프로바이더 — 교차검증 위해 review 를 claude 로')
+        if (cd.enabled && codexPairCross(review, dev)) {
+          why.push(`codex 끼리 교차 — 구현 ${dev} · 리뷰 ${review}(모델이 다르다)`)
+        } else if (cd.enabled && codexAlt(dev)) {
+          review = codexAlt(dev)
+          why.push(`dev 와 같은 codex 모델 — 리뷰를 다른 codex 모델(${review})로`)
+        } else {
+          review = claudeAlt(dev)
+          why.push('dev·review 가 같은 프로바이더 — 교차검증 위해 review 를 claude 로')
+        }
       }
       if (review && dev && review === dev) {
         review = claudeAlt(dev) || review
@@ -250,11 +263,13 @@ export function assignPolicyWorkers({ stories = [], roles = ['dev', 'review'], p
     const difficulty = unknown ? Math.max(8, scoredDifficulty.score) : scoredDifficulty.score
     const blocked = (m, role) => exhausted.has(m) || exhausted.has(specProvider(m)) ||
       Boolean(config.blocked?.(m)) || providerFailStreak(history, specProvider(m), { story, role }) >= FAIL_STREAK_MAX
-    const dev = wantDev ? selectModel({ role: 'dev', risk, difficulty, providers,
-      preferred: risk >= HIGH_RISK_MIN ? 'fable' : '', preferProvider: preferredDevProvider(story), blocked: (m) => blocked(m, 'dev') })
+    const cd = codexDevPolicy(config.codexDev ?? config.modelPolicy?.codexDev)
+    const codexDevOk = cd.enabled && risk <= cd.maxRisk // 👤 2026-09-26 (나) sol 구현 허용 범위
+    const dev = wantDev ? selectModel({ role: 'dev', risk, difficulty, providers, codexDev: cd,
+      preferred: codexDevOk ? cd.models[0] : risk >= HIGH_RISK_MIN ? 'fable' : '', preferProvider: codexDevOk ? 'codex' : preferredDevProvider(story), blocked: (m) => blocked(m, 'dev') })
       : null
     // Review-only work is rechecked against persisted actual implementation provenance by the engine.
-    const review = wantReview ? selectModel({ role: 'review', risk, difficulty, providers,
+    const review = wantReview ? selectModel({ role: 'review', risk, difficulty, providers, codexDev: cd,
       avoid: roles.includes('dev') ? dev?.model : '', preferProvider: dev?.provider === 'codex' ? 'claude' : 'codex', blocked: (m) => blocked(m, 'review') })
       : null
     return { story, dev: dev?.model ?? '', review: review?.model ?? '',

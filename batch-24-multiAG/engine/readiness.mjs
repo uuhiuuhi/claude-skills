@@ -255,7 +255,11 @@ function crossReviewVerdict(manifest) {
   // 종전에는 `devP && revP` 라 **누락 = 통과**였고, 구형·부분 손상 매니페스트가 프로젝트를 ready 로 올렸다.
   // 규칙은 `completion-rules.mjs:crossReviewResult` 와 같다: 누락은 PASS 도 FAIL 도 아닌 not-verified.
   if (!devP || !revP) return [NOT_VERIFIED, `교차 검토 제공자 기록이 빠졌다(만든 쪽 ${devP || '미상'} · 검토한 쪽 ${revP || '미상'}) — 다른 쪽이 봤는지 확인할 수 없다`]
-  if (devP === revP) return [FAIL, '만든 쪽과 검토한 쪽이 같다 — 교차 검토가 아니다']
+  // 👤 2026-09-26 (나) codex 구현(sol) → codex 리뷰(astra): 모델이 다르면 교차(completion-rules.crossReviewResult 와 같은 규칙)
+  const modelName = (m) => str(m).replace(/^codex:/, '')
+  const devM = modelName(manifest?.workers?.dev?.model), revM = modelName(review.model)
+  const codexPair = devP === 'codex' && revP === 'codex' && Boolean(devM) && Boolean(revM) && devM !== revM
+  if (devP === revP && !codexPair) return [FAIL, '만든 쪽과 검토한 쪽이 같다 — 교차 검토가 아니다']
   const high = Number(review.counts?.high ?? 0) || 0
   if (high > 0) return [FAIL, `검토에서 높음 지적 ${high}건이 남아 있다`]
   const ev = reviewEvidenceCount(review)

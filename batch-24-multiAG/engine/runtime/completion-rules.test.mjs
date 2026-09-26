@@ -400,3 +400,30 @@ describe('recoveryPendingOnly — 마감 재검수(review 전용) 배치가 지�
     assert.equal(recoveryPendingOnly(null, { stages: ['review'] }), false)
   })
 })
+
+// ── 👤 2026-09-26 (나) T6 codex 끼리 교차 — sol 구현 → astra 리뷰 ────────────────────────────────
+describe('completion-rules — T6 codex 끼리 교차(👤 2026-09-26 (나) sol 구현 → astra 리뷰)', () => {
+  const rev = (model) => ({ provider: 'codex', model, result: 'clean', counts: { high: 0, patch: 0, decision: 0, defer: 0 }, readEvidence: 3 })
+
+  it('구현 codex/gpt-5.6-sol · 리뷰 codex/gpt-6-astra 는 모델이 달라 교차로 통과한다', () => {
+    const m = manifest({ workers: { dev: { provider: 'codex', model: 'gpt-5.6-sol' } }, review: rev('gpt-6-astra') })
+    const [r, why] = crossReviewResult(m)
+    assert.equal(r, PASS, why)
+    assert.match(why, /codex\/gpt-6-astra · 구현 gpt-5\.6-sol/)
+    assert.equal(strengthenCompletion({ manifest: m, storyText: '', diff: '' }).criteria.find((c) => c.id === 'T6').result, PASS)
+  })
+
+  it('같은 codex 모델 · 모델 기록 누락 · claude 끼리는 여전히 미달이다(codex: 접두사는 같은 모델로 본다)', () => {
+    const same = manifest({ workers: { dev: { provider: 'codex', model: 'gpt-6-astra' } }, review: rev('gpt-6-astra') })
+    assert.equal(crossReviewResult(same)[0], FAIL)
+    assert.match(crossReviewResult(same)[1], /교차 검토가 아니다/)
+    const missing = manifest({ workers: { dev: { provider: 'codex' } }, review: rev('gpt-6-astra') })
+    assert.equal(crossReviewResult(missing)[0], FAIL)
+    const claude = manifest({ workers: { dev: { provider: 'claude', model: 'opus' } }, review: { ...rev('fable'), provider: 'claude' } })
+    assert.equal(crossReviewResult(claude)[0], FAIL)
+    const prefixed = manifest({ workers: { dev: { provider: 'codex', model: 'codex:gpt-5.6-sol' } }, review: rev('gpt-5.6-sol') })
+    assert.equal(crossReviewResult(prefixed)[0], FAIL)
+    // 다른 제공자면 종전 그대로 통과(문구도 종전)
+    assert.match(crossReviewResult(manifest())[1], /^다른 쪽\(codex\)이 검토/)
+  })
+})

@@ -1002,3 +1002,36 @@ describe('[engine-e2e][autonomy] mockup 단계 — AI 초안 + 장부 pending', 
     assert.equal(r.status, 4, r.out.slice(-1500))
   })
 })
+
+// ── 👤 2026-09-26 (나) — Codex 구현(sol) → Codex 리뷰(astra) · 설정 modelPolicy.codexDev 가 켜진 때만 ──────────────
+describe('[engine-e2e][codexDev] sol 구현 → astra 리뷰가 라우팅 경로에서 완주한다(T6 = 만든 쪽과 다른 모델)', { timeout: 240_000 }, () => {
+  const routingArgs = (fx, codexDev) => {
+    const p = join(fx.T, 'routing.json')
+    writeFileSync(p, JSON.stringify({ modelPolicy: { enabled: true, codexDev }, providers: { claude: { enabled: true, max: 3 }, codex: { enabled: true, max: 1, roles: ['review', 'dev'] } } }))
+    return ['--routing-config', p, '--model-state-dir', fx.state, '--policy-assigned', '--batch-kind', 'new',
+      '--stages', 'dev,review', '--dev-model', 'codex:gpt-5.6-sol', '--review-model', 'codex:gpt-6-astra']
+  }
+  it('켜짐 — [CODEX][DEV](sol) → qa → [CODEX][REVIEW](astra) → ready · 매니페스트 구현/리뷰 둘 다 codex · T6 PASS 문구', () => {
+    const fx = makeFixture()
+    const r = runEngine(fx, { args: routingArgs(fx, { enabled: true, maxRisk: 10 }) })
+    assert.equal(r.status, 0, r.out.slice(-4000))
+    assert.match(r.out, /\[CODEX\]\[DEV\] start model=codex:gpt-5\.6-sol/)
+    assert.match(r.out, /\[CODEX\]\[REVIEW\] start model=codex:gpt-6-astra/)
+    assert.ok(!/REVIEW STOP/.test(r.out), 'same-provider STOP 이 났다')
+    assert.match(r.calls, /codex workspace-write 2-1-a/)
+    assert.match(r.calls, /codex read-only 2-1-a/)
+    const m = r.manifest('2-1-a')
+    assert.equal(m.completion.verdict, 'ready', JSON.stringify(m.completion.notVerified))
+    assert.deepEqual([m.workers.dev.provider, m.workers.dev.model, m.review.provider, m.review.model], ['codex', 'gpt-5.6-sol', 'codex', 'gpt-6-astra'])
+    const t6 = m.completion.criteria.find((c) => c.id === 'T6')
+    assert.equal(t6.result, 'pass', t6.why)
+    assert.match(t6.why, /codex\/gpt-6-astra · 구현 gpt-5\.6-sol/)
+  })
+  it('꺼짐(기본) — 같은 명령줄이어도 codex 끼리 리뷰는 고르지 않는다(ready 아님) · 대조군: 위 통과는 설정 때문이다', () => {
+    const fx = makeFixture()
+    const r = runEngine(fx, { args: routingArgs(fx, { enabled: false }) })
+    assert.notEqual(r.status, 0)
+    assert.ok(!/\[CODEX\]\[REVIEW\] start/.test(r.out), 'codex 자체 리뷰가 실행됐다')
+    assert.notEqual(r.manifest('2-1-a')?.completion?.verdict, 'ready')
+  })
+})

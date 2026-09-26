@@ -94,7 +94,12 @@ export function crossReviewResult(manifest) {
   if (/^not-run/.test(str(review.result))) return [NOT_VERIFIED, '교차 검토를 돌리지 않았다']
   const devP = str(manifest?.workers?.dev?.provider)
   const revP = str(review.provider)
-  if (devP && revP && devP === revP) return [FAIL, `만든 쪽과 검토한 쪽이 같다(${revP}) — 교차 검토가 아니다`]
+  // 👤 2026-09-26 (나) codex 구현(sol) → codex 리뷰(astra): 제공자가 같아도 **모델**이 다르면 다른 눈이다.
+  // claude 끼리는 여전히 미달(print 어댑터가 열람 증거를 못 낸다) · 모델 기록이 한쪽이라도 없으면 codex 끼리도 미달.
+  const modelName = (m) => str(m).replace(/^codex:/, '')
+  const devM = modelName(manifest?.workers?.dev?.model), revM = modelName(review.model)
+  const codexPair = devP === 'codex' && revP === 'codex' && Boolean(devM) && Boolean(revM) && devM !== revM
+  if (devP && revP && devP === revP && !codexPair) return [FAIL, `만든 쪽과 검토한 쪽이 같다(${revP}${devP === 'codex' ? `/${revM || '?'} · 구현 ${devM || '?'}` : ''}) — 교차 검토가 아니다`]
   if (!devP || !revP) {
     const miss = [!devP ? '구현자(workers.dev.provider)' : '', !revP ? '검토자(review.provider)' : ''].filter(Boolean).join('·')
     return [NOT_VERIFIED, `${miss} 기록이 없어 「만든 쪽과 다른 쪽인지」를 확인하지 못했다`]
@@ -103,7 +108,7 @@ export function crossReviewResult(manifest) {
   if (high > 0) return [FAIL, `검토에서 높음 지적 ${high}건이 남아 있다`]
   const ev = reviewEvidenceCount(review)
   if (ev < 1) return [FAIL, '검토자가 파일을 실제로 읽은 증거가 없다 — 「아무 문제 없음」을 인정하지 않는다']
-  return [PASS, `다른 쪽(${revP})이 검토 · 높음 0 · 열람 증거 ${ev}건`]
+  return [PASS, `다른 쪽(${codexPair ? `${revP}/${revM} · 구현 ${devM}` : revP})이 검토 · 높음 0 · 열람 증거 ${ev}건`]
 }
 
 /**

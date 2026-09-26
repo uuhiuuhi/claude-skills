@@ -146,3 +146,51 @@ it('storyRisk/storyDifficulty 는 files=null 을 빈 목록으로 받는다(새 
   assert.equal(storyDifficulty({ files: null, text: '' }).score, 0)
   assert.equal(storyDifficulty({ files: undefined, text: 'x'.repeat(9000) }).score, 1)
 })
+
+// ── 👤 2026-09-26 (나) codexDev — sol 구현 → astra 리뷰 ──────────────────────────────────────────
+describe('[assign] codexDev — 👤 2026-09-26 (나) sol 구현 → astra 리뷰(제공자가 아니라 모델로 교차)', () => {
+  const SOL = 'codex:gpt-5.6-sol', ASTRA = 'codex:gpt-6-astra'
+  const ON = { enabled: true, maxRisk: 10 }
+
+  it('켜지면 고위험 스토리도 sol dev 를 유지하고 review 는 codex 의 다른 모델(astra)이다', () => {
+    assert.ok(storyRisk(RISKY).score >= HIGH_RISK_MIN)
+    const out = assignWorkers({ stories: [SAFE, RISKY], providers: CODEX_ON, history: null, config: { models: { dev: SOL, review: ASTRA }, codexDev: ON } })
+    for (const o of out) {
+      assert.equal(o.dev, SOL, `${o.story}: ${o.why}`)
+      assert.equal(o.review, ASTRA, `${o.story}: ${o.why}`)
+      assert.match(o.why, /codex 끼리 교차/)
+    }
+  })
+
+  it('maxRisk 를 넘는 스토리는 종전대로 claude 폴백 · 꺼져 있으면(기본) 고위험 codex dev 배제 + codex 끼리 리뷰는 claude 로', () => {
+    const capped = assignWorkers({ stories: [SAFE, RISKY], providers: CODEX_ON, history: null, config: { models: { dev: SOL, review: ASTRA }, codexDev: { enabled: true, maxRisk: 3 } } })
+    assert.equal(capped[0].dev, SOL, capped[0].why)
+    assert.equal(capped[1].devProvider, 'claude', capped[1].why)
+    assert.equal(capped[1].review, ASTRA, capped[1].why)
+    const off = assignWorkers({ stories: [SAFE, RISKY], providers: CODEX_ON, history: null, config: { models: { dev: SOL, review: ASTRA } } })
+    assert.equal(off[1].devProvider, 'claude', off[1].why)
+    assert.equal(off[0].dev, SOL, off[0].why) // 저위험은 종전에도 codex dev 가능
+    assert.equal(off[0].reviewProvider, 'claude', off[0].why) // 종전: codex 끼리는 claude 로 교차
+  })
+
+  it('dev 와 같은 codex 모델이 리뷰로 오면 다른 codex 모델로 바꾼다(sol→astra · "codex"(=astra)→sol)', () => {
+    const a = assignWorkers({ stories: [SAFE], providers: CODEX_ON, history: null, config: { codexDev: ON, models: { dev: SOL, review: SOL } } })
+    assert.equal(a[0].review, ASTRA, a[0].why)
+    const b = assignWorkers({ stories: [SAFE], providers: CODEX_ON, history: null, config: { codexDev: ON, models: { dev: 'codex', review: ASTRA } } })
+    assert.equal(b[0].review, SOL, b[0].why)
+  })
+
+  it('codex dev 연속 실패 2회면 켜져 있어도 claude 로 피한다 · 편성기 어댑터(assignBatchModels)도 짝을 보존한다', () => {
+    let h = emptyHistory()
+    for (let i = 0; i < FAIL_STREAK_MAX; i++) h = recordAssignResult(h, { story: SAFE.key, provider: 'codex', role: 'dev', ok: false })
+    const out = assignWorkers({ stories: [SAFE], providers: CODEX_ON, history: h, config: { models: { dev: SOL, review: ASTRA }, codexDev: ON } })
+    assert.equal(out[0].devProvider, 'claude', out[0].why)
+    assert.equal(out[0].review, ASTRA, out[0].why)
+    assert.deepEqual(assignBatchModels({ base: { dev: SOL, review: ASTRA }, stories: [RISKY], providers: CODEX_ON, config: { codexDev: ON } }), { dev: SOL, review: ASTRA })
+    assert.deepEqual(assignBatchModels({ base: { review: 'codex' }, stories: [RISKY], providers: CODEX_ON, config: { codexDev: ON } }), { review: 'codex' })
+    // 정책이 꺼진 어댑터는 종전과 바이트 동일(고위험 → claude dev · review 는 codex 유지)
+    const legacy = assignBatchModels({ base: { dev: SOL, review: ASTRA }, stories: [RISKY], providers: CODEX_ON, config: {} })
+    assert.equal(specProvider(legacy.dev), 'claude')
+    assert.equal(legacy.review, ASTRA)
+  })
+})
