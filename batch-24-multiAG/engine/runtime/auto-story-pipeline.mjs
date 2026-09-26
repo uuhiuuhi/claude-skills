@@ -850,12 +850,15 @@ function untrackedUnifiedDiff(p) {
 }
 const splitLines = (s) => String(s).split("\n").map((l) => l.trim()).filter(Boolean);
 /** 민감 경로를 **pathspec 단계에서** 제외한 tracked diff — 이름 목록은 호출부가 준다(#1). */
+// 엔진 장부(auto-pipeline-logs)는 리뷰 대상이 아니다 — 경로 단계에서 항상 뺀다. 종전엔 정지·재개 직후 장부 3파일만 달라져
+// 「작업 트리 vs HEAD 가 비지 않음」이 되고, 리뷰어가 로그만 든 diff 를 받아 「구현 변경이 없다」는 Decision 을 남겨
+// T7 STOP 이 연쇄했다(2026-09-26 22:4x 4-12·4-14·4-15 마감 재검수 실사고). 장부를 빼고 나서 비면 아래 baseline..HEAD 폴백이 탄다.
+const LEDGER_DIR = "_bmad-output/implementation-artifacts/auto-pipeline-logs";
+const isLedgerPath = (f) => String(f).replace(/\\/g, "/").includes("auto-pipeline-logs/");
 function trackedDiffExcludingSensitive(names, ref) {
-  const excl = names.filter(isSensitivePath).map((f) => `:(exclude,top)${f}`);
+  const excl = [...names.filter(isSensitivePath).map((f) => `:(exclude,top)${f}`), `:(exclude,top)${LEDGER_DIR}`];
   const base = ref ? [ref] : ["HEAD"];
-  return excl.length
-    ? git(["diff", ...base, "--", ":(top)", ...excl]).out
-    : git(["diff", ...base, "--"]).out;
+  return git(["diff", ...base, "--", ":(top)", ...excl]).out;
 }
 
 function prepareReviewDiff(story) {
@@ -864,8 +867,8 @@ function prepareReviewDiff(story) {
   // 리뷰 diff 에 자격증명이 실리면 그대로 외부 벤더로 나간다 — gitignore·추적 여부와 무관하게 env·키·시크릿
   // 파일은 ① pathspec 제외 ② unified diff 에서 파일 섹션째 제거 ③ 최종 확정 후 값 마스킹, 셋을 모두 건다
   // (2026-09-02 codex-review-r1 #1: 종전에는 `git diff HEAD` 본문에 추적된 `.env.production` 이 그대로 실렸다).
-  let names = splitLines(git(["diff", "--name-only", "HEAD", "--"]).out);
-  let diff = trackedDiffExcludingSensitive(names);
+  let names = splitLines(git(["diff", "--name-only", "HEAD", "--"]).out).filter((f) => !isLedgerPath(f));
+  let diff = names.length ? trackedDiffExcludingSensitive(names) : "";
   let files = names.filter((f) => !isSensitivePath(f));
   const untracked = splitLines(git(["ls-files", "--others", "--exclude-standard"]).out)
     .filter((f) => !f.includes("auto-pipeline-logs/") && !isSensitivePath(f));
@@ -879,7 +882,7 @@ function prepareReviewDiff(story) {
     // (종전에는 여기서 마스킹 **이후**에 원문 diff 로 덮어써 `sk-…`·URL 자격증명이 그대로 나갔다).
     const base = /^baseline_commit:\s*([0-9a-f]{7,40})/m.exec(readFileSync(storyFile, "utf8"))?.[1];
     if (base && git(["cat-file", "-e", `${base}^{commit}`]).code === 0) {
-      names = splitLines(git(["diff", "--name-only", `${base}..HEAD`, "--"]).out);
+      names = splitLines(git(["diff", "--name-only", `${base}..HEAD`, "--"]).out).filter((f) => !isLedgerPath(f));
       diff = trackedDiffExcludingSensitive(names, `${base}..HEAD`);
       files = names.filter((f) => !isSensitivePath(f));
       targetRef = `${base.slice(0, 7)}..HEAD`;
