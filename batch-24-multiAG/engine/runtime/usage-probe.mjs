@@ -80,7 +80,8 @@ export function usageBlocks(usage, { now = Date.now(), models = CLAUDE_MODELS } 
   };
   if (usage.fiveHour?.pct >= 100) for (const m of models) add(m, usage.fiveHour.resetsAt, `세션 ${usage.fiveHour.pct}%`);
   if (usage.sevenDay?.pct >= 100) for (const m of models) add(m, usage.sevenDay.resetsAt, `주간 전체 ${usage.sevenDay.pct}%`);
-  for (const s of usage.scoped ?? []) if (s.active || s.pct >= 100) add(s.model, s.resetsAt, `${s.model} 주간 모델별 ${s.pct}%`);
+  // is_active 는 「이 모델별 한도가 표시 대상인가」이지 소진이 아니다 — 2026-09-27 05:06 fable 12%(is_active) 를 09-30 까지 막아 지휘 opus 대체·마감 재검수 exit 5.
+  for (const s of usage.scoped ?? []) if (s.pct >= 100) add(s.model, s.resetsAt, `${s.model} 주간 모델별 ${s.pct}%`);
   return [...out.values()];
 }
 
@@ -125,7 +126,7 @@ export function usageLine(usage) {
   if (!usage) return '[USAGE] 조회 실패(토큰 없음/네트워크) — CLI 문구로만 판정';
   const pct = (x) => (x?.pct === null || x?.pct === undefined ? '—' : `${x.pct}%`);
   const seg = [`세션 ${pct(usage.fiveHour)}(리셋 ${kst(usage.fiveHour?.resetsAt)})`, `주간 ${pct(usage.sevenDay)}(${kst(usage.sevenDay?.resetsAt)})`];
-  for (const s of usage.scoped ?? []) seg.push(`${s.model} ${pct(s)}${s.active || s.pct >= 100 ? '🔴' : ''}(${kst(s.resetsAt)})`);
+  for (const s of usage.scoped ?? []) seg.push(`${s.model} ${pct(s)}${s.pct >= 100 ? '🔴' : ''}(${kst(s.resetsAt)})`);
   if (usage.extraUsage) seg.push(`크레딧 ${usage.extraUsage.reached ? '소진' : usage.extraUsage.enabled ? '사용 중' : '꺼짐'}`);
   return `[USAGE] ${seg.join(' · ')}`;
 }

@@ -48,6 +48,16 @@ test('usageBlocks: 모델별 한도는 그 모델만 · 크레딧 소진은 차�
   assert.match(blocks[0].reason, /fable 주간 모델별 100%/);
 });
 
+test('usageBlocks/usageLine: 모델별 is_active 는 표시 대상 표식일 뿐 — 12% 면 막지도 🔴 도 아니다(2026-09-27 05:06 실사고)', () => {
+  const p = PAYLOAD();
+  p.limits[2] = { ...p.limits[2], percent: 12, severity: 'normal' }; // is_active: true 그대로
+  const u = normalizeUsage(p, NOW);
+  assert.deepEqual(u.scoped.map((s) => [s.model, s.pct, s.active]), [['fable', 12, true]]);
+  assert.deepEqual(usageBlocks(u, { now: NOW }), []);
+  assert.match(usageLine(u), /fable 12%\(/);
+  assert.doesNotMatch(usageLine(u), /🔴/);
+});
+
 test('usageBlocks: 세션 100% 는 Claude 전 모델을 세션 리셋까지 막는다(모델별 한도가 더 늦으면 그 시각)', () => {
   const p = PAYLOAD();
   p.limits[0].percent = 100;
