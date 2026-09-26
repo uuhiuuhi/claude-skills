@@ -8,13 +8,13 @@ export class StageRouter {
     this.exhaustedProviders = exhausted.filter((value) => ['claude', 'codex'].includes(String(value)));
     this.exhausted = exhausted.filter((value) => !this.exhaustedProviders.includes(String(value))).map(canonicalModel);
     this.claudeLadder = claudeLadder;
-    this.codexDev = codexDev; // 👤 2026-09-26 (나) modelPolicy.codexDev — Codex 구현(sol) 허용 정책(없으면 종전 경계)
+    this.codexDev = codexDev; // 👤 2026-09-26 (나) modelPolicy.codexDev — Codex 구현 허용 정책(없으면 종전 경계)
     this.now = now;
   }
   choose({ role, risk, difficulty, preferred = '', avoid = '', attempted = [], preferProvider = 'claude', limitRelief = false }) {
     const health = readModelHealth(this.stateDir, this.now());
     // BMad planning and mockups currently require the Claude skill adapter.
-    const candidates = modelCandidates({ role, risk, difficulty, preferProvider, limitRelief, codexDev: this.codexDev })
+    const candidates = modelCandidates({ role, risk, difficulty, preferProvider, limitRelief, codexDev: this.codexDev, avoid })
       .filter((m) => ['dev', 'review'].includes(role) || providerOf(m) === 'claude');
     return selectModel({ role, risk, difficulty, preferred, avoid, providers: this.providers,
       blocked: (model) => this.exhaustedProviders.includes(providerOf(model)) || health.blocked(model) ||

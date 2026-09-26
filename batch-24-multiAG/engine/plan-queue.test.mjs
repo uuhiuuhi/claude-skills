@@ -561,3 +561,20 @@ describe('[codexDev] 👤 2026-09-26 (나) — 편성기가 sol 구현·astra �
     assert.notEqual(e.dev, e.review)
   })
 })
+
+describe('[codexDev.review] 👤 2026-09-26 20:5x 「opus 를 astra 로 대체 · astra 하던 일을 opus 가」 — 편성기가 astra 구현·opus 리뷰 짝을 낸다', () => {
+  const ASTRA = 'codex:gpt-6-astra'
+  const CFG = {
+    ...CONFIG, exhaustedModels: [],
+    models: { new: { dev: ASTRA, review: 'opus' }, recovery: { dev: ASTRA, review: 'opus' }, closeout: { review: 'opus' } },
+    providers: { claude: { enabled: true, max: 4 }, codex: { enabled: true, max: 3, roles: ['review', 'dev'], reviewKinds: [] } },
+    modelPolicy: { enabled: true, codexDev: { enabled: true, maxRisk: 10, models: [ASTRA], review: 'opus' } },
+  }
+  const risky = story({ findings: '- [ ] [Review][Patch] a' }).replace('- `src/a.ts`', '- `supabase/migrations/20260926_x.sql`\n- `src/auth/guard.ts`')
+  const at = (fx, config) => plan({ ...fixture(fx), config, max: 12, today: '2026-08-26' })
+  it('회수·신규 = astra/opus · 마감 재검수 = opus(구현자가 opus 였던 스토리는 엔진이 실행 시점에 astra 로 교차)', () => {
+    assert.deepEqual(at({ sprint: '  2-1-a: review\n', stories: { '2-1-a': risky } }, CFG).queue.batches[0].models, { dev: ASTRA, review: 'opus' })
+    assert.deepEqual(at({ sprint: '  2-1-b: backlog\n', stories: {} }, CFG).queue.batches[0].models, { dev: ASTRA, review: 'opus' })
+    assert.deepEqual(at({ sprint: '  2-1-c: review\n', stories: { '2-1-c': story() } }, CFG).queue.batches[0].models, { review: 'opus' })
+  })
+})

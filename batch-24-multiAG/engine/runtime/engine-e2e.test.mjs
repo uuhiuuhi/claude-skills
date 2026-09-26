@@ -1035,3 +1035,33 @@ describe('[engine-e2e][codexDev] sol 구현 → astra 리뷰가 라우팅 경로
     assert.notEqual(r.manifest('2-1-a')?.completion?.verdict, 'ready')
   })
 })
+
+// ── 👤 2026-09-26 20:5x 「opus 를 astra 로 대체 · astra 하던 일을 opus 가」 — astra 구현 → opus 리뷰(열람 증거 = Claude stream-json) ──
+describe('[engine-e2e][codexDev.review] astra 구현 → opus 리뷰가 라우팅 경로에서 완주한다(T6 = 다른 제공자 · Claude 열람 증거)', { timeout: 240_000 }, () => {
+  const routingArgs = (fx, codexDev) => {
+    const p = join(fx.T, 'routing.json')
+    writeFileSync(p, JSON.stringify({ modelPolicy: { enabled: true, codexDev }, providers: { claude: { enabled: true, max: 3 }, codex: { enabled: true, max: 1, roles: ['review', 'dev'] } } }))
+    return ['--routing-config', p, '--model-state-dir', fx.state, '--policy-assigned', '--batch-kind', 'new',
+      '--stages', 'dev,review', '--dev-model', 'codex:gpt-6-astra', '--review-model', 'opus']
+  }
+  it('켜짐 — [CODEX][DEV](astra) → qa → [CLAUDE][REVIEW](opus) → ready · 매니페스트 구현 codex/리뷰 claude', () => {
+    const fx = makeFixture()
+    const r = runEngine(fx, { args: routingArgs(fx, { enabled: true, maxRisk: 10, models: ['codex:gpt-6-astra'], review: 'opus' }), env: { E2E_CLAUDE_TRACE: '1' } })
+    assert.equal(r.status, 0, r.out.slice(-4000))
+    assert.match(r.out, /\[CODEX\]\[DEV\] start model=codex:gpt-6-astra/)
+    assert.match(r.out, /\[CLAUDE\]\[REVIEW\] start model=opus/)
+    assert.ok(!/REVIEW STOP/.test(r.out), 'same-provider STOP 이 났다')
+    assert.match(r.calls, /codex workspace-write 2-1-a/)
+    assert.ok(!r.calls.includes('codex read-only'), 'codex 리뷰가 실행됐다')
+    const m = r.manifest('2-1-a')
+    assert.equal(m.completion.verdict, 'ready', JSON.stringify(m.completion.notVerified))
+    assert.deepEqual([m.workers.dev.provider, m.workers.dev.model, m.review.provider, m.review.model], ['codex', 'gpt-6-astra', 'claude', 'opus'])
+    assert.equal(m.completion.criteria.find((c) => c.id === 'T6').result, 'pass')
+  })
+  it('열람 증거 없는 opus 리뷰(스트림 추적 없음)는 ready 가 아니다 — 대조군: 위 통과는 실제 읽기 기록 때문이다', () => {
+    const fx = makeFixture()
+    const r = runEngine(fx, { args: routingArgs(fx, { enabled: true, maxRisk: 10, models: ['codex:gpt-6-astra'], review: 'opus' }) })
+    assert.match(r.out, /\[CLAUDE\]\[REVIEW\] start model=opus/)
+    assert.notEqual(r.manifest('2-1-a')?.completion?.verdict, 'ready')
+  })
+})

@@ -224,3 +224,32 @@ test('codexDev (👤 2026-09-26 「astra·sol 을 더 써서 opus 사용량을 �
   const [a] = assignWorkers({ stories: [{ key: 'x' }], providers, config: { modelPolicy: { enabled: true, codexDev } } });
   assert.deepEqual([a.dev, a.review], ['codex:gpt-5.6-sol', 'codex:gpt-6-astra']);
 });
+
+test('codexDev.review (👤 2026-09-26 20:5x 「opus 를 astra 로 대체 · astra 하던 일을 opus 가」): astra 구현 → opus 리뷰 · 고위험이라도 opus 리뷰 허용 · Claude 구현 스토리는 종전대로 codex 리뷰', () => {
+  const codexDev = { enabled: true, maxRisk: 10, models: ['codex:gpt-6-astra'], review: 'opus' };
+  assert.deepEqual(codexDevPolicy(codexDev).models, ['codex:gpt-6-astra']);
+  assert.equal(codexDevPolicy(codexDev).review, 'opus');
+  assert.equal(codexDevPolicy({ enabled: true, review: 'codex:gpt-6-astra' }).review, '', 'review 는 Claude 모델만');
+  // dev — 고위험이라도 astra
+  assert.equal(selectModel({ role: 'dev', risk: 8, difficulty: 8, providers, preferred: 'codex:gpt-6-astra', codexDev }).model, 'codex:gpt-6-astra');
+  // review — astra 구현 뒤 opus(tier 2)가 고위험 하한(3) 예외로 통과 · 후보 목록은 [opus, astra]
+  assert.deepEqual(modelCandidates({ role: 'review', risk: 8, codexDev, avoid: 'codex:gpt-6-astra' }), ['opus', 'codex:gpt-6-astra']);
+  assert.equal(selectModel({ role: 'review', risk: 8, difficulty: 8, providers, avoid: 'codex:gpt-6-astra', preferred: 'opus', codexDev }).model, 'opus');
+  assert.equal(selectModel({ role: 'review', risk: 8, difficulty: 8, providers, avoid: 'codex:gpt-6-astra', codexDev }).model, 'opus');
+  // Claude(opus) 가 구현한 스토리(마감 재검수 등)는 opus 리뷰가 아니라 codex(astra) — 예외는 Codex 구현에만
+  assert.deepEqual(modelCandidates({ role: 'review', risk: 8, codexDev, avoid: 'opus' }), ['codex:gpt-6-astra']);
+  assert.equal(selectModel({ role: 'review', risk: 8, difficulty: 8, providers, avoid: 'opus', preferred: 'opus', codexDev }).model, 'codex:gpt-6-astra');
+  // sonnet 처럼 하한 밖 Claude 모델을 review 로 적어도 그 모델까지만 내려간다 — 다른 Claude 모델은 종전 하한
+  assert.equal(selectModel({ role: 'review', risk: 8, difficulty: 8, providers, avoid: 'codex:gpt-6-astra', preferred: 'sonnet', codexDev }).model, 'opus');
+  // review 를 비우면 종전(나) 규칙 — codex 의 다른 모델
+  assert.equal(selectModel({ role: 'review', risk: 8, difficulty: 8, providers, avoid: 'codex:gpt-5.6-sol', codexDev: { enabled: true, maxRisk: 10 } }).model, 'codex:gpt-6-astra');
+  // 라우터 — opus 가 한도면 review 는 astra(같은 모델)를 못 쓰니 null(리셋 대기 · 품질을 깎지 않는다)
+  const stateDir = mkdtempSync(join(tmpdir(), 'routing-codex-dev-review-'));
+  const router = new StageRouter({ stateDir, providers, codexDev, now: () => 1000 });
+  assert.equal(router.choose({ role: 'review', risk: 8, difficulty: 8, avoid: 'codex:gpt-6-astra', preferred: 'opus' }).model, 'opus');
+  router.record('opus', 'limit', { retryAt: 5000 });
+  assert.equal(new StageRouter({ stateDir, providers, codexDev, now: () => 1000 }).choose({ role: 'review', risk: 8, difficulty: 8, avoid: 'codex:gpt-6-astra', preferred: 'opus' }), null);
+  // 배정기(정책 경로) — astra/opus 짝
+  const [a] = assignWorkers({ stories: [{ key: 'x' }], providers, config: { modelPolicy: { enabled: true, codexDev } } });
+  assert.deepEqual([a.dev, a.review], ['codex:gpt-6-astra', 'opus']);
+});

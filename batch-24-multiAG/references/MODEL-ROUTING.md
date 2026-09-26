@@ -36,15 +36,16 @@
 기본은 종전 경계다: **구현은 Claude, 리뷰는 Codex**(고위험 risk ≥ 4 구현은 Claude 만 · codex 끼리 리뷰 금지). 설정 `modelPolicy.codexDev` 를 켜면 Codex 도 구현을 맡는다 — Claude(Opus) 주간 한도를 아끼기 위한 스위치다.
 
 ```json
-"modelPolicy": { "codexDev": { "enabled": true, "maxRisk": 10, "models": ["codex:gpt-5.6-sol"] } }
+"modelPolicy": { "codexDev": { "enabled": true, "maxRisk": 10, "models": ["codex:gpt-6-astra"], "review": "opus" } }
 ```
 
 - `enabled`(기본 false): 켜면 dev 후보에 `models`(기본 sol 하나)가 들고, 편성기 `models.new.dev / models.recovery.dev` 에 적힌 `codex:gpt-5.6-sol` 을 배정기가 claude 로 되돌리지 않는다.
 - `maxRisk`(기본 3): 이 위험도까지만 Codex 구현. 넘으면 종전대로 Claude(fable→opus). 10 이면 전부.
 - `models`: dev 를 맡을 Codex 모델. **astra 는 여기 넣지 않는다** — 리뷰 몫이다. dev 가 astra 면 고위험 리뷰 후보(tier 3 = astra 뿐)가 없어 보류(exit 5)된다.
+- `review`(기본 없음 · 👤 2026-09-26 20:5x 「opus 를 astra 로 대체 · astra 하던 일을 opus 가」): Codex 구현 스토리의 리뷰를 맡을 **Claude** 모델(예 `opus`). 적으면 그 스토리의 review 후보가 `[review, …codex]` 가 되고, **그 모델에 한해** 리뷰 품질 하한이 그 모델의 tier 까지 내려간다(고위험 tier 3 규칙의 유일한 예외). Claude 리뷰는 `--output-format stream-json` 추적의 Read 기록으로 열람 증거를 채운다 — 스토리·diff·변경 파일을 전부 읽지 않으면 `not-run(missing read evidence)` 로 완료가 막힌다. 구현자가 Claude(옛 opus 스토리의 마감 재검수)면 예외가 아니라 종전대로 codex(astra)가 리뷰한다. 편성기가 review 를 `codex` 로 덮지 않게 `providers.codex.reviewKinds` 를 `[]` 로 둔다.
 - 교차 검토(T6): dev·review 가 **둘 다 codex** 면 제공자가 아니라 **모델**이 다를 때 「만든 쪽과 다른 쪽」으로 인정한다(sol ≠ astra). claude 끼리는 여전히 미달(print 어댑터가 열람 증거를 못 낸다) · 같은 codex 모델·모델 기록 누락도 미달. `completion-rules.crossReviewResult` · `readiness.crossReviewVerdict` · 파이프라인 `REVIEW STOP — same-provider` · 배정기 · 편성기가 같은 잣대다.
 - 한도·실패: sol 이 한도(limit)면 라우터가 Claude 후보로 내려간다(배치가 서지 않는다). 같은 스토리에서 codex dev 가 연속 2회 실패하면 배정기가 claude 로 피한다(assign-history). 마감 재검수(closeout · review 만)는 구현자 기록(sol)을 보고 astra 를 고른다.
-- 되돌리기: `enabled: false`(또는 키 삭제) + `models.*.dev` 를 `opus` 로. 엔진 재설치 없이 설정만으로 종전 경계로 돌아간다.
+- 되돌리기: `enabled: false`(또는 키 삭제) + `models.*.dev` 를 `opus` 로(+ `models.*.review` 를 codex 로 · `reviewKinds` 복원). 엔진 재설치 없이 설정만으로 종전 경계로 돌아간다.
 
 ### 리뷰 비용 상한 (👤 2026-09-07 「2 예」)
 
