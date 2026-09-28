@@ -12,3 +12,5 @@ node "$env:USERPROFILE\.claude\skills\batch-24-multiAG\install.mjs" --force
 Codex에서도 같은 스킬 설명을 사용하려면 동일 폴더를 `$env:USERPROFILE\.codex\skills\`에 복사한다. 프로젝트 설치본은 `tools/auto/runtime/`에 모델 런타임을 고정하므로 전역 스킬 업데이트가 실행 중 배치에 즉시 섞이지 않는다.
 
 정책과 운영 경계는 [SKILL.md](SKILL.md), 라우팅의 상세 근거는 [references/MODEL-ROUTING.md](references/MODEL-ROUTING.md)에 있다.
+
+운영 중인 러너를 지켜보고 끼어드는 도구와 백그라운드 표기 규칙은 [ops/README.md](ops/README.md) 와 SKILL.md 의 「백그라운드 작업 표기 규칙」에 있다. 프로젝트 고유값은 전부 `tools/auto/auto.config.json` 에서 읽는다.

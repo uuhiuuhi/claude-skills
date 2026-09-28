@@ -1,23 +1,23 @@
 // engine/watchdog.mjs (설치본 tools/auto/watchdog.mjs) — 24시간 러너 **감시자(지휘자 대행)**. 👤 2026-09-09 밤 지시:
 //   「일정 시간 이상 멈춰 있으면 원인 찾아서 계속 진행하는 지휘자 역할이 되도록」.
 //
-// 왜 필요한가: 러너(BaroOS-auto-slots · 30분)는 같은 배치가 같은 이유로 멈춰도(예: 5-1 마감 재검수
+// 왜 필요한가: 러너(예약작업 `<project>-auto-slots` · 30분)는 같은 배치가 같은 이유로 멈춰도(예: 5-1 마감 재검수
 // 「구현자 모델 기록 없음」 exit 5 · 2026-09-09 밤 6슬롯 연속) 다음 슬롯에 **같은 일을 또 시도**한다 —
 // exit 5 를 「한도(날씨)」로 보고 차단기에서 빼기 때문이다. 아침에 사람이 「멈춰 있었습니다 · 원인을
 // 찾겠습니다」로 시작하던 하루가 여기서 사라진다.
 //
-// 무엇을 하나(슬롯 사이 · 30분마다 · 예약작업 BaroOS-watchdog):
+// 무엇을 하나(슬롯 사이 · 30분마다 · 예약작업 `<project>-watchdog`):
 //   ① 진단 — exit-info.json(엔진 STOP 부기) + night-last-run.md + slots.log 로 「같은 스토리·같은 이유 반복」 ·
 //      「러너 침묵(75분 이상 라운드 없음)」 · 「lock 정체(3시간 이상 로그 정지)」 를 가른다.
 //   ② 알려진 원인은 플레이북으로 **바로 고친다**(구현자 기록 부재 → state.json 복원 · 런타임 핀 불일치 →
 //      핀 재기록 · codex CLI 판 부족 → 재설치 · 429/한도 → 대기).
 //   ③ 모르는 원인은 Claude 진단 세션(headless `claude -p` · opus · 편집 허용 = 상태·설정 파일만)을 불러
-//      원인을 찾고 고치게 한다(보고서 `~/.baroos-auto/watchdog-claude-<ts>.md`).
+//      원인을 찾고 고치게 한다(보고서 `<상태 폴더>/watchdog-claude-<ts>.md`).
 //   ④ 고친 뒤 러너를 **즉시 기동**(Start-ScheduledTask · lock 이 중복을 막는다).
 //   ⑤ 같은 스토리가 수리 뒤에도 3회 이상 반복 정지하면 그 스토리 파일에 `BLOCKED-ON-HUMAN:` 표식을 남겨
 //      **그 스토리만** 편성에서 빼고(plan-queue 자율운전 ⑦) 나머지는 계속 돌린다 → 사람은 「내가 할 일 뭐야」로 본다.
-//   ⑥ 모든 판단·행동을 `~/.baroos-auto/watchdog.log` 에 남기고 텔레그램(비공개 봇)으로 알린다.
-//   ⑦ 증거 보존 정리(👤 2026-09-12 「1 승인」) — `~/.baroos-auto/archive/<날짜>-<ts>-evidence` 가 3일(WD_EVIDENCE_KEEP_DAYS)을
+//   ⑥ 모든 판단·행동을 `<상태 폴더>/watchdog.log` 에 남기고 텔레그램(비공개 봇)으로 알린다.
+//   ⑦ 증거 보존 정리(👤 2026-09-12 「1 승인」) — `<상태 폴더>/archive/<날짜>-<ts>-evidence` 가 3일(WD_EVIDENCE_KEEP_DAYS)을
 //      넘기면 삭제한다. 09-12 실사고: 한도 대기 루프가 하루 207폴더·214 GB 를 쌓아 C: 가 0 바이트가 됐고(엔진 쪽은 무작업
 //      exit 5 증거 생략으로 막았다), 실 STOP 증거도 건당 수백 MB 라 보존 기간 없이는 며칠이면 다시 찬다. `-evidence` 폴더만 본다.
 //
@@ -26,17 +26,30 @@
 import { existsSync, readFileSync, writeFileSync, appendFileSync, statSync, readdirSync, rmSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { stopBlocked, stopWindowId } from './runner-rules.mjs'
 
 const args = process.argv.slice(2)
 const has = (k) => args.includes(k)
 const DRY = has('--dry-run'); const NO_CLAUDE = has('--no-claude')
-const STATE_DIR = process.env.BAROOS_STATE_DIR ?? resolve(homedir(), '.baroos-auto')
-const RUNNER = process.env.BAROOS_RUNNER_DIR ?? 'C:/Projects/jng-os-runner'
-// 프로젝트마다 다른 값 2개 — 이식 시 여기만 바꾸면 된다(👤 2026-09-22 「배치 엔진에 합쳐라」).
-const RUNNER_TASK = process.env.WD_RUNNER_TASK ?? 'BaroOS-auto-slots'
-const CANONICAL = process.env.WD_CANONICAL_DIR ?? 'C:/Projects/claude-skills/batch-24-multiAG'
+// 프로젝트 고유값은 코드에 박지 않는다 — 환경변수 → 설치된 프로젝트의 tools/auto/auto.config.json → 위치에서 유도 순으로 정한다.
+//   러너 폴더 = 이 파일(tools/auto/watchdog.mjs)이 설치된 저장소 루트 · 상태 폴더 = config.stateDir(없으면 ~/.claude-auto/<project>)
+//   예약작업 이름 = config.watchdog.runnerTask(없으면 `<project>-auto-slots`) · 정본 = config.watchdog.canonicalDir(없으면 이웃 claude-skills → 전역 스킬 폴더)
+//   BAROOS_* 환경변수는 첫 설치 프로젝트의 옛 이름이라 호환으로만 읽는다.
+const SELF_DIR = dirname(fileURLToPath(import.meta.url))
+const RUNNER = (process.env.AUTO_RUNNER_DIR ?? process.env.BAROOS_RUNNER_DIR ?? resolve(SELF_DIR, '..', '..')).replace(/\\/g, '/')
+const CONFIG = (() => { try { return JSON.parse(readFileSync(join(RUNNER, 'tools', 'auto', 'auto.config.json'), 'utf8').replace(/^﻿/, '')) } catch { return {} } })()
+const PROJECT = String(CONFIG.project ?? basename(RUNNER))
+const expandHome = (p) => String(p).replace(/^~(?=$|[\\/])/, homedir())
+const STATE_DIR = resolve(expandHome(process.env.AUTO_BATCH_STATE_DIR ?? process.env.BAROOS_STATE_DIR ?? CONFIG.stateDir ?? join(homedir(), '.claude-auto', PROJECT)))
+const RUNNER_TASK = process.env.WD_RUNNER_TASK ?? CONFIG.watchdog?.runnerTask ?? `${PROJECT}-auto-slots`
+const CANONICAL = process.env.WD_CANONICAL_DIR ?? CONFIG.watchdog?.canonicalDir
+  ?? [resolve(RUNNER, '..', 'claude-skills', 'batch-24-multiAG'), join(homedir(), '.claude', 'skills', 'batch-24-multiAG')].find((d) => existsSync(join(d, 'install.mjs')))
+  ?? join(homedir(), '.claude', 'skills', 'batch-24-multiAG')
+// 진단 세션이 도는 폴더(사람이 평소 쓰는 체크아웃 — 그 폴더의 Claude 메모리를 읽게 한다). 없으면 러너 폴더.
+const PROJECT_DIR = (process.env.WD_PROJECT_DIR ?? CONFIG.watchdog?.projectDir ?? RUNNER).replace(/\\/g, '/')
+const MEMORY_MD = join(homedir(), '.claude', 'projects', PROJECT_DIR.replace(/[:\\/]/g, '-'), 'memory', 'MEMORY.md')
 const LOGS = join(RUNNER, '_bmad-output', 'implementation-artifacts', 'auto-pipeline-logs')
 const STORIES = join(RUNNER, '_bmad-output', 'implementation-artifacts')
 const WD_LOG = join(STATE_DIR, 'watchdog.log')
@@ -354,13 +367,13 @@ function claudeDiagnose(signatureText) {
   if (NO_CLAUDE || DRY) { log(`(${DRY ? '리허설' : '--no-claude'}) Claude 진단 세션 생략`); return 'skipped' }
   const out = join(STATE_DIR, `watchdog-claude-${now().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.md`)
   const prompt = [
-    '당신은 BaroOS 24시간 러너의 **감시자 진단 세션**입니다(사람은 자리에 없습니다). 러너가 같은 이유로 반복 정지했는데 플레이북에 없는 원인입니다. 원인을 찾아 **상태·설정 파일 수준에서** 고치고, 고칠 수 없으면 왜인지와 사람이 할 일을 적으세요.',
+    `당신은 ${PROJECT} 24시간 러너의 **감시자 진단 세션**입니다(사람은 자리에 없습니다). 러너가 같은 이유로 반복 정지했는데 플레이북에 없는 원인입니다. 원인을 찾아 **상태·설정 파일 수준에서** 고치고, 고칠 수 없으면 왜인지와 사람이 할 일을 적으세요.`,
     `정지 부기: ${signatureText}`,
-    `보세요: ${join(LOGS, 'exit-info.json')} · ${join(LOGS, 'night-last-run.md')} · ${join(STATE_DIR, 'slots.log')} 끝 300줄 · 최근 증거 폴더 ${join(STATE_DIR, 'archive')} 최신 · 메모리 ${join(homedir(), '.claude', 'projects', 'C--Projects-jng-os', 'memory', 'MEMORY.md')}(러너 정지 실사례: 핀 불일치 · dirty 워크트리 · codex 판 · 429 · 구현자 기록).`,
+    `보세요: ${join(LOGS, 'exit-info.json')} · ${join(LOGS, 'night-last-run.md')} · ${join(STATE_DIR, 'slots.log')} 끝 300줄 · 최근 증거 폴더 ${join(STATE_DIR, 'archive')} 최신 · 메모리 ${MEMORY_MD}(있으면 · 러너 정지 실사례: 핀 불일치 · dirty 워크트리 · codex 판 · 429 · 구현자 기록).`,
     `허용: ${STATE_DIR} 안의 상태 파일 · ${LOGS} 의 state.json · 러너 클론 auto.config.json 1줄 · runtime-pin 재기록 · codex 재설치 · git stash/branch 로 잔여물 보존. 금지: 앱 코드 수정 · main 머지 · 배포 · 운영 DB · 외부 발송 · 엔진(claude-skills) 수정.`,
     `끝나면 ${out} 에 「원인 / 조치 / 남은 사람 몫」 3절로 적고, 조치했으면 마지막 줄에 FIXED, 못 했으면 UNFIXED 라고 쓰세요.`,
   ].join('\n')
-  const r = spawnSync('claude', ['-p', '--model', 'opus', '--permission-mode', 'acceptEdits', '--max-turns', '40', prompt], { cwd: 'C:/Projects/jng-os', encoding: 'utf8', shell: true, timeout: 25 * 60 * 1000 })
+  const r = spawnSync('claude', ['-p', '--model', 'opus', '--permission-mode', 'acceptEdits', '--max-turns', '40', prompt], { cwd: PROJECT_DIR, encoding: 'utf8', shell: true, timeout: 25 * 60 * 1000 })
   const verdictLine = existsSync(out) ? (readFileSync(out, 'utf8').trim().split('\n').pop() ?? '') : ''
   log(`Claude 진단 세션 exit ${r.status} · ${verdictLine.slice(0, 60)} · 보고서 ${out}`)
   return /FIXED$/.test(verdictLine) && !/UNFIXED$/.test(verdictLine) ? 'fixed' : 'unfixed'
