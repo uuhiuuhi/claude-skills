@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { inside, readConfig, capabilities, assertRunEvidence, selectAffected, runAdapter, validateSkipPolicy, evaluateSkip, withProjectEnvFile, loadTypeScript, analyzeSource, resolvesImport } from './vitest-quality.mjs';
+import { affectedModules, GENERATED_CHANGE, inside, readConfig, capabilities, assertRunEvidence, selectAffected, runAdapter, validateSkipPolicy, evaluateSkip, withProjectEnvFile, loadTypeScript, analyzeSource, resolvesImport } from './vitest-quality.mjs';
 
 const dependencies = { vitest: '4.1.10', '@vitest/coverage-v8': '4.1.10' };
 const adapter = fileURLToPath(new URL('./vitest-quality.mjs', import.meta.url));
@@ -391,4 +391,43 @@ test('a fully skipped module is classified test by test under a policy; a failed
   assert.throws(() => assertRunEvidence([...passing, ...skippedModule], [], 'passed', true), /skipped or failed integration module/);
   const failedModule = [{ moduleId: join(root, 'tests/db/bad.test.js'), state: () => 'failed', children: { *allTests() {} } }];
   assert.throws(() => assertRunEvidence([...passing, ...failedModule], [], 'passed', true, policy), /failed integration module/);
+});
+
+test('change scope: engine artifacts nothing maps to are ignored; mapped artifacts and real code stay fail-closed', async t => {
+  const root = fixture(t);
+  mkdirSync(join(root, 'tests/db'), { recursive: true });
+  // A guard test that names an artifact by path — that artifact is NOT ignored, it affects the test naming it.
+  writeFileSync(join(root, 'tests/db/ledger-guard.test.js'), "const p = '_bmad-output/implementation-artifacts/sprint-status.yaml';\n");
+  const mapped = new Map([[resolve(root, '_bmad-output/tools/imported-helper.mjs').replaceAll('\\', '/'), [{ project: { name: 'unit' }, moduleId: join(root, 'tests/db/uses-helper.test.js') }]]]);
+  const ctx = { config: { related: undefined }, async getRelevantTestSpecifications() { return mapped.get(this.config.related[0]) ?? []; } };
+  const artifacts = [
+    '_bmad-output/implementation-artifacts/auto-pipeline-logs/1-44-repair1-kinds.mjs',
+    '_bmad-output/implementation-artifacts/auto-pipeline-logs/1-44-quality.json',
+    '_bmad-output/implementation-artifacts/auto-pipeline-logs/1-44-dev.log',
+    '_bmad-output/implementation-artifacts/screen-check-1-44/scenarios-1-44.mjs',
+    'packages/web/auto-pipeline-logs/state.json',
+    'coverage/lcov.info',
+  ];
+  // The 2026-09-27 landing shape: evidence files only → no reason, tolerance stays available.
+  const onlyArtifacts = await affectedModules(ctx, root, artifacts);
+  assert.deepEqual(onlyArtifacts, { modules: new Set(), all: false, reasons: [] });
+  assert.equal(ctx.config.related, undefined);
+  // An artifact a test names (non-JavaScript) or imports (JavaScript) still affects that test — never silently dropped.
+  const named = await affectedModules(ctx, root, ['_bmad-output/implementation-artifacts/sprint-status.yaml', '_bmad-output/tools/imported-helper.mjs']);
+  assert.deepEqual([...named.modules].sort(), ['tests/db/ledger-guard.test.js', 'tests/db/uses-helper.test.js']);
+  assert.equal(named.all, false);
+  // Real code keeps failing closed — artifacts beside it do not launder it.
+  const mixed = await affectedModules(ctx, root, [...artifacts, 'src/orphan.js', 'supabase/migrations/20990101000000_x.sql', 'package.json']);
+  assert.equal(mixed.all, true);
+  assert.deepEqual(mixed.reasons, ['unmapped changed file: src/orphan.js', 'non-JavaScript change cannot be mapped: supabase/migrations/20990101000000_x.sql', 'non-JavaScript change cannot be mapped: package.json']);
+  // The pattern is a directory-boundary match — look-alike names are code, not artifacts.
+  for (const file of ['src/coverage/report.ts', 'coverage-report.ts', 'src/_bmad-output/x.ts', 'my-auto-pipeline-logs/x.mjs', 'auto-pipeline-logs.mjs']) assert.equal(GENERATED_CHANGE.test(file), false, file);
+  const lookalike = await affectedModules(ctx, root, ['src/coverage/report.ts']);
+  assert.deepEqual(lookalike.reasons, ['unmapped changed file: src/coverage/report.ts']);
+});
+
+test('change scope pattern stays identical to the quality gate judgement exclusion', () => {
+  const gate = readFileSync(resolve(fileURLToPath(new URL('.', import.meta.url)), '../engine/runtime/quality-gates.mjs'), 'utf8');
+  const declared = /const generated = (\/.*\/);/.exec(gate)?.[1];
+  assert.equal(declared, String(GENERATED_CHANGE));
 });

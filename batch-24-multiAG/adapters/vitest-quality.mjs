@@ -322,9 +322,17 @@ export function assertRunEvidence(modules, errors = [], reason = 'passed', stric
  *  - a changed JavaScript/TypeScript file affects the integration modules Vitest maps to it; a file Vitest cannot map
  *    denies all tolerance (`all`), because its integration impact cannot be established;
  *  - any other executable or configuration change (SQL migrations, supabase/**, package/lock files, the policy file
- *    itself, tool configuration, …) denies all tolerance. */
+ *    itself, tool configuration, …) denies all tolerance;
+ *  - an engine/planning artifact (`GENERATED_CHANGE` — the same paths the quality gate already keeps out of its judgement
+ *    text) is still mapped the same way, so a test that imports or names it is affected; only when **nothing** maps to it
+ *    is it ignored instead of denying all tolerance. Every landing carries its own evidence files (`auto-pipeline-logs/*.json`,
+ *    `*.log`, worker probe scripts), so treating them as unmappable code denied tolerance on every landing that changed
+ *    code (2026-09-27: six landings with zero failing tests were rolled back). */
 // Documents and images only. Data files (csv/jsonl/json/sql/…) are test inputs or configuration and stay fail-closed.
 const DOC_CHANGE = /\.(?:md|markdown|txt|rst|png|jpe?g|gif|svg|webp|ico|pdf)$/i;
+// Engine and planning artifacts — kept identical to `generated` in engine/runtime/quality-gates.mjs (collectChanges). These
+// paths hold run evidence and planning documents, never application code; they take part in the change list, not in its risk.
+export const GENERATED_CHANGE = /^(?:_bmad-output\/|coverage\/|node_modules\/)|(?:^|\/)auto-pipeline-logs\//;
 /** Test modules whose text references a non-JavaScript file (full repo-relative path, or the basename without extension when
  *  it is distinctive: timestamped migrations `20260910100000_x`, `tools/migrate/x.py`). Never matches on directory names. */
 export function referencingTests(root, file) {
@@ -350,11 +358,12 @@ export async function affectedModules(ctx, root, changed) {
         // denied all optional tolerance and could never land). No referencing test → still unmappable (fail closed).
         const referencing = referencingTests(root, file);
         if (referencing.length) { for (const spec of referencing) modules.add(spec); continue; }
+        if (GENERATED_CHANGE.test(file)) continue; // artifact no test names — no integration impact to establish
         reasons.push(`non-JavaScript change cannot be mapped: ${file}`); continue;
       }
       ctx.config.related = [normalize(resolve(root, file))];
       const specs = await ctx.getRelevantTestSpecifications();
-      if (!specs.length) { reasons.push(`unmapped changed file: ${file}`); continue; }
+      if (!specs.length) { if (GENERATED_CHANGE.test(file)) continue; reasons.push(`unmapped changed file: ${file}`); continue; }
       for (const spec of specs) modules.add(normalize(relative(root, spec.moduleId)));
     }
   } finally { ctx.config.related = previous; }
