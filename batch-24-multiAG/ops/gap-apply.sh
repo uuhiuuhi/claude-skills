@@ -11,6 +11,8 @@
 # 주의: 적용 스크립트는 **사본에서 먼저 검산**하고, 실패 시 비0 으로 끝나게 쓴다.
 #       한 라운드가 --wait-min 보다 길면 「적용 생략」으로 끝난다 — 라운드 길이에 맞춰 넉넉히 주거나 다시 건다.
 #       같은 러너에 이 도구를 **동시에 둘 띄우지 않는다**(유지보수 잠금 <상태 폴더>/gap-apply.lock 이 막는다).
+#       ⚠ 잠금은 이 도구끼리만 통한다 — 같은 경계를 기다리는 **다른 도구·다른 지휘 창**이 있으면 같은 순간에 둘 다 움직인다(실사고).
+#         러너에 끼어드는 창은 하나로 정한다.
 # 끝나는 방식(전부 로그에 남는다 · 🔴 줄은 사람이 봐야 하는 것):
 #   0 = 적용·커밋·재개 / 변경 0 / 취소 / --hold 성공      1 = 시한 초과 · 적용 실패(되돌림 뒤 재개)      2 = 인자·환경 오류
 #   3 = 정지·보존·복구를 **확인하지 못함**(러너를 재개하지 않는다 — 작업 트리 상태를 사람이 본다)
@@ -140,30 +142,42 @@ if [ "$HOLD" -eq 1 ]; then
 fi
 
 # ── 잔여물 보존: 추적·미추적을 가리지 않고 전부 stash 한다. 보존을 확인하지 못하면 아무것도 적용하지 않는다 ──
-STASH=""
+STASH=""; LEFT_UNTRACKED=""
 if [ -n "$(git status --porcelain)" ]; then
   label="gap-apply 경계 잔여물 $(date '+%F %H:%M:%S')"
-  if git stash push -u -m "$label" >>"$GAPLOG" 2>&1 && [ -z "$(git status --porcelain)" ]; then
+  # 보존의 기준 = stash 가 만들어졌고 **추적 파일 변경이 0** 인 것. 잠긴 폴더(다른 프로세스가 쥔 로그 폴더 등)는 stash 에 담긴 뒤
+  # 지워지지 않아 미추적으로 남을 수 있다 — 내용은 stash 에 있으므로 보존 실패가 아니다. 남은 미추적은 적어 두고 계속한다.
+  before_stash="$(git rev-parse -q --verify 'stash@{0}' 2>/dev/null || true)"
+  git stash push -u -m "$label" >>"$GAPLOG" 2>&1 || true
+  after_stash="$(git rev-parse -q --verify 'stash@{0}' 2>/dev/null || true)"
+  if [ -n "$after_stash" ] && [ "$after_stash" != "$before_stash" ] && [ -z "$(git status --porcelain --untracked-files=no)" ]; then
     STASH="$(git rev-parse --short 'stash@{0}')"
     say "잔여물 보존 — stash $STASH 「$label」(꺼내기: git stash list → git stash pop · 러너가 멈춘 틈에만)"
+    LEFT_UNTRACKED="$(git status --porcelain | grep '^?? ' | cut -c4- || true)"
+    [ -z "$LEFT_UNTRACKED" ] || say "참고 — 잠겨서 못 치운 미추적 $(echo "$LEFT_UNTRACKED" | wc -l)건(내용은 stash 에 있음): $(echo "$LEFT_UNTRACKED" | head -3 | tr '
+' ' ')"
   else
-    SAFE=0; say "🔴 잔여물 보존 실패 — 적용하지 않고 멈춘다"; exit 3
+    # 러너를 세운 뒤 보존만 못 한 것이다 — 작업 트리는 건드리지 않았으므로 러너를 다시 돌려도 안전하다(적용만 건너뛴다).
+    say "🔴 잔여물 보존 실패 — 적용하지 않는다(작업 트리 무변경 · 러너는 재개한다)"; exit 1
   fi
 fi
 before=$(git rev-parse HEAD)
 # 여기부터 작업 트리는 깨끗하다 = 아래에서 생기는 변경은 전부 적용 스크립트가 만든 것이다.
 rollback() {
   git reset -q --hard "$before" >>"$GAPLOG" 2>&1
-  git clean -q -fd >>"$GAPLOG" 2>&1          # 무시 목록(.gitignore)의 파일은 건드리지 않는다(-x 없음)
-  if [ -n "$(git status --porcelain)" ] || [ "$(git rev-parse HEAD)" != "$before" ]; then SAFE=0; say "🔴 되돌림을 확인하지 못함"; exit 3; fi
+  git clean -q -fd >>"$GAPLOG" 2>&1 || true   # 무시 목록(.gitignore)의 파일은 건드리지 않는다(-x 없음) · 잠긴 폴더는 남을 수 있다
+  now_untracked="$(git status --porcelain | grep '^?? ' | cut -c4- || true)"
+  extra="$(comm -13 <(echo "${LEFT_UNTRACKED:-}" | sort) <(echo "$now_untracked" | sort) | grep -v '^$' || true)"
+  if [ -n "$(git status --porcelain --untracked-files=no)" ] || [ -n "$extra" ] || [ "$(git rev-parse HEAD)" != "$before" ]; then SAFE=0; say "🔴 되돌림을 확인하지 못함"; exit 3; fi
   say "되돌림 확인 — HEAD ${before:0:8} · 작업 트리 깨끗함${STASH:+ · 잔여물은 stash $STASH 에 그대로}"
 }
 bash "$APPLY" 2>&1 | tee -a "$GAPLOG"; rc=${PIPESTATUS[0]}
 if [ "$rc" -ne 0 ]; then say "적용 스크립트 실패 exit=$rc — 되돌림"; rollback; exit 1; fi
-[ -n "$(git status --porcelain)" ] || { say "변경 0 — 커밋 없음"; exit 0; }
+changed_now="$(git status --porcelain | grep -v -x -F -f <(echo "${LEFT_UNTRACKED:-}" | sed 's/^/?? /' | grep -v '^?? $' || true) || true)"
+[ -n "$changed_now" ] || { say "변경 0 — 커밋 없음"; exit 0; }
 # shellcheck disable=SC2086
 git add -A -- $ADD >>"$GAPLOG" 2>&1
-outside="$(git status --porcelain | grep -v '^[AMDR]  ' || true)"
+outside="$(git status --porcelain | grep -v '^[AMDR]  ' | grep -v -x -F -f <(echo "${LEFT_UNTRACKED:-}" | sed 's/^/?? /' | grep -v '^?? $' || true) || true)"
 if [ -n "$outside" ]; then say "적용 스크립트가 커밋 범위($ADD) 밖을 바꿈 — 되돌림: $(echo "$outside" | head -3 | tr '\n' ' ')"; rollback; exit 1; fi
 if git -c core.editor=true commit -q -m "$MSG" >>"$GAPLOG" 2>&1; then
   say "커밋 $(git rev-parse --short HEAD) (이전 ${before:0:8})"
