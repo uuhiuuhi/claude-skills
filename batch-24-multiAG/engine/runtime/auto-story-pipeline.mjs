@@ -81,7 +81,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { parseModelSpec, formatModelSpec, shownSpec, detectProviders, providersLine, resolveWorkerSpec, nextWorkerDown, enforceCrossSpec } from "./providers/index.mjs";
 import { buildClaudeCommand, runClaudeWorker } from "./providers/claude.mjs";
-import { buildCodexCommand, runCodexWorker, classifyCodexFailure, codexFailureText, inspectCwdForCodex, codexReviewPrompt, codexDevPrompt, codexRepairPrompt, renderReviewFindings, parseReviewJson, validateReviewRun, redactSecrets, isSensitivePath, stripSensitiveFileSections, hideSensitiveFiles, restoreEnvFiles, withCodexSlot, slotStaleMsFor } from "./providers/codex.mjs";
+import { buildCodexCommand, runCodexWorker, classifyCodexFailure, codexFailureText, inspectCwdForCodex, codexReviewPrompt, codexDevPrompt, codexRepairPrompt, GATES_BRIEF, renderReviewFindings, parseReviewJson, validateReviewRun, redactSecrets, isSensitivePath, stripSensitiveFileSections, hideSensitiveFiles, restoreEnvFiles, withCodexSlot, slotStaleMsFor } from "./providers/codex.mjs";
 import { createGitGuard, findCredentialRemotes, stripRemoteCredentials, localGitFingerprintFor, isGuardBlocked } from "./providers/git-guard.mjs";
 import { assertSafeModel, assertSafePath, normalizeCommand, spawnSafe } from "./providers/spawn-safe.mjs";
 import { safeGitPush } from "./push-guard.mjs";
@@ -794,11 +794,12 @@ const REVIEW_POLICY = (s) => {
   const tail = deferTailFromRound > 0
     ? `${deferTailFromRound}차부터 엔진이 high 가 아닌 Patch 를 자동 이월(⏭️ Defer · 이월 금지 5범주 제외)하고 done 을 허용한다 — ${n >= deferTailFromRound ? "지금이 그 라운드다: " : ""}정말 막아야 할 것만 high 로 낸다.`
     : "꼬리 이월 정책은 꺼져 있다.";
-  return ` [리뷰 정책 · 2026-09-07] 이 스토리는 ${n}차 리뷰다. ① 정확성·명시 요구사항(AC·Dev Notes 제약)에 영향을 주는 것만 \`- [ ] [Review][Patch][high|medium|low] <제목> [file:line] — <상세>\` 또는 \`- [ ] [Review][Decision] …\` 으로 낸다 — 심각도 표기는 필수(high = AC 실패·데이터 오염·사용자 차단 · 표기 없는 Patch 는 medium 으로 본다). ② 취향·스타일·과잉 방어·리팩터링 제안은 \`- [x] [Review][Optional] <제목> — ⏭️ optional(정확성·명시 요구사항 영향 없음)\` 로 적는다. ③ 이번 diff 가 만든 회귀가 아닌 기존 문제는 \`- [x] [Review][Defer] <제목> [file:line] — ⏭️ deferred, pre-existing\` 으로 분리한다. ④ 보안·권한 / 개인정보 / 데이터 손실·복구 / 결제·청구 / 외부 발송·배포 안전장치에 닿는 지적은 Patch/Decision 으로 내되 **심각도를 high 로 매기고 줄 끝에 \`[5범주]\` 표식을 붙인다**(엔진은 이 표식·해당 파일 경로·5범주 어휘 중 하나만 있어도 이월하지 않는다 — 에둘러 쓰지 말고 범주를 그대로 적어라). ⑤ 발견 0건이면 억지로 만들지 말고 \`- ✅ Clean review — 발견 0건\` 한 줄만 남긴다. ⑥ ${tail} ⑦ 이번 라운드 기록은 스토리 파일 Tasks 절 안에 **반드시 새 헤딩 \`### Review Findings — ${n}차 (${today()} · bmad-code-review)\`** 을 열고 그 아래에 적는다 — 엔진이 이 헤딩으로 라운드를 세고 꼬리 정책을 적용한다(헤딩 없이 기존 절에 덧붙이면 라운드가 0 으로 남아 상한·이월이 작동하지 않는다 · 2-25 실사고).`;
+  const again = n >= 2 ? ' [재검토 규율] 앞선 라운드를 먼저 읽는다. 새로 내는 Patch 는 앞선 지적이 실제로 안 고쳐진 것 · 이번 수리가 만든 회귀 · high(이월 금지 5범주 포함)뿐이다 — 앞선 라운드에 없던 medium·low 는 Optional 로 적는다. 새 중대 결함(high)은 몇 차든 반드시 낸다.' : '';
+  return `${again} [리뷰 정책 · 2026-09-07] 이 스토리는 ${n}차 리뷰다. ① 정확성·명시 요구사항(AC·Dev Notes 제약)에 영향을 주는 것만 \`- [ ] [Review][Patch][high|medium|low] <제목> [file:line] — <상세>\` 또는 \`- [ ] [Review][Decision] …\` 으로 낸다 — 심각도 표기는 필수(high = AC 실패·데이터 오염·사용자 차단 · 표기 없는 Patch 는 medium 으로 본다). ② 취향·스타일·과잉 방어·리팩터링 제안은 \`- [x] [Review][Optional] <제목> — ⏭️ optional(정확성·명시 요구사항 영향 없음)\` 로 적는다. ③ 이번 diff 가 만든 회귀가 아닌 기존 문제는 \`- [x] [Review][Defer] <제목> [file:line] — ⏭️ deferred, pre-existing\` 으로 분리한다. ④ 보안·권한 / 개인정보 / 데이터 손실·복구 / 결제·청구 / 외부 발송·배포 안전장치에 닿는 지적은 Patch/Decision 으로 내되 **심각도를 high 로 매기고 줄 끝에 \`[5범주]\` 표식을 붙인다**(엔진은 이 표식·해당 파일 경로·5범주 어휘 중 하나만 있어도 이월하지 않는다 — 에둘러 쓰지 말고 범주를 그대로 적어라). ⑤ 발견 0건이면 억지로 만들지 말고 \`- ✅ Clean review — 발견 0건\` 한 줄만 남긴다. ⑥ ${tail} ⑦ 이번 라운드 기록은 스토리 파일 Tasks 절 안에 **반드시 새 헤딩 \`### Review Findings — ${n}차 (${today()} · bmad-code-review)\`** 을 열고 그 아래에 적는다 — 엔진이 이 헤딩으로 라운드를 세고 꼬리 정책을 적용한다(헤딩 없이 기존 절에 덧붙이면 라운드가 0 으로 남아 상한·이월이 작동하지 않는다 · 2-25 실사고).`;
 };
 const prompts = {
   create: (s) => `/bmad-create-story ${s}\n\n${GUARD} 스토리 스펙(AC·파일 그라운딩)을 작성·저장하고 종료.`,
-  dev: (s) => `/bmad-dev-story ${s}\n\n${GUARD} 구현 후 검증까지 자동 실행.${AUTO_DEV}`,
+  dev: (s) => `/bmad-dev-story ${s}\n\n${GUARD} 구현 후 검증까지 자동 실행.${AUTO_DEV}${FULL ? ` [검사 관문] ${GATES_BRIEF.join(' ')}` : ''}`,
   review: (s) => `/bmad-code-review ${s}\n\n${GUARD} 다른 LLM 관점에서 적대적으로. findings 리포트만 작성(코드 자동수정·commit 금지).${REVIEW_POLICY(s)} ⚠️ 판정은 발견 0건·재오픈 불요 결론이어도 **반드시 스토리 파일의 Review Findings 절에 라운드 기록으로 기재**하라 — stdout 채팅 보고만 하고 파일을 안 쓰면 엔진이 산출물 부재(NO-OP exit 4)로 실패 처리한다(실사고 3회).${AUTO_REVIEW}`,
   // replan — 시니어 개발 기획자 재계획(자율운전 · 2026-09-03). 스토리 md·인박스·sprint-status 만 쓴다(코드 0줄).
   replan: (s) => [

@@ -562,6 +562,19 @@ const COMMON_RULES = [
   '작업 루트 밖의 파일을 읽거나 쓰지 마라.',
 ]
 
+/** 검사 관문 안내 — 구현·수리 지시문에 덧붙인다(Claude · Codex 공통).
+ *  왜: 구현 뒤 엔진이 관문을 하나씩 검사하는데, 작업자가 관문을 모른 채 끝내면 「걸림 → 수리」를 관문 수만큼 반복해
+ *  수리 상한(5)을 다 쓴다(같은 스토리가 품질 → 단위 검사 → 실행 증거 → 검사 범위 순으로 네 번 걸린 실측). 처음부터 알려 한 번에 갖추게 한다. */
+export const GATES_BRIEF = Object.freeze([
+  '구현 뒤 엔진이 아래 관문을 **순서대로** 검사하고, 하나라도 걸리면 수리 라운드(상한이 있다)를 쓴다. 끝내기 전에 전부 스스로 확인하라.',
+  '① 무결성 — 기존 테스트를 지우거나 단언을 약하게 하지 않는다. 테스트를 다른 파일로 옮길 때는 같은 단언을 옮긴 자리에 그대로 둔다. skip·only·ts-ignore·eslint-disable·커버리지 제외로 통과시키지 않는다.',
+  '② 타입 검사·lint — 경고 0.',
+  '③ 영향 단위 검사 — 이번 변경에 닿는 테스트가 전부 통과한다(프로젝트에 영향 범위 검사 명령이 있으면 그것을 직접 실행한다).',
+  '④ 실행 증거 — 새로 쓴 테스트는 정상·실패·경계 경우를 각각 1건 이상 포함하고, **실제로 실행되는** 위치와 이름이어야 한다(건너뛴 테스트는 증거로 세지 않는다).',
+  '⑤ 검사 범위 — 바뀐 줄과 분기의 90% 이상을 테스트가 밟는다. 새로 쓴 분기(오류 처리·빈 값·경계·권한 거부)마다 그 분기를 밟는 테스트를 둔다.',
+  '수리 중이라면 지금 걸린 관문 하나만 고치고 끝내지 말고, 나머지 관문도 같은 라운드에 확인한다.',
+])
+
 export function codexReviewPrompt({ story, storyFile, diffFile, changedFiles = [], targetRef = '', extraContext = '' }) {
   const files = changedFiles.length ? changedFiles.map((f) => `  - ${f}`).join('\n') : '  (diff 파일 참조)'
   return [
@@ -591,6 +604,7 @@ export function codexReviewPrompt({ story, storyFile, diffFile, changedFiles = [
     '- 테스트가 결함 위에 서 있는 패턴(결함을 재현하지 못하는 테스트 · 같은 인스턴스만 rerender · 항상 통과하는 단언)을 특히 의심하라.',
     '- 보안·권한 / 개인정보 / 데이터 손실·복구 / 결제·청구 / 외부 발송·배포 안전장치에 닿는 문제는 심각도와 무관하게 patch 또는 decision 으로 낸다(이월 금지 5범주 — defer/optional 로 내면 엔진이 patch 로 승격한다). · 👤 2026-09-07: severity=high 로 매기고 title 앞에 [5범주] 를 붙여라 — 엔진의 꼬리 이월 정책이 이 표식·파일 경로·범주 어휘로 유지 여부를 정하니 에둘러 쓰지 마라).',
     '- 발견 0건이면 verdict=clean 이고 findings 는 빈 배열이다 — 억지로 만들지 마라. 확실하지 않으면 severity=low + kind=optional.',
+    '- **재검토(이 스토리가 이미 검토를 받은 적이 있을 때)**: 스토리 파일 Review Findings 절의 앞선 라운드를 먼저 읽는다. 새로 내는 patch 는 ① 앞선 지적이 실제로 고쳐지지 않은 것 ② 이번 수리가 만든 회귀 ③ severity=high(이월 금지 5범주 포함) 뿐이다. 앞선 라운드에 없던 medium·low 는 kind=optional 로 적는다 — 라운드마다 새 사소한 지적을 더하면 검토가 끝나지 않는다. 새 중대 결함(high)은 몇 차 라운드든 반드시 낸다.',
     '- 각 finding 의 detail 은 재현 조건 → 결과 → 왜 문제인지 순으로 한 단락. evidence 는 코드 인용(짧게). 한국어로 쓴다.',
     '',
     '## 출력',
@@ -620,6 +634,9 @@ export function codexDevPrompt({ story, storyFile, sprintStatusFile, qaCmd = 'np
     `7. 모든 구현 Task 가 [x] 이고 ① \`${qaCmd}\` 가 통과했거나 ② 실패가 **오직** 격리된 접속값 부재(환경변수 없음·연결 실패)뿐이면, 스토리 \`Status:\` 줄을 review 로, \`${sprintStatusFile}\` 의 키 상태를 review 로 바꾼다. ②의 경우 검증 전용 Task(「qa 실행」류)는 \`[x] … (엔진 qa-gate 검증 · 샌드박스 접속값 부재)\` 로 닫는다 — 이 Task 만 남기고 in-progress 로 두면 편성기가 같은 구현을 무한히 다시 연다(2026-09-26 22:5x 5-6·1-44 실사고). 진짜 미완(구현 못 한 Task)이 남을 때만 in-progress 로 둔다.`,
     '8. 임의로 정한 기본값이 있으면 스토리 파일에 「⚠️ 무인 기본값 결정」 마커와 함께 근거를 남긴다.',
     '',
+    '## 검사 관문',
+    ...GATES_BRIEF.map((l) => `- ${l}`),
+    '',
     '## 완료 보고',
     '마지막 메시지에 한국어로: 완료한 Task 번호 · 남은 Task 와 이유 · 실행한 검증 명령과 결과 · 바꾼 파일 수.',
   ].filter(Boolean).join('\n')
@@ -643,6 +660,9 @@ export function codexRepairPrompt({ story, storyFile, qaCmd = 'npm run qa', atte
     '```',
     '- 테스트 무결성 검사 결과(block 은 반드시 해소):',
     integ,
+    '',
+    '## 검사 관문',
+    ...GATES_BRIEF.map((l) => `- ${l}`),
     '',
     '## 규칙',
     '- 실패하는 테스트를 지우거나 단언을 약화하거나 skip/.only/ts-ignore/eslint-disable/커버리지 제외/게이트 설정 변경으로 통과시키는 것은 금지다 — 수리 중에 새로 생긴 이런 흔적은 엔진이 차단으로 승격한다.',
