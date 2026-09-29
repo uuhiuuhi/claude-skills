@@ -3,14 +3,17 @@
 // 왜 생겼나(원 프로젝트 2026-09-21 실측): 화면이 현재를 반영하지 못한 채 조용히 낡아 있었다.
 //   · 읽는 폴더가 최신 main 이 아닌데 화면에는 아무 표시가 없었다
 //   · 헤더의 「상태 파일 날짜」가 파일 머리 주석(같은 키가 20줄 넘게 쌓인다)을 읽어 실제보다 옛날이었다
-//   · 지난밤 배치 기록이 며칠 전 것인데 「지난밤 0건」이 「진짜 0」과 구분되지 않았다
+//   · 지난밤 배치 재료가 러너 클론(별도 폴더)에만 있어 「지난밤 0건」이 「진짜 0」과 구분되지 않았다
+//   · DB 마이그레이션 실측은 한 달 전 것인데 로컬 파일은 그사이 크게 늘어 있었다
 // 판정은 전부 규칙이다(LLM 0 · 네트워크 0). 재료는 scan.mjs 가 모으고 그림은 build.mjs 가 그린다.
 //
 // 원칙: **확인 못 한 것을 ok 로 적지 않는다** — 재료가 없으면 unknown 이다.
 //
-// 항목은 7개(F1·F2·F3·F4·F5·F7·F8)다. 원본 프로젝트의 **F6(DB 마이그레이션 실측 나이)** 은
-// 외부 DB CLI 실프로브 산출물이 원천이라 이 스킬에 없다(SKILL.md 「이 스킬에 없는 기능」).
-// 번호는 원본과 맞춰 두었다 — 빠진 자리를 감추면 다음 사람이 「F6 은 통과했나」로 오해한다.
+// 항목은 8개(F1~F8)다. 설정이 있어야 제 구실을 하는 두 항목의 규칙:
+//   · F5 는 러너 클론 경로(sources.json 의 runnerClone 등)가 **아예 없으면** 이 폴더 기록만 보고
+//     그 사실을 detail 에 적는다. 경로가 적혀 있는데 폴더가 없으면 unknown 이다.
+//   · F6 은 마이그레이션 폴더가 없는 프로젝트에서만 'na'(해당 없음)다. 폴더가 있는데 실측 기록이
+//     없거나 무엇을 쟀는지 확인할 수 없으면 unknown 이다 — ok 로 올리지 않는다.
 
 const DAY = 86400000
 const MIN = 60000
@@ -134,39 +137,108 @@ function f4(hb, r) {
   const base = hb.label + ' · 잠금 파일 ' + (r?.lockExists ? '있음(작업 중이라고 주장)' : '없음') + tail
   if (hb.state === 'alarm' || hb.ageMin > 75) {
     return check('F4', L, 'warn', base,
-      (hb.why || '75분 넘게 조용합니다') + ' — 무인 배치를 깨우는 예약작업이 도는지 보고, 멈췄으면 다시 켜세요.')
+      (hb.why || '75분 넘게 조용합니다') + ' — 무인 배치를 깨우는 예약 실행이 도는지 보고, 멈췄으면 다시 켜세요.')
   }
   return check('F4', L, 'ok', base)
 }
 
 // ── F5 지난밤 배치 재료 ─────────────────────────────────────────────────────
 // 「지난밤 0건」이 **진짜 0** 인지 **재료를 못 찾은 것**인지 가른다.
-//
-// 원본 프로젝트는 여기서 **러너 클론(별도 폴더)의 산출물과 대조**한다 — 무인 러너가 다른
-// 클론에서 돌아 그 매니페스트가 머지 전까지 이 폴더에 없기 때문이다. 그건 그 프로젝트의
-// 러너 배치 방식에 붙은 기능이라 이 스킬에는 없다(SKILL.md 「이 스킬에 없는 기능」 · 필요하면
-// 플러그인이 `freshness.manifests` 에 자기 자리를 얹으면 된다). 여기서는 **이 폴더의 기록만**
-// 보고, 대조를 안 했다는 사실을 detail 에 적는다 — 안 한 것을 한 것처럼 적지 않는다.
+// 러너가 별도 클론에서 돌면 그 매니페스트는 머지 전까지 이 폴더에 없다 — 경로가 설정돼 있으면
+// 두 자리를 나란히 적고, 설정이 아예 없으면 이 폴더만 봤다는 사실을 적는다(안 한 대조를 한 척하지 않는다).
 function f5(m, now) {
   const L = '지난밤 배치 재료가 있나'
-  const ONLY_HERE = ' · 러너가 다른 폴더에서 돈다면 그쪽 기록은 보지 않았습니다(이 스킬은 이 폴더만 읽습니다)'
-  if (!m || m.count == null) {
+  if (!m || (m.count == null && m.runnerCount == null)) {
     return check('F5', L, 'unknown', '배치 기록(매니페스트)을 하나도 찾지 못했습니다.', '')
   }
-  if (!m.lastAt) {
-    return check('F5', L, 'unknown',
-      '이 폴더에는 배치 기록이 없습니다 — 화면의 「지난밤 배치 0건」이 진짜 0 인지 알 수 없습니다.' + ONLY_HERE,
-      '무인 배치를 쓰는 프로젝트라면 auto-pipeline-logs 폴더에 매니페스트가 쌓이는지 확인하세요.')
+  const WHERE = '러너 클론 경로를 적어 두면(상태 폴더의 chain-info.json · tools/auto/auto.config.json · ' +
+    'tools/dev-status/sources.json 중 한 곳의 runnerClone 키) 다른 폴더에서 돈 배치까지 함께 봅니다.'
+
+  // 설정이 아예 없다 — 러너가 이 폴더에서 돈다고 보고 이 폴더 기록만 판정한다.
+  if (m.runnerConfigured === false) {
+    const ONLY_HERE = ' · 러너 클론 설정이 없어 이 폴더 기록만 봤습니다'
+    if (!m.lastAt) {
+      return check('F5', L, 'unknown',
+        '이 폴더에는 배치 기록이 없습니다 — 화면의 「지난밤 배치 0건」이 진짜 0 인지 알 수 없습니다.' + ONLY_HERE,
+        '무인 배치를 쓰는 프로젝트라면 auto-pipeline-logs 폴더에 매니페스트가 쌓이는지 확인하세요. ' + WHERE)
+    }
+    const last = ms(m.lastAt)
+    const detail = '이 폴더의 마지막 배치 ' + stamp(m.lastAt) + '(' + ago(last, now) +
+      ' · 모두 ' + m.count + '건)' + ONLY_HERE
+    if (last == null) return check('F5', L, 'unknown', detail, '')
+    if (now - last > DAY) {
+      return check('F5', L, 'warn', detail,
+        '마지막 배치가 하루를 넘겼습니다 — 화면의 「지난밤 배치 0건」은 진짜 0 입니다(재료가 없어서가 아닙니다).')
+    }
+    return check('F5', L, 'ok', detail)
   }
-  const last = ms(m.lastAt)
-  const detail = '이 폴더의 마지막 배치 ' + stamp(m.lastAt) + '(' + ago(last, now) +
-    ' · 모두 ' + m.count + '건)' + ONLY_HERE
-  if (last == null) return check('F5', L, 'unknown', detail, '')
-  if (now - last > DAY) {
+
+  const here = m.lastAt
+    ? '이 폴더의 마지막 배치 ' + stamp(m.lastAt) + '(' + ago(ms(m.lastAt), now) + ' · 모두 ' + m.count + '건)'
+    : '이 폴더에는 배치 기록이 없습니다'
+  const there = m.runnerDir == null
+    ? '러너 클론은 보지 못했습니다(' + (m.runnerWhy || '경로 설정 없음') + ')'
+    : m.runnerLastAt
+      ? '러너 클론의 마지막 배치 ' + stamp(m.runnerLastAt) + '(' + ago(ms(m.runnerLastAt), now) +
+        ' · 모두 ' + m.runnerCount + '건 · ' + m.runnerDir + ')'
+      : '러너 클론(' + m.runnerDir + ')에는 배치 기록이 없습니다'
+  const detail = here + ' · ' + there
+
+  const h = ms(m.lastAt)
+  const t = ms(m.runnerLastAt)
+  if (h != null && t != null && t - h > 12 * 3600000) {
+    return check('F5', L, 'stale', detail,
+      '러너 쪽이 더 최신입니다 — 아래 「지난밤 배치」 칸은 두 자리를 합쳐서 그립니다. ' +
+      '이 폴더만 보면 「지난밤 0건」은 재료가 없던 것이지 진짜 0 이 아니었습니다.')
+  }
+  if (m.runnerDir == null) {
+    return check('F5', L, 'unknown', detail, '적어 둔 러너 클론 경로를 확인하세요 — ' + WHERE)
+  }
+  const newest = Math.max(...[h, t].filter((x) => x != null))
+  if (!Number.isFinite(newest)) {
+    return check('F5', L, 'unknown', detail, '')
+  }
+  if (now - newest > DAY) {
     return check('F5', L, 'warn', detail,
       '마지막 배치가 하루를 넘겼습니다 — 화면의 「지난밤 배치 0건」은 진짜 0 입니다(재료가 없어서가 아닙니다).')
   }
   return check('F5', L, 'ok', detail)
+}
+
+// ── F6 마이그레이션 실측 나이 ───────────────────────────────────────────────
+// 실측은 사람이 probe-migrations.mjs 로 한다(네트워크·DB CLI 인증 · 수 초). 여기서는 그 산출물의
+// 측정 시각·당시 파일 수를 지금 폴더와 견준다 — 잰 뒤 파일이 바뀌었으면 숫자를 믿지 않는다.
+function f6(g, now) {
+  const L = 'DB 마이그레이션 실측이 언제 것인가'
+  if (g && g.applicable === false) {
+    return check('F6', L, 'na',
+      '해당 없음 — 마이그레이션 폴더' + (g.dir ? '(' + g.dir + ')' : '') + '가 없는 프로젝트입니다.',
+      '다른 폴더를 쓰면 tools/dev-status/sources.json 의 migrationsDir 에 적으세요.')
+  }
+  const CMD = '다시 재려면 ' + (g?.probeCommand || 'node <dev-status 스킬 폴더>/probe-migrations.mjs') + ' 를 한 번 돌리세요.'
+  if (!g || !g.measuredAt) {
+    return check('F6', L, 'unknown',
+      '실측 기록이 없습니다 — 화면의 「미적용」 칸은 0 이 아니라 「못 쟀음」입니다' +
+      (g && g.localCount != null ? ' (지금 이 폴더의 마이그레이션 파일 ' + g.localCount + '개).' : '.'),
+      CMD)
+  }
+  const base = '마지막 실측 ' + stamp(g.measuredAt) + '(' + ago(ms(g.measuredAt), now) + ')' +
+    ' · 그때 센 파일 ' + (g.measuredCount ?? '?') + '개 vs 지금 이 폴더 ' + (g.localCount ?? '?') + '개' +
+    (g.latestFile ? ' · 가장 최근 파일 ' + g.latestFile : '')
+  if (g.wrongProject) {
+    return check('F6', L, 'stale', base + ' · 개발용이 아닌 프로젝트를 쟀습니다', '링크 대상을 확인하고 다시 재세요. ' + CMD)
+  }
+  if (g.projectUnverified) {
+    return check('F6', L, 'unknown', base + ' · 어느 프로젝트를 쟀는지 확인하지 못했습니다',
+      'tools/dev-status/sources.json 의 devProjectRef 에 개발용 프로젝트 식별자를 적으세요. ' + CMD)
+  }
+  if (g.fresh === 'changed' || (g.measuredCount != null && g.localCount != null && g.measuredCount !== g.localCount)) {
+    return check('F6', L, 'stale', base, '실측한 뒤 마이그레이션 파일이 달라졌습니다 — 지금 숫자는 믿을 수 없습니다. ' + CMD)
+  }
+  if (g.fresh === 'stale') {
+    return check('F6', L, 'warn', base, '잰 지 7일이 넘었습니다. ' + CMD)
+  }
+  return check('F6', L, 'ok', base)
 }
 
 // ── F7 결정 인박스 최신 근거 ────────────────────────────────────────────────
@@ -200,8 +272,9 @@ function f8(generatedAt, now) {
 }
 
 /**
- * 7항목 판정. `data` 는 scan() 결과(재료는 `data.freshness`), `ctx.now` 는 기준 시각(ms).
- * @returns {{id:string,label:string,status:'ok'|'warn'|'stale'|'unknown',detail:string,action:string}[]}
+ * 8항목 판정. `data` 는 scan() 결과(재료는 `data.freshness`), `ctx.now` 는 기준 시각(ms).
+ * status 'na' = 해당 없음(F6 · 마이그레이션 폴더가 없는 프로젝트) — 종합 판정에 넣지 않는다.
+ * @returns {{id:string,label:string,status:'ok'|'warn'|'stale'|'unknown'|'na',detail:string,action:string}[]}
  */
 export function freshnessChecks(data, ctx = {}) {
   const now = ctx.now ?? Date.now()
@@ -212,6 +285,7 @@ export function freshnessChecks(data, ctx = {}) {
     f3(F.docs),
     f4(data?.batch?.heartbeat, F.runner),
     f5(F.manifests, now),
+    f6(F.migration, now),
     f7(F.inbox, now),
     f8(data?.generatedAt, now),
   ]
@@ -223,11 +297,11 @@ export function freshnessChecks(data, ctx = {}) {
  */
 export function freshnessVerdict(checks) {
   const list = Array.isArray(checks) ? checks : []
-  const counts = { ok: 0, warn: 0, stale: 0, unknown: 0 }
+  const counts = { ok: 0, warn: 0, stale: 0, unknown: 0, na: 0 }
   for (const c of list) {
     if (Object.prototype.hasOwnProperty.call(counts, c?.status)) counts[c.status] += 1
   }
-  if (!list.length) {
+  if (!list.length || counts.na === list.length) {
     return { level: 'unknown', label: '⚪ 판정 불가', why: '검토 항목이 하나도 없습니다.', counts }
   }
   if (counts.stale) {

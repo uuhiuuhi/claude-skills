@@ -5,7 +5,7 @@ import { readFileSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const BASE = 'http://127.0.0.1:5174'
-const ROOT = 'C:/Users/user/AppData/Local/Temp/claude/C--Projects-jng-os/f30fdb04-628a-4fd6-b961-5958ecc4b985/scratchpad'
+const ROOT = process.env.SC_ROOT ?? process.cwd() // 작업 폴더(세션 scratchpad 등)
 const OUT = resolve(ROOT, 'e2e-shots'); mkdirSync(OUT, { recursive: true })
 const env = Object.fromEntries(readFileSync(resolve(ROOT, 'e2e-wt/.env.local'), 'utf8').split(/\r?\n/).filter((l) => /^[A-Z_]+=/.test(l)).map((l) => { const i = l.indexOf('='); return [l.slice(0, i), l.slice(i + 1).replace(/^"|"$/g, '')] }))
 const need = (k) => { if (!env[k]) throw new Error(`${k} 없음`); return env[k] }

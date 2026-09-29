@@ -12,7 +12,8 @@ export const canonicalModel = (model) => model === 'codex' ? 'codex:gpt-6-astra'
 
 /** Codex 구현(dev) 허용 정책 — 👤 2026-09-26 「astra·sol 을 더 써서 opus 사용량을 줄여줘」 → (나) · 같은 날 20:5x 「opus 를 astra 로 대체 · astra 하던 일을 opus 가」.
  *  설정 `modelPolicy.codexDev = { enabled, maxRisk, models, review }` 가 켜져 있을 때만 dev 후보에 Codex 모델이 들어가고
- *  위험도 상한(maxRisk)까지 허용한다. 꺼져 있으면(기본) 종전 경계 그대로 — 고위험(risk ≥ 4) 구현은 Claude 만.
+ *  위험도 상한(maxRisk)까지 허용한다. **maxRisk -1 = 새 Codex 구현 0건**(위험도 0 도 안 준다) — enabled 는 켜 둔 채 이미 Codex 가 구현한
+ *  스토리의 교차 검토(codexPairCross · review)만 살려 두는 「끄기」다. enabled=false 는 그 교차 검토까지 끊으므로 진행 중인 Codex 구현분이 없을 때만 쓴다. 꺼져 있으면(기본) 종전 경계 그대로 — 고위험(risk ≥ 4) 구현은 Claude 만.
  *  models = dev 를 맡을 Codex 모델 목록(기본 sol) · review = Codex 구현 뒤 리뷰를 맡을 **Claude** 모델(예: opus · 비우면 codex 의 다른 모델이 리뷰).
  *  review 를 적으면 Codex 구현 스토리에 한해 리뷰 품질 하한이 그 모델의 tier 까지 내려간다(👤 20:5x 결정 — opus 리뷰) · Claude 리뷰는 stream-json 열람 증거로 T6 를 채운다. */
 export const CODEX_DEV_DEFAULT = Object.freeze({ enabled: false, maxRisk: 3, models: Object.freeze(['codex:gpt-5.6-sol']), review: '' });
@@ -20,7 +21,7 @@ export function codexDevPolicy(policy = null) {
   const p = policy && typeof policy === 'object' ? policy : {};
   const models = (Array.isArray(p.models) ? p.models : CODEX_DEV_DEFAULT.models).map(canonicalModel)
     .filter((m) => MODEL_CATALOG[m]?.provider === 'codex');
-  const maxRisk = Number.isFinite(Number(p.maxRisk)) ? Math.max(0, Math.min(10, Number(p.maxRisk))) : CODEX_DEV_DEFAULT.maxRisk;
+  const maxRisk = Number.isFinite(Number(p.maxRisk)) ? Math.max(-1, Math.min(10, Number(p.maxRisk))) : CODEX_DEV_DEFAULT.maxRisk;
   const review = canonicalModel(p.review ?? '');
   return { enabled: p.enabled === true && models.length > 0, maxRisk, models: models.length ? models : [...CODEX_DEV_DEFAULT.models],
     review: MODEL_CATALOG[review]?.provider === 'claude' ? review : '' };

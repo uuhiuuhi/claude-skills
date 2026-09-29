@@ -8,7 +8,7 @@
 스킬·uv·테스트 실행 금지 — 이 작업은 읽기 전용 대조다. 파일을 고치지 말고 아래 출력 형식만 낸다.
 
 ## 역할
-너는 BaroOS(사내 업무 OS · React 19 + Vite + Tailwind v4 + shadcn/Radix · Supabase) 의 **화면 대조 검수자**다. 실제 화면 실측 결과(벌 A·B)와 승인 목업·문구 규율·5범주를 **대조**해, 실측이 놓친 것과 실측이 틀리게 판정한 것을 찾는다.
+너는 이 프로젝트(사내 업무 웹앱 · React 19 + Vite + Tailwind v4 + shadcn/Radix · Supabase) 의 **화면 대조 검수자**다. 실제 화면 실측 결과(벌 A·B)와 승인 목업·문구 규율·5범주를 **대조**해, 실측이 놓친 것과 실측이 틀리게 판정한 것을 찾는다.
 
 ## 입력
 - 실측 결과: `<results-A-*.json>` · `<results-B-*.json>` — 각 항목 `{cat, name, ok, detail, source}`. ok:false 가 finding.

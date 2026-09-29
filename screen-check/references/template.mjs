@@ -4,9 +4,11 @@ import { chromium } from 'playwright-core'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { report } from './score.mjs'
+import { assertWritableBase } from './view-guard.mjs'
 
 const STORY = '<N-N 스토리 이름>'
 const BASE = 'http://127.0.0.1:5174'
+assertWritableBase(BASE)                                   // 쓰기 프로브 방식 — 비로컬 주소·SC_MODE=view 면 여기서 멈춘다(v0.3)
 const ROOT = '<scratchpad 절대경로>'                       // e2e-wt · e2e-shots · e2e-tools 의 부모
 const OUT = resolve(ROOT, 'e2e-shots'); mkdirSync(OUT, { recursive: true })
 const env = Object.fromEntries(readFileSync(resolve(ROOT, 'e2e-wt/.env.local'), 'utf8').split(/\r?\n/)

@@ -39,11 +39,16 @@ const DRY = has('--dry-run'); const NO_CLAUDE = has('--no-claude')
 //   BAROOS_* 환경변수는 첫 설치 프로젝트의 옛 이름이라 호환으로만 읽는다.
 const SELF_DIR = dirname(fileURLToPath(import.meta.url))
 const RUNNER = (process.env.AUTO_RUNNER_DIR ?? process.env.BAROOS_RUNNER_DIR ?? resolve(SELF_DIR, '..', '..')).replace(/\\/g, '/')
-const CONFIG = (() => { try { return JSON.parse(readFileSync(join(RUNNER, 'tools', 'auto', 'auto.config.json'), 'utf8').replace(/^﻿/, '')) } catch { return {} } })()
+// 설정을 못 읽으면 추측으로 돌지 않는다 — 엉뚱한 상태 폴더·예약작업을 감시·기동하는 것보다 멈추는 편이 안전하다.
+const CONFIG_PATH = join(RUNNER, 'tools', 'auto', 'auto.config.json')
+const CONFIG = (() => {
+  if (!existsSync(CONFIG_PATH)) { console.error(`[watchdog] 설정 파일 없음: ${CONFIG_PATH} — AUTO_RUNNER_DIR 를 러너 폴더로 지정하거나 설치를 확인하세요`); process.exit(2) }
+  try { return JSON.parse(readFileSync(CONFIG_PATH, 'utf8').replace(/^﻿/, '')) } catch (e) { console.error(`[watchdog] 설정 파일을 읽지 못함: ${CONFIG_PATH} — ${e?.message ?? e}`); process.exit(2) }
+})()
 const PROJECT = String(CONFIG.project ?? basename(RUNNER))
 const expandHome = (p) => String(p).replace(/^~(?=$|[\\/])/, homedir())
 const STATE_DIR = resolve(expandHome(process.env.AUTO_BATCH_STATE_DIR ?? process.env.BAROOS_STATE_DIR ?? CONFIG.stateDir ?? join(homedir(), '.claude-auto', PROJECT)))
-const RUNNER_TASK = process.env.WD_RUNNER_TASK ?? CONFIG.watchdog?.runnerTask ?? `${PROJECT}-auto-slots`
+const RUNNER_TASK = process.env.AUTO_RUNNER_TASK ?? process.env.WD_RUNNER_TASK ?? CONFIG.watchdog?.runnerTask ?? `${PROJECT}-auto-slots` // ops/lib.sh 와 같은 이름을 먼저 읽는다
 const CANONICAL = process.env.WD_CANONICAL_DIR ?? CONFIG.watchdog?.canonicalDir
   ?? [resolve(RUNNER, '..', 'claude-skills', 'batch-24-multiAG'), join(homedir(), '.claude', 'skills', 'batch-24-multiAG')].find((d) => existsSync(join(d, 'install.mjs')))
   ?? join(homedir(), '.claude', 'skills', 'batch-24-multiAG')

@@ -24,6 +24,8 @@ export function score(data) {
     const checks = (data.results ?? []).filter((r) => r.cat === cat)
     const manual = data.manual?.[cat]
     let s = null, why = ''
+    // 보기 전용 방식에서 볼 수 없는 항목 — 체크·수동 점수가 있어도 점수를 주지 않는다(판정 불가 · 합계 제외)
+    if (data.notAssessable?.includes(cat)) { rows.push({ cat, label, what, score: null, na: true, why: '' }); continue }
     if (checks.length) {
       const pass = checks.filter((r) => r.ok).length
       s = Math.round((pass / checks.length) * 10)
@@ -44,20 +46,31 @@ export function report(data) {
   if (data.fatal) banner.push(`> ⚠️ **중단 — 미실행 시나리오 ${notRun?.scenarios ?? '?'}건**. \`${data.fatal.step}\` 에서 예외로 끊겼다: ${data.fatal.message}` +
     (notRun?.roles?.length ? ` · 미실행 역할: ${notRun.roles.join('·')}` : ''), '')
   else if (notRun?.scenarios) banner.push(`> ⚠️ **미실행 시나리오 ${notRun.scenarios}건**(계획 ${notRun.scenariosPlanned ?? '?'}건) — 결과는 계획의 일부만 담고 있다.`, '')
+  // 보기 전용 방식(view-check.mjs) 머리줄 — 방식·대상·단계·차단·건너뜀을 총점보다 먼저 읽게 한다
+  const v = data.view
+  const viewHead = v ? [
+    `> **방식: 보기 전용** · 대상 \`${v.host}\` · 단계: ${v.tier === 'view-login' ? '보기 전용 로그인' : '비로그인'} · 차단된 쓰기 시도 ${v.blockedWrites?.length ?? 0}건 · 건너뛴 조작 ${v.skippedControls?.length ?? 0}개` +
+      (v.blockedSockets?.length ? ` · 실시간 연결 차단 ${v.blockedSockets.length}건` : ''),
+    ...(v.tier === 'view-login' ? [] : ['> **로그인 안쪽 화면은 확인하지 못함** — 보기 전용 계정(SC_VIEW_EMAIL·SC_VIEW_PASSWORD)이 없어 비로그인 단계만 돌았다.']),
+    '',
+  ] : []
   const lines = [
     `## 화면 확인 평가 — ${data.story ?? ''} (${data.when ?? ''})`,
     '',
+    ...viewHead,
     ...banner,
     `**총점 ${total} / ${max}** (평가 항목 ${counted}개 × 10점 · 미측정 항목은 합계에서 제외)`,
     '',
     '| # | 평가 항목 | 점수 | 근거 |',
     '|---|---|---|---|',
-    ...rows.map((r, i) => `| ${i + 1} | ${r.label} | ${r.score === null ? '—' : `**${r.score}** / 10`} | ${r.score === null ? '미측정 — ' + r.what : r.why} |`),
+    ...rows.map((r, i) => `| ${i + 1} | ${r.label} | ${r.score === null ? '—' : `**${r.score}** / 10`} | ${r.na ? '판정 불가(보기 전용 방식) — ' + r.what : r.score === null ? '미측정 — ' + r.what : r.why} |`),
     '',
     `- 자동 체크 ${(data.results ?? []).length}건 · 통과 ${(data.results ?? []).filter((r) => r.ok).length}건` +
       (notRun ? ` · 시나리오 ${(notRun.scenariosPlanned ?? 0) - (notRun.scenarios ?? 0)}/${notRun.scenariosPlanned ?? 0} 실행(미실행 ${notRun.scenarios ?? 0}건)` : ''),
     ...(data.unmeasured?.length ? ['- **미측정**: ' + data.unmeasured.join(' · ')] : []),
-    ...(data.leftovers?.length ? ['- **잔여물(개발 DB)**: ' + data.leftovers.join(' · ')] : []),
+    ...(data.leftovers?.length ? [`- **잔여물(${v ? '보기 전용 — 쓰기 차단' : '개발 DB'})**: ` + data.leftovers.join(' · ')] : []),
+    ...(v?.blockedWrites?.length ? ['- **차단된 쓰기 시도**: ' + v.blockedWrites.slice(0, 8).map((b) => `${b.method} ${b.path}(${b.reason})`).join(' · ')] : []),
+    ...(v?.skippedControls?.length ? ['- **건너뛴 조작**: ' + v.skippedControls.slice(0, 12).map((c) => `${c.where} 「${c.name || '(이름 없음)'}」`).join(' · ')] : []),
     ...(data.screenshots ? [`- 스크린샷: ${data.screenshots}`] : []),
   ]
   return lines.join('\n')

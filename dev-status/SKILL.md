@@ -1,6 +1,6 @@
 ---
 name: dev-status
-description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현황판 열어줘", "스토리 진척 보여줘", "어젯밤 배치 어떻게 됐어", "배포해도 되나" 같은 요청에 사용한다. epics.md(목록 SoT)·sprint-status.yaml(상태 SoT)·스토리 md·auto-pipeline-logs 와 무인 배치 하네스 산출물(배치·검증 매니페스트·계측·예정 큐·자율 진단·결정 인박스)을 규칙만으로 판정해 **현황판 신선도 검토(이 화면이 지금을 반영하는가)**, 배포 가능 판정, 결정 인박스, 지난밤 배치(프로바이더/모델·병렬·통합 게이트), 오늘 예정 큐, 3일 계측, 자율 마무리 진단, 에픽·스토리 진행률, 단계 배지 4칸, File List 겹침 판정, 불일치 경고, 다음 할 일 추천을 로컬 HTML 한 장으로 보여준다. 외부 의존성 0, LLM 호출 0, Node 20 이상. 커밋·게시 등 쓰기 작업은 하지 않는다.
+description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현황판 열어줘", "스토리 진척 보여줘", "어젯밤 배치 어떻게 됐어", "배포해도 되나" 같은 요청에 사용한다. epics.md(목록 SoT)·sprint-status.yaml(상태 SoT)·스토리 md·auto-pipeline-logs 와 무인 배치 하네스 산출물(배치·검증 매니페스트·계측·예정 큐·자율 진단·결정 인박스)을 규칙만으로 판정해 **현황판 신선도 검토(이 화면이 지금을 반영하는가)**, 배포 가능 판정, 결정 인박스, 지난밤 배치(프로바이더/모델·병렬·통합 게이트), 오늘 예정 큐, 3일 계측, 자율 마무리 진단, 에픽·스토리 진행률, 단계 배지 4칸, File List 겹침 판정, 불일치 경고, 다음 할 일 추천, 무인 러너 실황을 로컬 HTML 한 장으로 보여준다. 설정(tools/dev-status/sources.json)이 있으면 러너가 도는 별도 클론의 상태·문서·배치 기록을 덮어 읽고(개발선 덮어 읽기), DB 마이그레이션 실측 기록(선택)을 카드와 신선도 F6 으로 보여 준다. 외부 의존성 0, LLM 호출 0, Node 20 이상. 커밋·게시 등 쓰기 작업은 하지 않는다.
 ---
 
 # dev-status — BMad 개발 현황판 (최소판)
@@ -30,7 +30,11 @@ description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현
 - `{planning_artifacts}/epics.md` — 에픽·스토리 목록 SoT
 - `{implementation_artifacts}/sprint-status.yaml` — 상태 SoT(`development_status:` 블록). `story_location`·`last_updated` 는 주석줄로 와도 읽는다. **`last_updated:` 가 여러 줄이면 날짜가 가장 최근인 것**을 고른다(2026-09-21 — 같은 키가 머리에 수십 줄 쌓이고 맨 위가 최신이 아니다). 이 값은 참고일 뿐이고 헤더의 「상태 파일 날짜」는 **파일 시각·커밋 시각**을 쓴다(신선도 F2).
 - `{implementation_artifacts}/RELEASE-LOG.md` — **있으면** 읽는다. 절 머리 `## YYYY-MM-DD [HH:MM] · …` 에서 가장 최근 릴리스 시각을 뽑아 「마지막 릴리스 이후만 센다」의 기준선으로 쓴다. 없으면 **아무것도 접지 않는다**(종전대로 전건을 센다).
-- `{프로젝트루트}/tools/dev-status/sources.json` — **있으면** 읽는 프로젝트 소유 설정(이 스킬 폴더에는 두지 않는다 — 계층화 정책). 읽는 키는 넷뿐이고 전부 **있을 때만** 동작한다: `opsLineEpics`(운영선 에픽 번호 → 운영선/개발선 가르기) · `devLineBranches`(개발선으로 확인된 주제 갈래 이름) · `integrationGateSince`(통합 게이트 도입일) · `qualityGatesSince`(검사 종류별 도입일 맵). 없으면 전부 종전 동작이다.
+- `{implementation_artifacts}/RELEASE-LINES.md` — **있으면** 읽는다(`releaseLinesFile` 로 바꿀 수 있다). 「운영선」이라는 말과 `Epic 1·2·3` 이 같은 줄에 있는 첫 줄에서 운영선 에픽 번호를 뽑는다(`parseOpsEpics`). 없거나 그런 줄이 없으면 `sources.json` 의 `opsLineEpics` 를 쓰고, 그것도 없으면 **아무것도 접지 않는다**.
+- `{프로젝트루트}/tools/dev-status/sources.json` — **있으면** 읽는 프로젝트 소유 설정(이 스킬 폴더에는 두지 않는다 — 계층화 정책). 키는 전부 선택이고, 없으면 그 기능은 꺼지거나 「판정 불가」로 적힌다 — **설정이 없다고 「이상 없음」이 되는 경로는 없다.** 키 전체 목록·기본값은 아래 「새 프로젝트에 붙이는 법」.
+- 러너 클론(설정이 있을 때만) — 무인 러너가 **다른 폴더(클론)**에서 돌면 그 폴더의 `sprint-status.yaml`·스토리 문서·`auto-pipeline-logs/` 를 **읽기만** 한다(아래 「개발선 덮어 읽기」).
+- DB 마이그레이션(폴더가 있을 때만) — 마이그레이션 폴더의 `.sql` 목록과 실측 산출물 `migration-probe.json`(사람이 `probe-migrations.mjs` 로 만든다 · 아래 「DB 마이그레이션 실측」).
+- 상태 폴더의 `slots.log`·`runner.lock` — 무인 러너 실황 카드(작업 중 스토리·단계·모델·병렬 폭). 없으면 「러너 로그 없음(러너를 쓰지 않으면 정상)」.
 - 스토리 `.md` 파일 — File List(겹침 판정)·수용기준
 - `auto-pipeline-logs/state.json`(단계 배지)·`run-summary.log`(배치 가동 판정 **+ 스토리별 리뷰 실행 횟수**) — 없으면 단계 배지·배치바·리뷰 반복 판정만 빠지고 나머지는 정상.
   - `run-summary.log` 의 스테이지 시작 줄 `[ISO] → [슬러그] <stage>` 중 `stage` 가 정확히 `review` 이고 **바로 뒤 `[ISO]    exit=0` 줄로 완료가 확인된 것만** 슬러그별로 센다. 시작 줄만 세면 `--dry-run` 예행연습(엔진이 시작 줄을 찍고 즉시 반환한다)과 인증 만료로 죽은 실행까지 리뷰 1회로 잡힌다. 이 줄 서식은 무인 배치 엔진(auto-story-finish)이 찍는 것이라 프로젝트 문서 서식과 무관하다.
@@ -67,7 +71,7 @@ description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현
 
 ## 현황판 신선도 검토 (2026-09-21 · 화면 맨 위 블록)
 
-「이 화면이 **지금**을 반영하는가」를 화면 스스로 검토해 맨 위에 7줄로 적는다. 왜 생겼나 — 화면이 현재를 반영하지 못한 채 조용히 낡아 있었다(원 프로젝트 실측: 읽는 폴더가 최신 main 이 아닌데 표시가 없었고, 헤더의 「상태 파일 날짜」가 손으로 적은 주석을 읽어 사흘 전이었다).
+「이 화면이 **지금**을 반영하는가」를 화면 스스로 검토해 맨 위에 8줄로 적는다. 왜 생겼나 — 화면이 현재를 반영하지 못한 채 조용히 낡아 있었다(원 프로젝트 실측: 읽는 폴더가 최신 main 이 아닌데 표시가 없었고, 헤더의 「상태 파일 날짜」가 손으로 적은 주석을 읽어 사흘 전이었다).
 
 판정은 `freshness.mjs`(순수 함수 · fs 접근 0)가 하고, 재료는 `scan.mjs` 가 `data.freshness` 로 모으며, 그림은 `build.mjs` 의 `renderFreshness` 가 그린다.
 
@@ -77,18 +81,19 @@ description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현
 | F2 | 상태 파일이 언제 바뀌었나 — 근거는 주석이 아니라 **파일 시각·커밋 시각** 중 최근 | `sprint-status.yaml` 의 mtime + `git log -1` |
 | F3 | 에픽 문서 ↔ 상태 파일 정합 — 한쪽에만 있는 스토리 · `#### Story` 건수 · 중복 에픽 절 | `parseEpics`/`parseSprint` 집계 |
 | F4 | 무인 러너가 살아 있나 — 심박·잠금 파일·마지막 기록 | 상태 폴더 `slots.log` |
-| F5 | 지난밤 배치 재료가 있나 — 「0건」이 진짜 0 인지 재료가 없는 것인지 | `batch-<id>-manifest.json` |
+| F5 | 지난밤 배치 재료가 있나 — 「0건」이 진짜 0 인지 재료가 없는 것인지. 러너 클론이 설정돼 있으면 두 자리를 나란히 적고, 클론 쪽이 반나절 넘게 앞서면 `stale` | `batch-<id>-manifest.json`(이 폴더 + 러너 클론) |
+| F6 | DB 마이그레이션 실측이 언제 것인가 — 잰 뒤 파일이 바뀌었으면 `stale` · 7일 넘으면 `warn` · 기록 없음·무엇을 쟀는지 확인 못 함은 `unknown` · 마이그레이션 폴더가 없는 프로젝트는 `na` | `migration-probe.json` + 마이그레이션 폴더 `.sql` 목록 |
 | F7 | 결정 인박스가 언제 바뀌었나 | `DECISIONS-INBOX.md` mtime + 커밋 시각 |
 | F8 | 이 화면을 만든 시각 — 10분 넘으면 새로고침 안내 | `generatedAt` |
 
-- 상태는 넷뿐이다: `ok`(✅) · `warn`(⚠️) · `stale`(🔶) · `unknown`(❔). 종합 판정은 stale 하나라도 있으면 🔴, warn 만 있으면 🟡, 전부 ok 면 🟢, **unknown 이 남으면 ⚪ 판정 불가**다 — 확인 못 한 것을 🟢 로 올려치지 않는다.
+- 상태는 다섯이다: `ok`(✅) · `warn`(⚠️) · `stale`(🔶) · `unknown`(❔) · `na`(➖ 해당 없음 — F6 에서 마이그레이션 폴더가 **아예 없는** 프로젝트만). 종합 판정은 stale 하나라도 있으면 🔴, warn 만 있으면 🟡, 전부 ok 면 🟢, **unknown 이 남으면 ⚪ 판정 불가**다 — 확인 못 한 것을 🟢 로 올려치지 않는다. `na` 는 종합 판정에 넣지 않는다(🟢 을 막지도, 올려 주지도 않는다).
 - 각 줄은 **무엇을 · 왜 · 다음에 뭘 하면 되는지** 순서다(`detail` + `action`).
-- **F6 번호는 비어 있다.** 원본 프로젝트의 F6 은 DB 마이그레이션 실프로브 산출물이 원천이라 이 스킬에 없다(아래 「이 스킬에 없는 기능」). 번호를 당기지 않고 비워 둔 것은 빠진 자리를 감추면 「F6 은 통과했나」로 오해되기 때문이다.
+- **F5 는 러너 클론 설정이 아예 없으면 이 폴더 기록만 본다** — 러너가 이 폴더에서 도는 프로젝트가 대부분이라서다. 그때 detail 에 「러너 클론 설정이 없어 이 폴더 기록만 봤습니다」를 적는다(안 한 대조를 한 척하지 않는다). 설정이 **적혀 있는데** 폴더를 못 찾으면 `unknown` 이다.
 - **git 이 없어도 죽지 않는다.** git 이 없거나 저장소가 아니면 F1 은 `unknown` 이고 F2·F7 은 파일 시각만 쓴다. 「외부 패키지 0」은 그대로다 — `git` 은 읽기 명령만, 설치·로그인·네트워크 없이 쓴다.
 
 ### 상태 폴더 해석 (원장이 갈라지지 않게)
 
-`AUTO_BATCH_STATE_DIR` → `tools/auto/auto.config.json` 의 `stateDir` → `~/.claude-auto/<project>` → `~/.baroos-auto`(jng-os 호환 폴백 · 실존할 때만). **러너·편성기와 같은 순서**다(`run-night.mjs` · `plan-queue.mjs`). 화면 footer 에 실제로 고른 폴더와 그 사유를 적는다.
+`AUTO_BATCH_STATE_DIR` → `tools/auto/auto.config.json` 의 `stateDir` → `~/.claude-auto/<project>`(`project` 는 같은 파일의 `project` 키 · 없으면 루트 폴더 이름). **러너·편성기와 같은 순서**다. 옛 이름의 상태 폴더를 쓰는 프로젝트는 `stateDir` 에 그 경로를 적는다 — 이 스킬은 폴더 이름을 추측하지 않는다. 화면 footer 에 실제로 고른 폴더와 그 사유를 적는다.
 
 ### 판정 규칙 — 확인 못 한 것을 통과로 적지 않는다
 
@@ -107,7 +112,7 @@ description: BMad v6 프로젝트의 읽기 전용 개발 현황판. "개발 현
 | 접는 것 | 근거 | 근거가 없으면 |
 |---|---|---|
 | 마지막 릴리스 **이전**에 끝난 배치·되돌림 | `RELEASE-LOG.md` 절 머리에서 뽑은 가장 최근 릴리스 시각(`lastRelease`) | 전건을 센다 |
-| 개발선(별도 갈래에서만 도는) 배치의 리뷰 대기·STOP | `sources.json` 의 `opsLineEpics` | 전건을 센다 |
+| 개발선(별도 갈래에서만 도는) 배치의 리뷰 대기·STOP | `RELEASE-LINES.md` 의 운영선 줄 → `sources.json` 의 `opsLineEpics`. 두 갈래 모드에서는 **러너 클론에서 읽은 배치 재료도 개발선**으로 본다 | 전건을 센다 |
 | 통합 게이트 **도입 전**에 만들어진 검증 기록의 빈 통합 칸 | `sources.json` 의 `integrationGateSince` | 전건을 센다 |
 | 그 검사가 **생기기 전** 기록의 「스크립트 없음」 | `sources.json` 의 `qualityGatesSince` | 전건을 센다 |
 | 자율 진단 잔여(`tierRemaining`) 중 **개발선 에픽 몫** | 항목의 `epic`·`story` + `opsLineEpics` | 전건을 운영선으로 센다 |
@@ -134,10 +139,12 @@ JSON 하나가 깨져도 **그 블록만** 「읽지 못했습니다(파일 · �
 | 파일 | export | 성격 |
 |---|---|---|
 | `batch-sources.mjs` | `collectBatchSources` · `parse*` 9종(`parseReadiness` 는 엔진의 `{project,tasks}` 모양도 읽는다) · `resolveStateDir` · `nightKey`/`lastNightManifests` · `slotHeartbeat` · `assignByStory` · `findAutofinishDir`/`findAutofinishFile` | 파서(읽기 전용) |
-| `verdict.mjs` | `deployVerdict` · `batchWarnings` · `tierRemaining` · `lastRelease` · `epicOfStory`/`storySlugs`/`releaseLineOf`/`lineOfFinding`/`splitBatchMaterial` · `splitCheckFails` · `splitChain` | 순수 함수 |
-| `freshness.mjs` | `freshnessChecks`(7항목) · `freshnessVerdict` · `ms`/`ago`/`stamp` | 순수 함수(fs 접근 0) |
+| `verdict.mjs` | `deployVerdict` · `batchWarnings` · `tierRemaining` · `lastRelease` · `parseOpsEpics` · `epicOfStory`/`storySlugs`/`releaseLineOf`/`lineOfFinding`/`splitBatchMaterial` · `splitCheckFails` · `splitChain` | 순수 함수 |
+| `freshness.mjs` | `freshnessChecks`(8항목) · `freshnessVerdict` · `ms`/`ago`/`stamp` | 순수 함수(fs 접근 0) |
 | `daily-metrics.mjs` | `dailyMetrics` · `nightKeys` · `trendOf` · `formatValue`/`formatDuration` | 순수 함수 |
 | `render-batch.mjs` | `renderHero`/`renderInbox`/`renderNight`/`renderQueue`/`renderMetrics`/`renderDiagnosis`/`renderVerdictTick`/`renderError` · `storyExtras` · `BATCH_CSS` · `esc` | 순수 문자열 |
+
+그 밖에 `scan.mjs` 가 `mergeDevLineSprint`·`mergeDevLineMockups`(플러그인용)·`STATUS_RANK`·`parseSprintText`·`classifyRemoteOnly`·`resolveRunnerClone`·`parseRunner` 를, `build.mjs` 가 `renderRunner`·`renderDevLine`·`renderMigration`·`renderFreshness` 를 내보낸다. `probe-migrations.mjs` 는 사람이 직접 돌리는 선택 도구다(아래).
 
 CSS 클래스는 전부 `b-` 접두다 — 목업의 `.chip`·`.it`·`.row`·`.sec` 는 기존 화면의 필터 칩·항목 카드와 이름이 겹쳐서 그대로 쓰면 기존 UI 가 깨진다. 색 토큰(`--orange`·`--green`·`--lblue`)은 목업 그대로이며 **빨강을 새로 만들지 않는다**(RED = 주황 채움).
 
@@ -149,7 +156,74 @@ CSS 클래스는 전부 `b-` 접두다 — 목업의 `.chip`·`.it`·`.row`·`.s
 { name: '이름', sections(data) { return ['<section>…</section>'] } }
 ```
 
-반환한 HTML 을 **스토리 표 아래·footer 위**에 순서대로 끼운다. 플러그인이 던지면 그 플러그인 자리만 경고 박스가 되고 나머지 화면은 그대로다. jng-os 의 목업 갤러리·앱 미리보기·파일럿 게이트·deferred RC1 이 이 자리에 온다.
+반환한 HTML 을 **스토리 표 아래·footer 위**에 순서대로 끼운다. 플러그인이 던지면 그 플러그인 자리만 경고 박스가 되고 나머지 화면은 그대로다. 프로젝트 고유의 목업 갤러리·앱 미리보기·출시 게이트·보류 원장 같은 블록이 이 자리에 온다. `data.devLine`(러너 클론 경로·덮은 스토리)이 함께 넘어가므로, 목업을 스캔하는 플러그인은 `mergeDevLineMockups` 로 클론의 목업까지 합칠 수 있다.
+
+## 개발선 덮어 읽기 (러너 클론 · 설정이 있을 때만)
+
+무인 러너가 **별도 클론**에서 도는 프로젝트에서는 러너가 끝낸 스토리 상태·문서·배치 기록이 머지 전까지 이 폴더에 없다. 이 폴더만 읽는 화면은 「그 에픽 전부 backlog」「지난밤 0건」처럼 며칠씩 낡는다. 그래서 러너 클론 경로가 **적혀 있으면** 그 폴더를 읽기만 해서 덮는다.
+
+- **경로 찾는 차례**: 상태 폴더의 `chain-info.json` → `tools/auto/auto.config.json` → `tools/dev-status/sources.json`. 키 이름은 `runnerClone`(호환: `runnerRoot`·`runnerRepo`·`chainRepo`·`clonePath`). 상대 경로는 프로젝트 루트 기준. 어디에도 없으면 아무것도 하지 않는다(종전대로 이 폴더만). 적혀 있는데 폴더가 없으면 화면에 「못 찾았습니다(사유)」를 적는다.
+- **상태 덮기 규칙**: 클론 항목이 **앞선 상태**(`backlog < ready-for-dev < in-progress < review < done`)일 때만 덮는다. 뒤로 가는 값은 덮지 않는다(이 폴더에서 정정한 것을 되돌리지 않는다). 이 폴더(에픽 문서·상태 파일)에 없는 키는 더하지 않는다 — 목록의 기준은 이 폴더다. 모르는 상태값은 순위 -1 이라 아무것도 덮지 못한다.
+- **스토리 문서**: 덮인 스토리(또는 이 폴더에 문서가 없는 스토리)는 클론의 문서를 읽고(File List 겹침 판정도 그것으로), 화면을 만들 때 `_bmad-output/dev-status/devline/stories/` 로 **복사**해 링크가 열리게 한다. 클론에는 아무것도 쓰지 않는다. 복사 실패는 화면 하단 읽기 오류로 공시한다.
+- **배치 재료**: 클론의 `auto-pipeline-logs/` 의 매니페스트·검증·계측을 이 폴더 것과 합친다 — 같은 키(배치 id·스토리)가 두 자리에 있으면 **새 쪽**을 쓴다. 두 갈래 모드(`opsLineEpics` 등이 있을 때)에서는 클론 재료를 개발선으로 본다.
+- **화면**: 신선도 블록 바로 아래 한 줄에 「개발선 덮어 읽음 — 러너 클론 … · 덮은 스토리 N건 · 클론 문서 N건」을, footer 에 배치 재료를 몇 자리에서 읽었는지를 적는다.
+
+## DB 마이그레이션 실측 (선택 · 마이그레이션 폴더가 있을 때만)
+
+「미적용 마이그레이션」을 기록 문서의 기재로 믿지 않고 **실측 기록**으로 보여 준다. 새로고침 경로에는 네트워크·인증을 넣지 않으므로 실측은 사람이 한다.
+
+- **실측 도구**: `node <스킬 폴더>/probe-migrations.mjs --root <프로젝트>` — 현재는 Supabase CLI(`npx supabase migration list --linked`)만 지원한다. `sources.json` 의 `devProjectRef` 가 없거나 링크된 프로젝트(`supabase/.temp/project-ref`)가 그것과 다르면 **재지 않는다**(운영 측정값이 개발 기준값을 덮지 않게). 인증은 CLI 가 스스로 한다(CLI 로그인 또는 `SUPABASE_ACCESS_TOKEN`) — 이 도구는 토큰을 읽거나 저장하지 않는다. 다른 DB 를 쓰면 같은 모양의 산출물을 만드는 자기 도구를 두면 된다.
+- **산출물 모양**(`migration-probe.json` · 기본 `tools/dev-status/`): `{ lastSuccess: { measuredAt, projectRef, total, applied, localOnly, remoteOnly, remoteOnlyVersions[], localFilesCount, localFilesHash }, lastAttempt: { at, ok, errorSummary, rawTail } }`. 실패는 `lastSuccess` 를 덮지 않는다. `localFilesHash` = `.sql` 파일 이름 목록(정렬 · 줄바꿈 연결)의 md5 앞 12자.
+- **카드**(② 불일치 아래): 숫자는 믿을 수 있는 측정일 때만 — 측정 없음·형식 이상·7일 초과·측정 뒤 파일 변화·개발용이 아닌 프로젝트·`devProjectRef` 미설정이면 전부 `—` 로 가린다. 「마지막 시도 실패」 배너는 원시 에러 없이 뜬다. `prodProjectRef` 가 있으면 「운영: 측정 안 함 — 이 도구는 운영을 재지 않습니다」 줄을 붙인다. 티커에 「미적용」 칸을 더한다.
+- **「파일 없이 적용된 DDL」 성격 분류**(`classifyRemoteOnly`): 원격에만 있는 버전을 ① 러너 클론 폴더에 파일이 있음(개발선 · 참고 줄) ② `migrationBaselineSince` 이전(번호표만 다른 과거 적용분 · 참고 줄) ③ 그 밖(규칙 위반 의심 · 불일치 high)으로 가른다. 기준일이 없으면 ②로 접지 않고, 버전 목록이 없는 옛 산출물이면 「가르지 못했습니다」로 적는다.
+- 신선도 F6 이 같은 기록의 나이를 본다.
+
+## 새 프로젝트에 붙이는 법
+
+**아무 설정 없이도 돈다.** BMad v6 산출물(`_bmad/bmm/config.yaml` + `epics.md` + `sprint-status.yaml`)만 있으면 진척·불일치·다음 할 일·신선도가 나오고, 설정이 필요한 기능은 꺼지거나 「판정 불가 / 해당 없음」으로 적힌다. 켜고 싶은 기능만 프로젝트 루트의 `tools/dev-status/sources.json` 에 적는다(이 스킬 폴더에는 두지 않는다). 상대 경로는 전부 **프로젝트 루트 기준**이다.
+
+| 키 | 기본값(없을 때) | 무엇을 켜나 |
+|---|---|---|
+| `runnerClone` | 없음 → 이 폴더만 읽음 | 러너가 도는 별도 클론 폴더. 개발선 덮어 읽기 · 배치 재료 합치기 · F5 대조 · 클론 마이그레이션 파일 대조. `chain-info.json`·`tools/auto/auto.config.json` 에 먼저 있으면 그쪽이 이긴다 |
+| `opsLineEpics` | `[]` → 아무것도 접지 않음 | 운영선 에픽 번호 배열(예 `[1,2,3]`). 개발선 배치·진단 잔여를 배포 판정에서 참고 줄로 접는다 |
+| `releaseLinesFile` | `<implementation_artifacts>/RELEASE-LINES.md` | 운영선 에픽을 적은 문서(「운영선 … Epic 1·2·3」 줄). 읽히면 `opsLineEpics` 보다 먼저다 |
+| `devLineBranches` | `[]` → 주제 갈래 전건을 셈 | 개발선으로 확인된 미머지 주제 갈래 이름(`auto/<날짜>-<주제>`) |
+| `integrationGateSince` | 없음 → 접지 않음 | 통합 게이트 도입일(`YYYY-MM-DD`). 그 전 검증 기록의 빈 통합 칸을 접는다 |
+| `qualityGatesSince` | 없음 → 접지 않음 | 검사 종류별 도입일 맵(`{"security":"YYYY-MM-DD", …}`) |
+| `mainBranch` | `main` | 정본 갈래 이름. F1(받아 둔 `origin/<이름>` 과 견주기)·미머지 갈래 판정이 쓴다 |
+| `migrationsDir` | `supabase/migrations` | 마이그레이션 `.sql` 폴더. 없으면 카드가 안 나오고 F6 은 `na` |
+| `migrationProbeFile` | `tools/dev-status/migration-probe.json` | 실측 산출물 자리(`probe-migrations.mjs` 가 쓰고 화면은 읽기만) |
+| `devProjectRef` | 없음 → 실측 도구가 재지 않음 · 기존 기록은 숫자를 가리고 F6 `unknown` | 개발용 DB 프로젝트 식별자. 무엇을 쟀는지 확인하는 기준 |
+| `prodProjectRef` | 없음 → 운영 안내 줄 없음 | 운영 DB 프로젝트 식별자(카드에 「운영은 재지 않습니다」 줄만 붙인다 — 재지 않는다) |
+| `projectLabels` | `{}` → `개발`·`운영`·`알 수 없는 프로젝트` | 식별자 → 화면 이름 맵 |
+| `migrationBaselineSince` | 없음 → 원격에만 있는 버전 전건을 위반 의심으로 셈 | 개발 DB 객체를 전수 실측한 날. 그 전 버전은 「번호표만 다른 과거 적용분」으로 접는다 |
+
+`sources.json` 밖의 입력:
+
+| 자리 | 기본값 | 쓰임 |
+|---|---|---|
+| 환경변수 `AUTO_BATCH_STATE_DIR` · `tools/auto/auto.config.json` 의 `stateDir`·`project` | `~/.claude-auto/<project>` | 상태 폴더(매니페스트 이력·큐·진단·`slots.log`·`runner.lock`·`chain-info.json`) |
+| 환경변수 `DEV_STATUS_PORT` | `5180`(점유면 +1 … +9) | 로컬 서버 포트 |
+| 환경변수 `NO_OPEN` | 없음 → 브라우저를 연다 | `1` 이면 자동으로 열지 않는다 |
+| `{implementation_artifacts}/RELEASE-LOG.md` | 없음 → 접지 않음 | 절 머리 `## YYYY-MM-DD [HH:MM] · …` 의 가장 최근 시각 = 마지막 릴리스 |
+| `{implementation_artifacts}/DECISIONS-INBOX.md` | 없음 → 「없음」 | 결정 인박스 블록 · F7 |
+
+예시(값은 전부 가짜다):
+
+```json
+{
+  "runnerClone": "../my-project-runner",
+  "opsLineEpics": [1, 2, 3],
+  "mainBranch": "main",
+  "migrationsDir": "db/migrations",
+  "devProjectRef": "dev-project-id",
+  "prodProjectRef": "prod-project-id",
+  "projectLabels": { "dev-project-id": "개발", "prod-project-id": "운영" },
+  "migrationBaselineSince": "2026-01-15"
+}
+```
+
+붙인 뒤 할 일: `_bmad-output/dev-status/` 를 `.gitignore` 에 넣는다(개발선 사본 `devline/` 도 여기 생긴다). `serve.mjs` 를 켜 둔 채 `sources.json` 을 고치면 서버가 알아채고 다음 새로고침부터 새 프로세스로 만든다.
 
 ## 리뷰 반복 게이트 (review-gated)
 
@@ -169,11 +243,9 @@ CSS 클래스는 전부 `b-` 접두다 — 목업의 `.chip`·`.it`·`.row`·`.s
 
 ## 이 스킬에 없는 기능과 이유
 
-파일럿 게이트 카드·보류(사람 대기) 항목·목업 갤러리 탭·앱 실행기는 특정 프로젝트 전용 원천(게이트 원장 문서, 판정 JSON, 고정 포트 dev 서버 설정)에 붙어 있는 기능이라 이 전역 스킬에는 없다 — **대신 위 플러그인 계약이 그 자리를 연다.**
+출시(개시) 게이트 카드·보류(사람 대기) 원장 항목·목업 갤러리 탭·앱 실행기(개발 서버 켜고 끄기)는 특정 프로젝트 전용 원천(게이트 원장 문서, 판정 JSON, 고정 포트 dev 서버 설정)에 붙어 있는 기능이라 이 전역 스킬에는 없다 — **대신 위 플러그인 계약이 그 자리를 연다.**
 
-마이그레이션 실프로브(외부 DB CLI 를 실제로 호출해 적용 상태를 실측하는 기능)도 없다 — 외부 CLI 설치·로그인·네트워크를 전제하므로 "외부 의존성 0(node 빌트인만)"과 충돌하고, 마이그레이션·DB 는 BMad v6 산출물 계약에 없는 개념이라 중립 코어가 아니다. 원본 프로젝트에는 있다. **신선도 F6 이 비어 있는 이유가 이것이다.**
-
-**러너 클론 대조**(무인 러너가 도는 **다른 폴더**의 배치 산출물을 읽어 이 폴더 것과 합치는 기능)도 없다 — 러너를 어디서 어떻게 돌리는지는 프로젝트 배치 방식이고, 남의 폴더 경로를 추측해 뒤지지 않는다는 원칙과도 맞물린다. 그래서 신선도 F5 는 **이 폴더의 기록만** 보고, 대조하지 않았다는 사실을 화면에 적는다. 필요하면 플러그인이 그 자리를 연다(`verdict.releaseLineOf` 는 `fromRunnerClone: true` 표식을 읽을 준비가 돼 있다).
+마이그레이션 실측과 러너 클론 대조는 2026-09-29 부터 **설정이 있을 때만** 켜지는 선택 기능으로 들어왔다(위 두 절). 둘 다 경로·식별자를 추측하지 않고, 설정이 없으면 꺼지거나 「판정 불가 / 해당 없음」으로 적힌다. 실측 도구는 외부 CLI(Supabase)를 부르지만 **사람이 따로 돌리는 도구**이고 화면 생성 경로에는 들어가지 않는다 — 「외부 패키지 0」은 그대로다.
 
 ## 계층화 정책
 
@@ -187,7 +259,10 @@ CSS 클래스는 전부 `b-` 접두다 — 목업의 `.chip`·`.it`·`.row`·`.s
 
 ## 알려진 한계
 
-- **신선도 F1 은 `origin/main` 을 정본 갈래로 가정한다.** 다른 이름(`master`·`trunk`)을 쓰는 저장소에서는 `behind` 가 `null` 이 되어 `unknown` 으로 뜬다 — 틀린 초록을 그리지는 않지만 맞는 초록도 못 그린다. 미머지 갈래 판정(`splitChain` 배선)의 `merge-base … main` 도 같다.
+- **정본 갈래 이름은 기본 `main` 이다.** 다른 이름(`master`·`trunk`)을 쓰면 `sources.json` 의 `mainBranch` 에 적는다. 안 적으면 F1 의 `behind` 가 `null` 이 되어 `unknown` 으로 뜬다 — 틀린 초록을 그리지는 않지만 맞는 초록도 못 그린다.
+- **`sources.json` 은 모듈이 적재될 때 한 번 읽는다.** `build.mjs`·`scan.mjs` 를 직접 돌리면 매번 새로 읽고, `serve.mjs` 는 파일이 바뀐 것을 알아채 다음 새로고침부터 새 프로세스로 만든다.
+- **러너 실황 카드는 배치 엔진이 `slots.log` 에 찍는 줄 서식**(`==== … ====` 배치 머리 · `→ [슬러그] 단계 (model=…)` · `오늘 누계 N` · `배치 완료`)에 기대 있다. 서식이 다른 러너에서는 「대기」로만 보인다.
+- **마이그레이션 실측 도구는 Supabase CLI 전용이고 CLI 의 JSON 출력 모양에 기대 있다**(`migrations[]` 의 `local`·`remote`). CLI 가 모양을 바꾸면 「출력 형식 인식 실패」로 기록되고 직전 성공값은 그대로 남는다.
 - **신선도는 `git fetch` 를 하지 않는다.** 이미 받아 둔 원격 기록과만 견주므로, 오래 fetch 하지 않은 폴더에서는 「최신입니다」가 **그 시점 기준**이다. 새로고침 경로에 네트워크·인증을 넣지 않기 위한 의도적 선택이고, 견줄 기록이 아예 없으면 `unknown` + 「한 번 `git fetch origin` 을 돌리세요」로 적는다.
 - **`scan.mjs` 의 JSON 출력은 1 MB 를 넘을 수 있다**(산출물이 쌓인 저장소에서 실측 1.11 MB). 다른 도구가 `child_process.spawnSync`/`execSync` 로 이 출력을 받아 쓴다면 **`maxBuffer` 를 반드시 올려야 한다** — 기본값 1 MB 를 넘으면 자식이 SIGTERM 으로 죽고 `status` 가 `null` 이 되는데, 그 모습이 「원천을 못 읽어 실패」와 구분되지 않아 원인을 엉뚱한 데서 찾게 된다(이 스킬의 `scan.test.mjs` 가 실제로 그렇게 한 번 걸렸다). 파이프·리다이렉트로 받으면 해당 없다.
 - **접는 규칙 넷은 설정이 있어야 켜진다.** `sources.json` 이 없는 프로젝트에서는 개발선 가르기·게이트 도입 전 접기가 **전부 꺼진 채 종전대로 전건을 센다**. 안전한 쪽(과하게 세는 쪽)으로 기운 것이지 버그가 아니다.
@@ -200,22 +275,25 @@ CSS 클래스는 전부 `b-` 접두다 — 목업의 `.chip`·`.it`·`.row`·`.s
 
 이 폴더는 원 개발 프로젝트 저장소의 `tools/dev-status/` 원본에서 파생된 **읽기 전용 스냅샷**이다. 개발은 원본에서만 하고, 동기화 스크립트·심링크·subtree 는 만들지 않는다(읽기 전용 도구라 갈라져도 실해가 작다).
 
-**파일마다 정본이 다르다.** 원본 파일 머리에 `// SOURCE: claude-skills/dev-status/<파일> — 이식판이 정본` 주석이 있으면 **이 스킬 쪽이 정본**이고(현재 `batch-sources.mjs`·`daily-metrics.mjs`·`render-batch.mjs`·`verdict.mjs` + 각 테스트), 그 파일은 원본에서 **거의 그대로 복사**하면 된다. 그 주석이 없는 파일(`scan.mjs`·`build.mjs`·`serve.mjs`)만 아래 2·3단계의 삭제·전역화가 필요하다. 갱신하려면:
+**파일마다 정본이 다르다.** 원본 파일 머리에 `// SOURCE: claude-skills/dev-status/<파일> — 이식판이 정본` 주석이 있으면 **이 스킬 쪽이 정본**이고(현재 `batch-sources.mjs`·`daily-metrics.mjs`·`render-batch.mjs`·`verdict.mjs` + 각 테스트), 그 파일은 원본에서 **거의 그대로 복사**하면 된다(단 `verdict.mjs` 의 설명 문구 속 프로젝트 고유 에픽 번호·문서 절 번호는 중립 표현으로). 그 주석이 없는 파일(`scan.mjs`·`build.mjs`·`serve.mjs`·`freshness.mjs`·`probe-migrations.mjs`·`devline.test.mjs`)은 아래 2·3단계의 삭제·전역화가 필요하다. 갱신하려면:
 
 0. **원본이 지금도 움직이는지 먼저 본다.** `git -C <원본저장소> log --oneline -3` 으로 기준 커밋을 적어 두고, 작업이 끝나면 한 번 더 봐서 그사이 바뀐 것이 있으면 보고에 적는다(2026-09-21 재생성 중 원본에 새 커밋이 두 번 들어왔다).
 1. 원본 파일을 이 폴더로 다시 복사한다. (같은 폴더의 PLAN.md·README.md·mockups/·JSON 산출물은 그 프로젝트 기록물이므로 가져오지 않는다. `sources.json` 도 **가져오지 않는다** — 그 파일은 프로젝트가 소유하고, 이 스킬은 프로젝트 루트의 `tools/dev-status/sources.json` 을 있으면 읽을 뿐이다.)
-2. **프로젝트 전용 기능을 통째로 삭제한다**: 파일럿 게이트(parsePilotGate)·보류 항목(parseDeferred)·목업(parseMockups)과 그 UI(게이트 카드·보류 섹션·목업 탭), 앱 실행기(serve 의 앱 포트·spawn 계열 전부), 프로젝트 브랜드 문자열(예: 예약작업 이름), 지시문 속 커밋·푸시 정책 플래그, **마이그레이션 실프로브(probe-migrations.mjs·parseMigrationProbe·migration-probe.json·신선도 F6)**, **러너 클론 읽기**(resolveRunnerClone·readCloneLogs·mergeByKey·`sources.json` 러너 경로·신선도 F5 의 러너 대조 절반), 프로젝트 원장을 직접 파싱하는 함수(`parseOpsEpics` 가 `RELEASE-LINES.md` 의 한국어 문장을 읽는 것 — **설정 키로 갈아끼운다**).
+2. **프로젝트 전용 기능을 통째로 삭제한다**: 출시 게이트(parsePilotGate)·보류 항목(parseDeferred)·목업 스캔(parseMockups·parseMockupsAt)과 그 UI(게이트 카드·보류 섹션·목업 탭), 앱 실행기(serve 의 앱 포트·spawn 계열 전부), 프로젝트 브랜드 문자열(예: 예약작업 이름·제품 이름), 지시문 속 커밋·푸시 정책 플래그, 프로젝트 전용 토큰 해석기 import.
+   - **남기되 설정으로 갈아끼우는 것**(2026-09-29): 마이그레이션 실측(`parseMigrationProbe`·`classifyRemoteOnly`·`probe-migrations.mjs`·신선도 F6) — 코드에 박힌 프로젝트 식별자·경로를 `devProjectRef`·`prodProjectRef`·`projectLabels`·`migrationsDir`·`migrationProbeFile` 로. 러너 클론 읽기(`resolveRunnerClone`·`readCloneLogs`·`mergeByKey`·개발선 덮어 읽기·F5 대조) — 클론 안 경로는 하드코딩 대신 **이 폴더 기준 상대 경로를 클론에 그대로 적용**한다. `parseOpsEpics` — 문서 경로를 `releaseLinesFile` 로. 정본 갈래 이름 — `mainBranch`.
 3. **전역화 수정을 다시 적용한다**: 경로 탐지(--root → 상위 6단 → BMad config, 실패 시 exit 2 진단), 엔진 리터럴 1순위 + 경로 불일치 배너, 매치 0건 경고, 배치 가동 판정(종료 태그 확장 + state.json mtime 30분 무변화 = 중단), 전용 포트 변수(DEV_STATUS_PORT, 5180→5189 자동 증가, 주소 stdout 첫 줄), 헤더에 루트 절대경로 표시, MIME 표 확장(미등록 확장자는 404), 브라우저 열기 3분기(win32/darwin/그 외), 출력 경로 상수(OUT_DIR) 한 곳 공유, **리뷰 반복 게이트의 근거 교체**.
    - **리뷰 반복 게이트 변형본**(원본 RC5 의 전역판): 원본은 `review-gated` 판정을 `deferred-work.md` 원장(종결 선언 문구·미해소 심각도 집계)에서 얻는다. 이 스킬에는 그 파서가 없으므로 **판정 근거만 `run-summary.log` 의 완료된 리뷰 실행 횟수(`REVIEW_GATE_RUNS = 6`)로 갈아끼우고, 원본의 `review-gated` 관련 코드는 전부 남긴다** — ① `scan.mjs` `SKILL` 맵의 `'review-gated'` 항목, ② `scan.mjs` `rank` 의 `'review-gated'`(단, 이 스킬은 게이팅 대상이 다수가 될 수 있어 0 대신 1.5 로 내렸다), ③ `scan.mjs` BULK 필터의 `n.key !== 'review-gated'`, ④ `build.mjs` `actHTML` 의 조기 반환(스킬 문자열이 비면 버튼 미렌더 — RC5 의 실제 안전장치는 배지가 아니라 이것이다), ⑤ `build.mjs` 배지 조회를 `STLABEL[n.key] || STLABEL[n.status]` 로, ⑥ `build.mjs` 의 `gatedN` 섹션 머리 요약, ⑦ `build.mjs` CSS 2줄(`.it .gatewhy`·`.noact`). 원본의 `n.sev`(원장 심각도 N건 경고)와 `gate-notes.json` 접기만 원천이 없어 가져오지 않고, 배지 문구·`gateWhy` 꼬리말은 새 근거에 맞게 바꾼다.
    - 새 근거를 쓸 때 함께 지킬 것: 리뷰 **시작** 줄이 아니라 `exit=0` 으로 완료가 확인된 줄만 셀 것(`--dry-run`·인증 만료 실행이 리뷰 1회가 되지 않게), 슬러그 조회는 엔진과 같은 prefix 규칙일 것, 산출물 경로가 엔진 리터럴 경로와 어긋날 때는 게이팅하지 않을 것.
    - 원본의 한국어 관례 문구(`### 사람 대기` 절, `검증 전용`·`마지막 라운드` 같은 문장)를 탐지 패턴으로 옮기지 말 것 — 특정 프로젝트 규칙의 역주입이다. UI 표시 문구가 한국어인 것은 무관하다(스킬 전체가 한국어다).
    - **프로젝트 원장 → 설정 키 갈아끼우기**(2026-09-21 추가): 원본이 프로젝트 문서에서 읽어 내는 기준선은 스냅샷에서 **`tools/dev-status/sources.json` 의 키**로 바꾸고, 키가 없으면 **종전 동작(전건을 센다)** 으로 떨어뜨린다. 현재 셋 — `opsLineEpics`(원본은 `RELEASE-LINES.md` §0 을 정규식으로 읽는다 · 스냅샷은 설정만) · `integrationGateSince` · `qualityGatesSince`. `RELEASE-LOG.md`(마지막 릴리스 시각)는 **문서 이름·절 서식이 중립적이라 그대로 가져온다** — 없으면 아무것도 접지 않는다.
-   - **신선도 블록**(2026-09-21 추가): `freshness.mjs`·`freshness.test.mjs` 를 복사하되 **F6(마이그레이션 실측)은 통째로 빼고**, **F5 는 러너 클론 대조 절반을 빼고** 이 폴더 기록만 보게 고친다(번호는 당기지 않는다 — 위 「현황판 신선도 검토」 참조). 재료는 `scan.mjs` 의 `gitInfo`·`fileAge`·`unmergedChainBranches` 가 모으고, 화면은 `build.mjs` 의 `renderFreshness` + CSS `b-fr*`·`.rulenote` 가 그린다. 히어로 아래 참고 줄은 `render-batch.mjs` 의 `verdict.notes` + `.b-hnote` 다.
+   - **신선도 블록**(2026-09-29 개정): `freshness.mjs`·`freshness.test.mjs` 를 복사하되 F5 에 「러너 클론 설정이 아예 없으면(`runnerConfigured === false`) 이 폴더 기록만 판정」하는 분기를, F6 에 「마이그레이션 폴더가 없으면 `na`」·「`devProjectRef` 미설정이면 `unknown`」 분기를 유지한다. 예약작업 이름 같은 프로젝트 문자열은 중립 표현으로. 재료는 `scan.mjs` 의 `gitInfo`·`fileAge`·`unmergedChainBranches` 가 모으고, 화면은 `build.mjs` 의 `renderFreshness` + CSS `b-fr*`·`.rulenote` 가 그린다. 히어로 아래 참고 줄은 `render-batch.mjs` 의 `verdict.notes` + `.b-hnote` 다.
    - **자율 진단 산출물 읽기 규격**(2026-09-21 추가): 파일 이름(`final-*`/`round-N-*`)·`readiness` 의 `{project,tasks}` 모양·이중 폴더 내성은 **엔진이 쓰는 모양**이라 중립 코어다 — `batch-sources.mjs` 를 그대로 복사하면 된다(이 파일은 이식판이 정본이다).
    - **진단 잔여의 갈래 가르기**(2026-09-21 추가): `lineOfFinding`·`tierRemaining(…, opsEpics)`·`readyFolded` 도 `opsEpics` 가 비면 전건을 운영선으로 세므로 그대로 가져온다. 다만 사람에게 보이는 문구에서 **프로젝트 고유 에픽 번호**(「Epic 5~9·13 몫」 같은 것)는 중립 표현으로 바꾼다.
    - **제목 단계 인식**(2026-09-21 추가): `PATTERNS.epic` 은 `#{2,3}`, `PATTERNS.story` 는 `#{3,4}` 이고, 같은 에픽 번호의 절은 스토리를 합집합으로 합친다. 이건 특정 프로젝트 문서의 사고가 아니라 **문서가 손으로 커지면 어디서나 생기는 모양**이라 중립 코어로 가져온다.
 4. **검증**(전부 통과해야 한다):
-   - `node dev-status/build.mjs --root <원본저장소> --out <임시폴더>` 가 화면을 만들고, 「에픽 문서에 없습니다」 오탐 0 · 신선도 블록(`class="b-fresh"`) 존재 · 신선도 줄 수가 항목 수와 같을 것.
+   - `node dev-status/build.mjs --root <원본저장소> --out <임시폴더>` 가 화면을 만들고, 「에픽 문서에 없습니다」 오탐 0 · 신선도 블록(`class="b-fresh"`) 존재 · 신선도 줄 수가 항목 수(8)와 같을 것.
+   - 설정 없는 최소 BMad 프로젝트(임시 폴더에 `_bmad/bmm/config.yaml`·`epics.md`·`sprint-status.yaml`·스토리 1개)에서도 exit 0 으로 화면이 나올 것.
+   - 이 폴더 전체에 원본 프로젝트의 회사·제품·사람 이름, 프로젝트 식별자, 개인 절대 경로가 0건일 것(대소문자 무시 grep).
    - `node dev-status/scan.mjs --root <원본저장소>` 가 exit 0 · JSON 정상.
    - `node --test dev-status/*.test.mjs` 전건 GREEN.
    - `grep -h "^import .* from '" dev-status/*.mjs | grep -v "'\./"` 가 `node:` 뿐일 것(외부 패키지 0).

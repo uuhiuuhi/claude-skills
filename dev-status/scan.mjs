@@ -2,10 +2,14 @@
 // 원천: epics.md(목록 SoT) + sprint-status.yaml(상태 SoT) + 스토리 .md + auto-pipeline-logs/
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { join, resolve, dirname, relative, sep } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { assignByStory, collectBatchSources, resolveStateDir } from './batch-sources.mjs'
-import { batchWarnings, deployVerdict, lastRelease } from './verdict.mjs'
+import { createHash } from 'node:crypto'
+import { join, resolve, dirname, relative, sep, isAbsolute } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import {
+  assignByStory, collectBatchSources, lastNightManifests,
+  parseBatchManifest, parseMetrics, parseVerification, resolveStateDir,
+} from './batch-sources.mjs'
+import { batchWarnings, deployVerdict, lastRelease, parseOpsEpics } from './verdict.mjs'
 import { dailyMetrics } from './daily-metrics.mjs'
 
 // ── 원천 계약 — BMad v6 에픽·스토리 템플릿의 구조 패턴 ──────────
@@ -47,6 +51,19 @@ export function readSafe(p, { required = false } = {}) {
   }
 }
 const read = (p, opt) => readSafe(p, opt).value
+
+/** 폴더 읽기도 같다 — 없거나 못 읽으면 빈 목록 + (부재가 아닌 실패만) 사유 기록. */
+function readdirSafe(p) {
+  try {
+    return readdirSync(p)
+  } catch (err) {
+    const code = err?.code || 'EUNKNOWN'
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+      READ_ERRORS.push({ file: String(p), code, message: String(err?.message || err) })
+    }
+    return []
+  }
+}
 
 /** mtime(ms). 못 읽으면 null — 호출부가 「모름」으로 그린다. */
 function mtimeSafe(p) {
@@ -168,6 +185,38 @@ let storiesDir = found.impl
 const STORY_DIRS = [...new Set([ENGINE_IMPL, storiesDir, found.impl].map((p) => resolve(p)))].filter((p) => existsSync(p))
 
 const LOG_DIR = join(engineDir, 'auto-pipeline-logs')
+// 프로젝트가 두는 현황판 전용 설정(이 스킬 폴더에는 두지 않는다 — 계층화 정책).
+const SOURCES_PATH = join(rootDir, 'tools', 'dev-status', 'sources.json')
+
+/**
+ * `tools/dev-status/sources.json` — **프로젝트가 소유하는** 현황판 설정. 없거나 깨지면 빈 객체다
+ * (추측하지 않는다). 키는 전부 **선택**이고, 값이 없으면 그 기능은 꺼지거나(접기·덮어 읽기)
+ * 「판정 불가」로 적힌다 — 설정이 없다고 「이상 없음」이 되는 경로는 없다. 키 목록·기본값 =
+ * SKILL.md 「새 프로젝트에 붙이는 법」.
+ *   · opsLineEpics · devLineBranches · integrationGateSince · qualityGatesSince — 접기 기준선
+ *   · releaseLinesFile   운영선 에픽을 적은 문서(기본 <implementation_artifacts>/RELEASE-LINES.md)
+ *   · runnerClone        러너가 도는 별도 클론 폴더(개발선 덮어 읽기 · 배치 재료 합치기)
+ *   · mainBranch         정본 갈래 이름(기본 main)
+ *   · migrationsDir · migrationProbeFile · migrationBaselineSince · devProjectRef · prodProjectRef · projectLabels
+ *                        DB 마이그레이션 실측 카드·F6
+ */
+function readSources() {
+  try {
+    const v = JSON.parse(read(SOURCES_PATH) || '{}')
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {}
+  } catch { return {} }
+}
+const CFG = readSources()
+const cfgStr = (k) => (typeof CFG[k] === 'string' ? CFG[k].trim() : '')
+/** 설정의 경로 값 — 상대 경로는 프로젝트 루트 기준. */
+const cfgPath = (k, def) => {
+  const v = cfgStr(k)
+  if (!v) return def
+  return isAbsolute(v) ? v : resolve(rootDir, v)
+}
+// 정본 갈래 이름 — 신선도 F1(원격과 견주기)·미머지 갈래 판정이 쓴다.
+const MAIN = cfgStr('mainBranch') || 'main'
+
 const P = {
   epics: join(found.plan, 'epics.md'),
   sprint: sprintPath,
@@ -176,23 +225,15 @@ const P = {
   inbox: join(found.impl, 'DECISIONS-INBOX.md'),
   // 있으면 읽고 없으면 그만 — 「마지막 릴리스 이후만 센다」의 기준선이다(없으면 아무것도 접지 않는다).
   releaseLog: join(found.impl, 'RELEASE-LOG.md'),
-  // 프로젝트가 두는 현황판 전용 설정(이 스킬 폴더에는 두지 않는다 — 계층화 정책).
-  sources: join(rootDir, 'tools', 'dev-status', 'sources.json'),
+  // 있으면 읽고 없으면 그만 — 「운영선 … Epic 1·2·3」 줄이 운영선 에픽 목록의 1순위 근거다.
+  releaseLines: cfgPath('releaseLinesFile', join(found.impl, 'RELEASE-LINES.md')),
+  sources: SOURCES_PATH,
+  // DB 마이그레이션 — 폴더가 없으면 카드·F6 이 「해당 없음」이 된다.
+  migDir: cfgPath('migrationsDir', join(rootDir, 'supabase', 'migrations')),
+  // 실측 산출물 — probe-migrations.mjs(사람 실행)만 쓰고 화면은 읽기만 한다.
+  probe: cfgPath('migrationProbeFile', join(rootDir, 'tools', 'dev-status', 'migration-probe.json')),
 }
-
-/**
- * `tools/dev-status/sources.json` — **프로젝트가 소유하는** 현황판 설정. 없거나 깨지면 빈 객체다
- * (추측하지 않는다). 이 스킬이 읽는 키는 넷뿐이고 전부 **있을 때만** 동작한다.
- *   · opsLineEpics       운영선 에픽 번호 배열 — 두 갈래(운영선/개발선) 가르기를 켠다
- *   · devLineBranches    개발선으로 확인된 주제 갈래 이름 — 그 갈래만 미머지 계수에서 접는다
- *   · integrationGateSince  통합 게이트 도입일(YYYY-MM-DD) — 그 전 검증 기록의 빈 통합 칸을 접는다
- *   · qualityGatesSince  검사 종류별 도입일 맵 — 그 검사가 생기기 전 기록의 「스크립트 없음」을 접는다
- * 값이 없으면 전부 **종전 동작**(전건을 센다)이다.
- */
-function readSources() {
-  try { return JSON.parse(read(P.sources) || '{}') || {} } catch { return {} }
-}
-// 새 배치 하네스 산출물의 상태 폴더 — 러너·편성기와 같은 3단계(그 다음이 jng-os 호환 폴백).
+// 새 배치 하네스 산출물의 상태 폴더 — 러너·편성기와 같은 순서(환경변수 → auto.config.json → 기본값).
 const STATE = resolveStateDir(rootDir)
 
 // BMad 없는 프로젝트의 저하는 2단뿐 — 두 원천이 다 있으면 정상 화면, 아니면 구조화 오류
@@ -210,13 +251,34 @@ const relFromOut = (abs) => relative(OUT_DIR, abs).split(sep).join('/')
 const relFromRoot = (abs) => relative(rootDir, abs).split(sep).join('/')
 
 // 스토리 .md 탐색 — 엔진 리터럴 경로 1순위 → story_location/config 2순위
-function storyPathOf(slug) {
+function localStoryPath(slug) {
   if (!slug) return ''
   for (const d of STORY_DIRS) {
     const p = join(d, slug + '.md')
     if (existsSync(p)) return p
   }
   return ''
+}
+// 이번 화면이 러너 클론(개발선)에서 읽은 스토리 문서(slug → 절대 경로). scanInner 가 채운다.
+let DEVLINE_STORIES = new Map()
+// 개발선 사본의 화면 폴더 안 자리(build.mjs 가 복사한다 — 클론에는 쓰지 않는다)
+const DEVLINE_STORY_REL = (slug) => 'devline/stories/' + slug + '.md'
+/** 내용을 읽을 문서 — 개발선 사본이 있으면 그것(더 최신), 없으면 이 폴더의 것. */
+function storyPathOf(slug) {
+  if (!slug) return ''
+  return DEVLINE_STORIES.get(slug) ?? localStoryPath(slug)
+}
+/** 화면 폴더(OUT_DIR) 기준 링크 · 없으면 빈 문자열. */
+function storyLinkOf(slug) {
+  if (DEVLINE_STORIES.has(slug)) return DEVLINE_STORY_REL(slug)
+  const p = localStoryPath(slug)
+  return p ? relFromOut(p) : ''
+}
+/** 프로젝트 루트 기준 경로(지시문에 적는 것) · 없으면 빈 문자열. */
+function storyRootRelOf(slug) {
+  if (DEVLINE_STORIES.has(slug)) return relFromRoot(join(OUT_DIR, DEVLINE_STORY_REL(slug)))
+  const p = localStoryPath(slug)
+  return p ? relFromRoot(p) : ''
 }
 
 const norm = (s) => s.replace(/[\s·\-—()[\]{}/,.:]/g, '').toLowerCase()
@@ -320,7 +382,11 @@ function parseEpics() {
 
 // ── sprint-status.yaml: development_status 블록 ─────────────────
 function parseSprint() {
-  const txt = read(P.sprint, { required: true })
+  return parseSprintText(read(P.sprint, { required: true }))
+}
+/** sprint-status.yaml 본문을 해석한다 — 러너 클론(개발선) 사본에도 같은 해석기를 쓴다. */
+export function parseSprintText(txt) {
+  txt = String(txt ?? '')
   const block = txt.split(/^development_status:\s*$/m)[1] || ''
   const epicStatus = {}
   const storyStatus = {}
@@ -361,6 +427,278 @@ function parseSprint() {
     epicStatus, storyStatus, extra,
     updated: stamps.length ? stamps[stamps.length - 1] : (any ? any[1] : ''),
     updatedLines: stamps.length,
+  }
+}
+
+// ── 개발선(러너 클론) 덮어 읽기 ──────────────────────────────────
+// 러너가 별도 클론에서 도는 프로젝트에서는 그 클론의 스토리 상태·문서가 머지 전까지 이 폴더에 없다.
+// 그래서 이 폴더만 읽는 화면은 「그 에픽 전부 backlog」처럼 며칠씩 낡는다.
+// 규칙: 클론 항목이 이 폴더보다 **앞선 상태**(backlog<ready-for-dev<in-progress<review<done)일 때만 덮는다 —
+// 뒤로 가는 값은 덮지 않는다(이 폴더에서 정정한 것을 클론의 낡은 값으로 되돌리지 않는다).
+// 읽기만 하며 클론에는 아무것도 쓰지 않는다(git 명령 포함).
+export const STATUS_RANK = Object.freeze({ backlog: 0, 'ready-for-dev': 1, 'in-progress': 2, review: 3, done: 4 })
+const rankOf = (v) => (Object.prototype.hasOwnProperty.call(STATUS_RANK, v) ? STATUS_RANK[v] : -1)
+
+/**
+ * 상태 파일 두 벌(이 폴더 · 러너 클론)을 합친다.
+ * @returns {{storyStatus:object, epicStatus:object, overridden:string[]}}
+ */
+export function mergeDevLineSprint(main, chain) {
+  const storyStatus = { ...(main?.storyStatus ?? {}) }
+  const epicStatus = { ...(main?.epicStatus ?? {}) }
+  const overridden = []
+  for (const [id, rec] of Object.entries(chain?.storyStatus ?? {})) {
+    const cur = storyStatus[id]
+    // 이 폴더(에픽 문서·상태 파일)에 없는 키는 더하지 않는다 — 목록의 기준은 이 폴더이고,
+    // 낯선 키는 「에픽 문서에 없음」 오탐이 된다.
+    if (!cur) continue
+    if (rankOf(rec?.status) > rankOf(cur.status)) { storyStatus[id] = rec; overridden.push(id) }
+  }
+  for (const [num, st] of Object.entries(chain?.epicStatus ?? {})) {
+    if (num in epicStatus && rankOf(st) > rankOf(epicStatus[num])) epicStatus[num] = st
+  }
+  return { storyStatus, epicStatus, overridden }
+}
+
+/**
+ * 목업 목록 두 벌을 합친다(플러그인용 순수 함수 — 이 스킬 자체는 목업을 스캔하지 않는다).
+ * 항목 모양 = `{ rel, abs, href, verdict, explicit, note, story }`.
+ * 클론에만 있는 파일은 더하고(`copies` = 화면 폴더 `devline/` 로 복사할 대상), 양쪽에 있는 파일은
+ * 클론 쪽 판정이 **명시**돼 있을 때만 그 판정을 쓴다.
+ * @returns {{mockups:object[], added:string[], updated:string[], copies:{from:string,to:string}[]}}
+ */
+export function mergeDevLineMockups(main, chain) {
+  const byRel = new Map((main ?? []).map((m) => [m.rel, { ...m }]))
+  const added = []
+  const updated = []
+  const copies = []
+  for (const c of chain ?? []) {
+    const cur = byRel.get(c.rel)
+    if (!cur) {
+      byRel.set(c.rel, { ...c, fromDevLine: true })
+      added.push(c.rel)
+      copies.push({ from: c.abs, to: 'devline/' + c.rel })
+      continue
+    }
+    if (c.explicit && (c.verdict !== cur.verdict || c.note !== cur.note || c.story !== cur.story)) {
+      byRel.set(c.rel, { ...cur, verdict: c.verdict, note: c.note, story: c.story, explicit: true })
+      updated.push(c.rel)
+    }
+  }
+  return { mockups: [...byRel.values()], added, updated, copies }
+}
+
+// ── 러너 클론(별도 폴더) 찾기 ──────────────────────────────────
+// 경로는 **적혀 있을 때만** 읽는다 — 추측해서 남의 폴더를 뒤지지 않는다.
+// 찾는 차례 = 상태 폴더의 chain-info.json → tools/auto/auto.config.json → tools/dev-status/sources.json.
+// 앞의 둘은 배치 엔진이 소유하는 파일이라 현황판 쪽 설정은 마지막 자리다.
+const CLONE_KEYS = ['runnerClone', 'runnerRoot', 'runnerRepo', 'chainRepo', 'clonePath']
+function pickClonePath(obj) {
+  if (!obj || typeof obj !== 'object') return ''
+  for (const k of CLONE_KEYS) if (typeof obj[k] === 'string' && obj[k].trim()) return obj[k].trim()
+  return ''
+}
+/**
+ * @returns {{dir:string|null, why:string, tried:string[], configured:boolean}}
+ *   configured = 어느 한 곳에라도 경로 키가 적혀 있었나(적혀 있는데 폴더가 없으면 dir=null · configured=true).
+ */
+export function resolveRunnerClone(stateDir, root) {
+  const tried = []
+  let configured = false
+  const cands = [
+    [join(stateDir, 'chain-info.json'), '상태 폴더의 chain-info.json'],
+    [join(root, 'tools', 'auto', 'auto.config.json'), 'tools/auto/auto.config.json'],
+    [join(root, 'tools', 'dev-status', 'sources.json'), 'tools/dev-status/sources.json'],
+  ]
+  for (const [file, why] of cands) {
+    const txt = read(file)
+    if (!txt) { tried.push(why + ' 없음'); continue }
+    let p
+    try { p = pickClonePath(JSON.parse(txt)) } catch { tried.push(why + ' JSON 손상'); continue }
+    if (!p) { tried.push(why + ' 에 runnerClone 키 없음'); continue }
+    configured = true
+    const abs = isAbsolute(p) ? p : resolve(root, p)
+    if (!existsSync(abs)) { tried.push(why + ' 의 경로가 실존하지 않음(' + abs + ')'); continue }
+    // 같은 폴더를 가리키면 덮어 읽을 것이 없다 — 러너가 이 폴더에서 도는 것이다.
+    if (resolve(abs) === resolve(root)) { tried.push(why + ' 의 경로가 이 폴더 자신'); configured = false; continue }
+    return { dir: abs, why, tried, configured: true }
+  }
+  return { dir: null, why: tried.join(' · '), tried, configured }
+}
+
+/** 러너 클론의 auto-pipeline-logs — 매니페스트·검증·계측만 읽는다(읽기 전용). */
+function readCloneLogs(cloneRoot) {
+  const dir = join(cloneRoot, relative(rootDir, LOG_DIR))
+  if (!existsSync(dir)) return { dir: null, manifests: [], verifications: [], metrics: [] }
+  const manifests = []
+  const verifications = []
+  const metrics = []
+  for (const name of readdirSafe(dir)) {
+    const full = join(dir, name)
+    if (/^batch-.+-manifest\.json$/.test(name)) {
+      const r = parseBatchManifest(full)
+      // 출처 표식 — 두 갈래 운영(opsLineEpics 설정)에서 러너 클론 재료는 개발선으로 센다(verdict.releaseLineOf).
+      if (!r.error) manifests.push({ ...r.value, fromRunnerClone: true })
+    } else if (/-verification\.json$/.test(name)) {
+      const r = parseVerification(full)
+      if (!r.error) verifications.push(r.value)
+    } else if (/^metrics-.+\.json$/.test(name)) {
+      const r = parseMetrics(full)
+      if (!r.error) metrics.push({ ...r.value, fromRunnerClone: true })
+    }
+  }
+  return { dir, manifests, verifications, metrics }
+}
+
+/** 두 자리에서 온 기록을 키 하나당 **가장 최근 것 하나**로 합친다(내림차순). */
+function mergeByKey(lists, keyOf, atOf) {
+  const best = new Map()
+  for (const item of lists.flat()) {
+    const k = keyOf(item)
+    if (k == null) continue
+    const cur = best.get(k)
+    if (!cur || String(atOf(item) ?? '') > String(atOf(cur) ?? '')) best.set(k, item)
+  }
+  return [...best.values()].sort((a, b) => String(atOf(b) ?? '').localeCompare(String(atOf(a) ?? '')))
+}
+
+// ── DB 마이그레이션 실측 산출물 읽기 ────────────────────────────
+// 실측은 probe-migrations.mjs(사람 실행)가 하고, 화면은 그 산출물 + 측정 시각만 읽는다 —
+// 새로고침 경로에 네트워크·인증을 넣지 않는다. 측정 안 함은 0 이 아니라 결측으로 표현한다.
+// 무엇을 쟀는지는 sources.json 의 devProjectRef 와 견준다 — 설정이 없으면 「확인 못 함」이다.
+const HERE = dirname(fileURLToPath(import.meta.url))
+function parseMigrationProbe() {
+  const applicable = existsSync(P.migDir) || existsSync(P.probe)
+  const j = (() => { try { return JSON.parse(read(P.probe) || '{}') || {} } catch { return {} } })()
+  const files = existsSync(P.migDir)
+    ? readdirSafe(P.migDir).filter((n) => n.endsWith('.sql')).sort() : []
+  const hash = createHash('md5').update(files.join('\n')).digest('hex').slice(0, 12)
+  const devRef = cfgStr('devProjectRef')
+  const prodRef = cfgStr('prodProjectRef')
+  const labels = CFG.projectLabels && typeof CFG.projectLabels === 'object' ? CFG.projectLabels : {}
+  let s = j.lastSuccess || null
+  const a = j.lastAttempt || null
+  // 산출물이 반쯤 깨진 것(측정 시각·개수 결측)을 「신선한 측정」으로 믿지 않는다 —
+  // Date.parse(undefined)=NaN 은 어떤 비교에도 false 라 낡음 판정이 무력화되고 화면에 NaN 이 샌다.
+  const int = (v) => Number.isInteger(v)
+  const wrongProject = !!(s && devRef && s.projectRef !== devRef)
+  const projectUnverified = !!(s && !devRef)
+  const malformed = !!(s && !wrongProject &&
+    (!Number.isFinite(Date.parse(s.measuredAt)) || !(int(s.total) && int(s.applied) && int(s.localOnly) && int(s.remoteOnly))))
+  if (malformed) s = null
+  // 신선도 1차 = 사건(파일 목록 변화) · 2차 = 시계(7일). 색이 아니라 상태 문자열로 낸다.
+  let fresh = 'none'
+  if (s) {
+    const days = (Date.now() - Date.parse(s.measuredAt)) / 86400000
+    fresh = (s.localFilesHash !== hash) ? 'changed' : days > 7 ? 'stale' : 'fresh'
+  }
+  const refOf = (j.lastSuccess || {}).projectRef || ''
+  const labelOf = (ref) => labels[ref] || (devRef && ref === devRef ? '개발' : prodRef && ref === prodRef ? '운영' : '알 수 없는 프로젝트')
+  return {
+    applicable,
+    dir: relFromRoot(P.migDir),
+    probeFile: relFromRoot(P.probe),
+    probeCommand: 'node "' + join(HERE, 'probe-migrations.mjs') + '" --root "' + rootDir + '"',
+    success: s, attempt: a, localFilesCount: files.length, localLatest: files[files.length - 1] || '',
+    fresh, malformed, wrongProject, projectUnverified,
+    projectRef: refOf,
+    projectLabel: s ? labelOf(s.projectRef) : '',
+    prodProjectRef: prodRef,
+    prodLabel: prodRef ? (labels[prodRef] || '운영') : '',
+  }
+}
+
+/** 마이그레이션 파일명·버전 문자열에서 버전(앞머리 숫자 8~14자리)만 뽑는다. */
+const migVersion = (name) => (/^(\d{8,14})/.exec(String(name || '')) || ['', ''])[1]
+
+/** 폴더 하나의 마이그레이션 버전 집합(없는 폴더는 빈 집합). */
+function migVersionsIn(dir) {
+  const out = new Set()
+  if (!dir || !existsSync(dir)) return out
+  for (const n of readdirSafe(dir)) {
+    if (!n.endsWith('.sql')) continue
+    const v = migVersion(n)
+    if (v) out.add(v)
+  }
+  return out
+}
+
+/**
+ * 「마이그레이션 파일 없이 적용된 DDL」(원격에만 있는 버전)의 성격 분류.
+ *
+ * 개수만 세면 전부 「DDL 은 파일로만」 규칙 위반으로 보이지만 실제는 세 갈래다:
+ *   ① 개발선 파일 있음 — 러너 클론의 마이그레이션 폴더에 파일이 있다(아직 이 폴더로 안 들어온 체인분).
+ *   ② 번호표만 다른 과거 적용분 — 기준일(migrationBaselineSince) 이전 버전. 같은 DDL 이 다른 번호로 적용됐다.
+ *   ③ 현재 위반 — 로컬·러너 **어디에도 파일이 없고** 기준일 이후에 적용된 것. 이것만 센다.
+ * 버전 목록이 측정에 없으면 `known=false` — 접지 않고 「가르지 못했습니다」로 적는다.
+ * 기준일을 모르면 ②로 접지 않는다(전건을 ③으로 센다 — 보수적).
+ *
+ * @returns {{known:boolean, devLine:string[], oldNumbering:string[], violations:string[]}}
+ */
+export function classifyRemoteOnly({ versions = null, localDir = '', runnerDir = '', baselineSince = '' } = {}) {
+  if (!Array.isArray(versions)) return { known: false, devLine: [], oldNumbering: [], violations: [] }
+  const local = migVersionsIn(localDir)
+  const runner = migVersionsIn(runnerDir)
+  const digits = String(baselineSince || '').replace(/\D/g, '')
+  const cut = digits.length >= 8 ? digits.padEnd(14, '0') : ''
+  const devLine = []
+  const oldNumbering = []
+  const violations = []
+  for (const raw of versions) {
+    const v = migVersion(raw)
+    if (!v) continue
+    if (local.has(v) || runner.has(v)) devLine.push(v)
+    else if (!cut || v.padEnd(14, '0') >= cut) violations.push(v)
+    else oldNumbering.push(v)
+  }
+  return { known: true, devLine, oldNumbering, violations }
+}
+
+// ── 무인 러너 실황 — 상태 폴더의 slots.log 실측 ─────────────────
+// 러너가 별도 클론에서 돌아도 로그·잠금은 상태 폴더 하나를 쓴다 — 저장소가 아니라 그 로그를 읽어야
+// 「지금」이 보인다. 판정 재료: runner.lock(실행 중 주장) + 마지막 배치 헤더(==== … ====)가 완료 표식
+// 없이 열려 있는가 + 로그 mtime(심박 — 45분 넘게 조용하면 잠금이 있어도 「심박 없음」).
+// 45분 = 배치 엔진 기본 30분 슬롯의 1.5배(batch-sources.slotHeartbeat 와 같은 값).
+export function parseRunner(stateDir = STATE.dir) {
+  const lockPath = join(stateDir, 'runner.lock')
+  const logPath = join(stateDir, 'slots.log')
+  if (!existsSync(logPath)) return { available: false }
+  const mt = mtimeSafe(logPath)
+  if (mt == null) return { available: false } // 로그를 못 읽으면 「러너 로그 없음」 — 추측하지 않는다
+  const ageMin = Math.round((Date.now() - mt) / 60000)
+  const lines = read(logPath).split(/\r?\n/).filter(Boolean).slice(-400)
+  let today = null
+  let queueSize = null
+  let batch = null
+  let stories = new Map()
+  let lastDone = ''
+  for (const l of lines) {
+    let m
+    if ((m = /오늘 누계 (\d+)/.exec(l))) today = Number(m[1])
+    if ((m = /실행 대상 배치: (\d+)건/.exec(l))) queueSize = Number(m[1])
+    if ((m = /^==== (.+?)(?: \(병렬 (\d+)폭 시도\))? ====$/.exec(l))) {
+      if (m[1].startsWith('야간 배치 종료')) { if (batch) batch.open = false; continue }
+      batch = { label: m[1], parallel: m[2] ? Number(m[2]) : 1, open: true }
+      stories = new Map() // 새 배치 헤더 = 이전 배치 표시 재료 폐기
+    }
+    if (batch && (m = /^→ \[(.+?)\] (\S+) \(model=([^,)]+)/.exec(l))) {
+      stories.set(m[1], { stage: m[2], model: m[3] }) // 병렬이면 같은 배치에 스토리 줄이 여럿 쌓인다
+    }
+    if (batch && /배치 완료|배치 실패|배치 종료|BATCH DONE|BATCH STOP/.test(l)) batch.open = false
+    if ((m = /^- 완주: (.+)$/.exec(l))) lastDone = m[1]
+  }
+  const lock = existsSync(lockPath)
+  return {
+    available: true,
+    lock,
+    running: lock && !!batch?.open && ageMin < 45,
+    stale: lock && ageMin >= 45,
+    ageMin,
+    batch: batch ? { label: batch.label, parallel: batch.parallel, open: batch.open } : null,
+    stories: [...stories.entries()].map(([key, v]) => ({ key, stage: v.stage, model: v.model })),
+    queueSize,
+    today,
+    lastDone,
   }
 }
 
@@ -533,10 +871,7 @@ function buildBoard(epics, sprint) {
     ? Object.keys(RUNS).reduce((n, k) => n + (k === slug || slug.startsWith(k + '-') ? RUNS[k] : 0), 0)
     : 0)
 
-  const fileOf = (slug) => {
-    const p = storyPathOf(slug)
-    return p ? relFromRoot(p) : ''
-  }
+  const fileOf = (slug) => storyRootRelOf(slug)
 
   // ① 다음 작업 — 상태값이 곧 할 일이다
   // 게이팅된 항목은 지금 누를 것이 없으므로 실행 가능한 진행 중 뒤로 내린다 —
@@ -605,11 +940,11 @@ function gitInfo() {
   }
   const head = run(['rev-parse', 'HEAD'])
   if (!head) return { available: false }
-  const origin = run(['rev-parse', 'origin/main'])
+  const origin = run(['rev-parse', 'origin/' + MAIN])
   let behind = null
   let ahead = null
   if (origin) {
-    const lr = run(['rev-list', '--left-right', '--count', 'HEAD...origin/main'])
+    const lr = run(['rev-list', '--left-right', '--count', 'HEAD...origin/' + MAIN])
     const m = lr && /^(\d+)\s+(\d+)$/.exec(lr)
     if (m) { ahead = Number(m[1]); behind = Number(m[2]) }
   }
@@ -620,6 +955,7 @@ function gitInfo() {
     headShort: head.slice(0, 8),
     headAt: run(['log', '-1', '--format=%cI']) || '',
     branch: run(['rev-parse', '--abbrev-ref', 'HEAD']) || '',
+    mainBranch: MAIN,
     originMain: origin || '',
     originShort: origin ? origin.slice(0, 8) : '',
     behind,
@@ -640,7 +976,9 @@ function fileAge(p) {
 }
 
 /**
- * 상태 폴더 `chain-info.json` 의 갈래 이름 중 **아직 정본(main)에 안 들어간 것**만 남긴다.
+ * 상태 폴더 `chain-info.json` 의 갈래 이름 중 **아직 정본 갈래(mainBranch · 기본 main)에 안 들어간 것**만 남긴다.
+ * 그 파일은 **어젯밤 사진**이라 오늘 아침 머지가 반영돼 있지 않다 — 여기서 한 번 더 확인한다.
+ * 판정은 **지역 ref 로만** 한다(현황판은 네트워크를 쓰지 않는다).
  * 파일이 없으면 빈 배열이고, 그때 판정은 종전대로 큐가 적은 숫자 하나를 쓴다.
  * git 이 없거나 이름을 못 찾으면 **미머지로 본다**(나쁜 쪽이 이긴다 — 접는 쪽으로 기울지 않는다).
  */
@@ -657,7 +995,7 @@ function unmergedChainBranches(stateDir) {
   const has = (ref) => run(['rev-parse', '-q', '--verify', ref + '^{commit}'])
   return names.map(String).filter(Boolean).filter((b) => {
     const ref = has(b) ? b : (has('origin/' + b) ? 'origin/' + b : null)
-    return ref ? !run(['merge-base', '--is-ancestor', ref, 'main']) : true
+    return ref ? !run(['merge-base', '--is-ancestor', ref, MAIN]) : true
   })
 }
 
@@ -695,14 +1033,49 @@ function errorResult(error) {
     warnings: [], epics: [], drift: [], driftNotes: [], freshness: {},
     board: { next: [], batch: { running: false, line: '', lastAt: '' }, bulk: [], writesSprint: [] },
     batch: null,
+    runner: { available: false },
+    devLine: null,
+    migration: null,
   }
 }
 
 function scanInner() {
   const { epics, duplicateEpics } = parseEpics()
-  const sprint = parseSprint()
+  let sprint = parseSprint()
   const pipeline = parsePipeline()
-  const cfg = readSources()
+  const cfg = CFG
+
+  // ── 개발선 덮어 읽기(러너 클론 · 읽기 전용) ──
+  // 경로 설정이 없으면 아무것도 하지 않는다(종전대로 이 폴더만 읽는다).
+  const clone = resolveRunnerClone(STATE.dir, rootDir)
+  const devLine = {
+    dir: clone.dir, why: clone.why, configured: clone.configured,
+    sprintOverridden: [], storiesFromChain: [], copies: [], sprintMtime: '',
+  }
+  DEVLINE_STORIES = new Map()
+  if (clone.dir) {
+    const chainSprintPath = join(clone.dir, relative(rootDir, P.sprint))
+    const chainTxt = read(chainSprintPath)
+    if (chainTxt) {
+      const mt = mtimeSafe(chainSprintPath)
+      if (mt != null) devLine.sprintMtime = new Date(mt).toISOString()
+      const merged = mergeDevLineSprint(sprint, parseSprintText(chainTxt))
+      devLine.sprintOverridden = merged.overridden
+      sprint = { ...sprint, storyStatus: merged.storyStatus, epicStatus: merged.epicStatus }
+      // 덮인 스토리(또는 이 폴더에 문서가 없는 스토리)는 클론의 문서를 읽고,
+      // 화면을 만들 때 화면 폴더의 devline/stories/ 로 복사해 링크가 열리게 한다.
+      for (const [id, rec] of Object.entries(sprint.storyStatus)) {
+        if (!(merged.overridden.includes(id) || !localStoryPath(rec.slug))) continue
+        const chainFile = STORY_DIRS
+          .map((d) => join(clone.dir, relative(rootDir, d), rec.slug + '.md'))
+          .find((f) => existsSync(f))
+        if (!chainFile) continue
+        DEVLINE_STORIES.set(rec.slug, chainFile)
+        devLine.storiesFromChain.push(rec.slug)
+        devLine.copies.push({ from: chainFile, to: DEVLINE_STORY_REL(rec.slug) })
+      }
+    }
+  }
   const drift = []
   // driftNotes = **참고로 접은 것**(판정이 끝난 과거 기록). 건수로 세지 않되 숨기지도 않는다 —
   // 숫자만 줄이고 말을 안 하면 다음 사람이 「왜 줄었지」를 다시 조사한다.
@@ -723,8 +1096,7 @@ function scanInner() {
         s.status = rec.status
         s.slug = rec.slug
         s.pipeline = pipeline[rec.slug] || {}
-        const sp = storyPathOf(rec.slug)
-        s.storyFile = sp ? relFromOut(sp) : ''
+        s.storyFile = storyLinkOf(rec.slug)
         const a = norm(s.title)
         const b = norm(rec.slugTitle)
         let common = 0
@@ -778,18 +1150,64 @@ function scanInner() {
   }
   for (const w of warnings) console.error('[dev-status] 경고: ' + w)
 
+  // ── DB 마이그레이션 실측(있을 때만) ──────────────────────────────────────
+  const mg = parseMigrationProbe()
+  if (mg.wrongProject) {
+    drift.push({ level: 'high', where: 'DB 마이그레이션', msg: '개발용이 아닌 프로젝트(' + mg.projectRef + ')를 쟀습니다 — 링크 대상을 확인하고 다시 측정하세요(숫자는 가렸습니다)' })
+  }
+  // 「파일 없이 적용」으로 보이는 버전 중 개발선 체인 파일·옛 번호표를 가려낸다(러너 클론은 위에서 잡았다).
+  if (mg.success && mg.fresh === 'fresh' && !mg.projectUnverified && mg.success.remoteOnly > 0) {
+    const cls = classifyRemoteOnly({
+      versions: mg.success.remoteOnlyVersions ?? null,
+      localDir: P.migDir,
+      runnerDir: clone.dir ? join(clone.dir, relative(rootDir, P.migDir)) : '',
+      baselineSince: cfgStr('migrationBaselineSince'),
+    })
+    if (!cls.known) {
+      drift.push({ level: 'high', where: 'DB 마이그레이션', msg: '마이그레이션 파일 없이 적용된 DDL ' + mg.success.remoteOnly
+        + '건 — 이번 측정에 버전 목록이 없어 성격을 가르지 못했습니다(probe-migrations.mjs 를 다시 실행하세요)' })
+    } else {
+      if (cls.violations.length) {
+        drift.push({ level: 'high', where: 'DB 마이그레이션', msg: '마이그레이션 파일 없이 적용된 DDL ' + cls.violations.length
+          + '건 — 「스키마 변경은 마이그레이션 파일로만」 규칙 위반 의심 · ' + cls.violations.slice(0, 3).join(' · ') })
+      }
+      if (cls.devLine.length) {
+        driftNotes.push({ level: 'info', where: 'DB 마이그레이션', msg: '참고 — 개발선 파일 있음 ' + cls.devLine.length
+          + '건(러너 클론의 마이그레이션 폴더에 파일이 있습니다 — 아직 이 폴더로 안 들어온 개발선 체인분)' })
+      }
+      if (cls.oldNumbering.length) {
+        driftNotes.push({ level: 'info', where: 'DB 마이그레이션', msg: '참고 — 번호표만 다른 과거 적용분 ' + cls.oldNumbering.length
+          + '건(기준일 ' + cfgStr('migrationBaselineSince') + ' 이전 · 같은 DDL 이 다른 번호로 적용된 구간)' })
+      }
+    }
+  }
+
   // ── 새 배치 하네스 산출물 ────────────────────────────────────────────────
   // 읽기 전용이고, 어느 한 파일이 깨져도 그 블록만 「읽지 못했습니다」가 된다.
   const now = new Date()
   const B = collectBatchSources({
     root: rootDir, logDir: LOG_DIR, stateDir: STATE.dir, inboxPath: P.inbox, now,
   })
+  // 러너 클론의 산출물을 **덧붙인다**(경로가 적혀 있고 실존할 때만 · 읽기 전용).
+  // 합칠 때 키 하나당 가장 최근 것만 남긴다 — 두 자리에 같은 배치가 있으면 새 쪽이 이긴다.
+  const cloneLogs = clone.dir ? readCloneLogs(clone.dir) : { dir: null, manifests: [], verifications: [], metrics: [] }
+  const hereLast = B.manifests[0]?.at ?? null
+  const hereCount = B.manifests.length
+  const cloneLast = cloneLogs.manifests.map((m) => m.at).filter(Boolean).sort().pop() ?? null
+  if (cloneLogs.dir) {
+    B.manifests = mergeByKey([B.manifests, cloneLogs.manifests], (m) => m.batchId ?? m.at, (m) => m.at)
+    B.verifications = mergeByKey([B.verifications, cloneLogs.verifications], (v) => v.story, (v) => v.generatedAt)
+    B.metrics = mergeByKey([B.metrics, cloneLogs.metrics], (m) => m.batchId, (m) => m.at ?? m.batchId)
+    B.lastNight = lastNightManifests(B.manifests, now)
+  }
   const storyRows = Object.entries(sprint.storyStatus).map(([, r]) => ({ slug: r.slug, status: r.status }))
-  // 기준선 — 마지막 릴리스는 RELEASE-LOG.md(있으면), 나머지 셋은 sources.json 설정이다.
-  // **전부 「있을 때만」 동작**하고, 없으면 종전대로 전건을 센다(확인 못 한 것을 통과로 적지 않는다).
+  // 기준선 — 마지막 릴리스는 RELEASE-LOG.md, 운영선 에픽은 릴리스 갈래 문서(없으면 sources.json 의
+  // opsLineEpics), 나머지는 sources.json 설정이다. **전부 「있을 때만」 동작**하고, 없으면 종전대로
+  // 전건을 센다(확인 못 한 것을 통과로 적지 않는다).
   const release = lastRelease(read(P.releaseLog))
-  const opsEpics = Array.isArray(cfg.opsLineEpics)
-    ? cfg.opsLineEpics.map(Number).filter((x) => Number.isFinite(x)) : []
+  const fromLines = parseOpsEpics(read(P.releaseLines))
+  const opsEpics = fromLines.length ? fromLines
+    : (Array.isArray(cfg.opsLineEpics) ? cfg.opsLineEpics.map(Number).filter((x) => Number.isFinite(x)) : [])
   const verdict = deployVerdict({
     manifests: B.manifests, lastNight: B.lastNight, metrics: B.metrics,
     queue: B.queue.value, verifications: B.verifications, inbox: B.inbox.value,
@@ -813,8 +1231,9 @@ function scanInner() {
   })
 
   // ── 신선도 재료 ──────────────────────────────────────────────────────────
-  // 판정은 freshness.mjs 가 한다(7항목). 여기서는 재료만 모은다 — 못 모은 것은 null 로 둔다.
+  // 판정은 freshness.mjs 가 한다(8항목). 여기서는 재료만 모은다 — 못 모은 것은 null 로 둔다.
   const allStories = epics.flatMap((e) => e.stories)
+  const runnerState = parseRunner(STATE.dir)
   const freshness = {
     git: gitInfo(),
     sprint: { ...fileAge(P.sprint), commentDate: sprint.updated, commentCount: sprint.updatedLines },
@@ -829,8 +1248,27 @@ function scanInner() {
     runner: {
       stateDir: STATE.dir,
       lastLine: (B.heartbeat.lines || []).filter(Boolean).slice(-1)[0] || '',
+      lockExists: !!runnerState.lock,
     },
-    manifests: { lastAt: B.manifests[0]?.at ?? null, count: B.manifests.length },
+    manifests: {
+      lastAt: hereLast, count: hereCount,
+      runnerLastAt: cloneLast, runnerCount: cloneLogs.manifests.length,
+      runnerDir: cloneLogs.dir,
+      runnerWhy: clone.dir && !cloneLogs.dir ? '러너 클론(' + clone.dir + ')에 배치 기록 폴더가 없음' : clone.why,
+      runnerConfigured: clone.configured,
+    },
+    migration: mg.applicable ? {
+      applicable: true,
+      measuredAt: mg.success ? mg.success.measuredAt : '',
+      measuredCount: mg.success ? mg.success.localFilesCount : null,
+      localCount: mg.localFilesCount,
+      latestFile: mg.localLatest,
+      fresh: mg.fresh,
+      malformed: mg.malformed,
+      wrongProject: mg.wrongProject,
+      projectUnverified: mg.projectUnverified,
+      probeCommand: mg.probeCommand,
+    } : { applicable: false, dir: mg.dir },
     inbox: fileAge(P.inbox),
   }
 
@@ -847,11 +1285,15 @@ function scanInner() {
     drift,
     driftNotes,
     freshness,
+    devLine,
+    migration: mg,
+    runner: runnerState,
     board: buildBoard(epics, sprint),
     // 새 블록 ①②④⑤⑥⑦⑧ 의 재료 한 덩어리 — build.mjs 와 (b)갈래 이식판이 같이 쓴다.
     batch: {
       stateDir: STATE.dir, stateDirWhy: STATE.why, logDir: LOG_DIR,
       inboxPath: relFromRoot(P.inbox),
+      cloneLogDir: cloneLogs.dir, cloneWhy: clone.why,
       autofinish: B.autofinish,
       heartbeat: B.heartbeat,
       manifests: B.manifests, lastNight: B.lastNight,

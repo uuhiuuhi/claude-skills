@@ -1,11 +1,12 @@
 // dev-status — BMad 프로젝트 개발 현황판: 로컬 정적 서버 + 생성기 핫리로드
 // 현황판 페이지를 열거나 새로고침할 때마다 그 자리에서 다시 만든다 — 파일 감시·자동 리로드 없음.
 import { createServer } from 'node:http'
-import { existsSync, statSync, createReadStream } from 'node:fs'
+import { existsSync, statSync, createReadStream, readdirSync } from 'node:fs'
 import { join, extname, normalize, relative, sep } from 'node:path'
-import { spawn } from 'node:child_process'
-import { build as buildStatic } from './build.mjs'
-import { ROOT, OUT_DIR } from './scan.mjs'
+import { spawn, execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { build as buildStatic, renderRunner } from './build.mjs'
+import { ROOT, OUT_DIR, parseRunner } from './scan.mjs'
 
 // 전용 변수만 읽는다 — 범용 이름의 포트 변수는 앱 서버용으로 흔히 설정돼 있어 폴백으로 쓰면 위험하다.
 // 기본 포트가 점유돼 있으면 +1 씩 올려 본다(여러 프로젝트에서 현황판을 동시에 띄우는 경우).
@@ -25,28 +26,32 @@ const MIME = {
   '.map': 'application/json; charset=utf-8',
 }
 
-// 생성기(build.mjs·scan.mjs)를 고치면 서버를 껐다 켜지 않아도 반영되게 한다.
-// Node 는 import 한 모듈을 캐시하므로, 파일이 바뀌면 새 주소로 다시 읽어 온다.
-const GEN = [new URL('./build.mjs', import.meta.url), new URL('./scan.mjs', import.meta.url)]
+// 생성기를 고치면 서버를 껐다 켜지 않아도 반영되게 한다.
+// `import('./build.mjs?v=…')` 는 build.mjs 만 새로 읽고 그 안의 scan.mjs·render-batch.mjs 등 하위 모듈은
+// 옛 캐시를 그대로 쓴다(켜 둔 서버가 새 블록을 못 내던 실사고). 그래서 생성기 파일(이 폴더의 *.mjs 전부)
+// 이나 프로젝트 설정(tools/dev-status/sources.json — 모듈이 적재될 때 한 번 읽는다)이 하나라도 바뀌면
+// 그다음부터는 **새 node 프로세스**로 만든다.
+const GEN_DIR = new URL('./', import.meta.url)
+const SOURCES = join(ROOT, 'tools', 'dev-status', 'sources.json')
+const genFiles = () => {
+  try { return readdirSync(GEN_DIR).filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs')).sort() } catch { return ['build.mjs', 'scan.mjs'] }
+}
 let genStamp = ''
-let buildFn = buildStatic
+let useChild = false
 
 async function build() {
-  const stamp = GEN.map((u) => {
-    try { return String(statSync(u).mtimeMs) } catch { return '0' }
-  }).join('-')
+  const stamp = genFiles().map((n) => {
+    try { return n + ':' + String(statSync(new URL('./' + n, import.meta.url)).mtimeMs) } catch { return n + ':0' }
+  }).concat([(() => { try { return 'sources:' + statSync(SOURCES).mtimeMs } catch { return 'sources:0' } })()]).join('|')
   if (stamp !== genStamp) {
-    if (genStamp) {
-      try {
-        buildFn = (await import('./build.mjs?v=' + encodeURIComponent(stamp))).build
-        console.log('생성기 갱신 반영')
-      } catch (err) {
-        console.error('생성기 다시 읽기 실패 — 직전 것을 씁니다: ' + err.message)
-      }
-    }
+    if (genStamp) { useChild = true; console.log('생성기·설정 갱신 감지 — 이제부터 새 프로세스로 만듭니다') }
     genStamp = stamp
   }
-  return buildFn()
+  if (!useChild) return buildStatic()
+  const out = execFileSync(process.execPath,
+    [fileURLToPath(new URL('./build.mjs', import.meta.url)), '--root', ROOT.slice(0, -1)],
+    { cwd: ROOT.slice(0, -1), encoding: 'utf8', timeout: 120_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 })
+  return { version: new Date().toISOString(), note: out.trim().split('\n')[0] }
 }
 
 // ── 서버 (127.0.0.1 전용 — 외부에 열지 않는다) ─────────────────
@@ -61,6 +66,13 @@ const server = createServer(async (req, res) => {
   if (url.endsWith('__served')) {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
     return res.end('{"ok":true}')
+  }
+  // 러너 실황 — 페이지 JS 가 20초마다 부른다. 매 호출 상태 폴더의 slots.log 를 새로 읽는다(수 ms · 읽기 전용).
+  if (url.endsWith('__runner/status')) {
+    let html = ''
+    try { html = renderRunner(parseRunner()) } catch { html = '' }
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    return res.end(JSON.stringify({ html }))
   }
 
   if (url === '/' || url === '/index.html') {

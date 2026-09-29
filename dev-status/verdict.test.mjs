@@ -1,7 +1,7 @@
 // dev-status 배포 판정 — RED 5경로 · AMBER 8경로 · GREEN 1 · 재료 0 → 판정 불가 (설계 §7.2)
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { AMBER, GREEN, RED, UNKNOWN, batchWarnings, deployVerdict, epicOfStory, lastRelease, lineOfFinding, releaseLineOf, splitBatchMaterial, splitChain, splitCheckFails, tierRemaining } from './verdict.mjs'
+import { AMBER, GREEN, RED, UNKNOWN, batchWarnings, deployVerdict, epicOfStory, lastRelease, parseOpsEpics, lineOfFinding, releaseLineOf, splitBatchMaterial, splitChain, splitCheckFails, tierRemaining } from './verdict.mjs'
 
 const pass = (over = {}) => ({
   batchId: 'A', label: 'AUTO-1', at: '2026-09-03T01:00:00.000Z',
@@ -269,7 +269,7 @@ describe('lastRelease — RELEASE-LOG.md 절 머리 파싱', () => {
     '# RELEASE LOG',
     '## 2026-09-19 16:3x · 릴리스 열차 R2 T6 · auto/2026-09-19-release → main',
     '- 범위: …',
-    '## 2026-09-16 · auto/2026-09-15-fix-walkthrough-r → main',
+    '## 2026-09-16 · auto/2026-09-15-fix-screen-r → main',
     '## 2026-09-08 23:52 · auto/2026-09-09-devstatus-exit8 → main',
   ].join('\n')
 
@@ -331,9 +331,27 @@ describe('규칙 2 — 통합 게이트 도입 전 완료는 참고로 접는다
 const OPS = [1, 2, 3, 11, 4]
 const REL = '2026-09-19T07:59:59.000Z' // 마지막 운영 릴리스(R2)
 
+describe('운영선 에픽 목록 읽기', () => {
+  test('릴리스 갈래 문서의 「운영선 … Epic 1·2·3·11·4」 줄을 읽는다', () => {
+    const md = [
+      '# 두 갈래 운영 규칙',
+      '> 예시 문서: 「Epic 5 부터는 별도로 진행한다.」',
+      '',
+      '- **운영선 = `main`** — 사용자가 쓰는 것. Epic 1·2·3·11·4 + 피드백 수리만 들어간다.',
+      '- **개발선** — Epic 5~9 는 여기서만.',
+    ].join('\n')
+    assert.deepEqual(parseOpsEpics(md), [1, 2, 3, 11, 4])
+  })
+  test('문서를 못 읽으면 빈 배열 — 아무것도 접지 않는다', () => {
+    assert.deepEqual(parseOpsEpics(''), [])
+    assert.deepEqual(parseOpsEpics(null), [])
+    assert.deepEqual(parseOpsEpics('운영선 이야기는 있으나 에픽 번호가 없다'), [])
+  })
+})
+
 describe('에픽 번호 읽기', () => {
   test('에픽 번호는 슬러그 앞자리에서 읽는다', () => {
-    assert.equal(epicOfStory('13-2-서버-마스킹'), 13)
+    assert.equal(epicOfStory('13-2-샘플-기능'), 13)
     assert.equal(epicOfStory('1.29'), 1)
     assert.equal(epicOfStory(''), null)
     assert.equal(epicOfStory(null), null)
@@ -353,7 +371,7 @@ describe('운영선 / 개발선 가르기', () => {
     assert.equal(releaseLineOf(pass({ stories: ['13-2'] }), []), 'ops')
   })
   test('계측은 stories 가 {story} 객체 배열이어도 같은 규칙', () => {
-    const met = { batchId: '2026-09-20-1', stories: [{ story: '13-6-릴스' }], qualityGate: { passed: false, why: 'qa RED' } }
+    const met = { batchId: '2026-09-20-1', stories: [{ story: '13-6-샘플' }], qualityGate: { passed: false, why: 'qa RED' } }
     assert.equal(releaseLineOf(met, OPS), 'dev')
   })
   test('셋으로 가른다 — 운영선·개발선·마지막 릴리스 이전', () => {
@@ -511,9 +529,9 @@ describe('규칙 4 — 개발선 날짜 체인은 미머지로 세지 않는다'
   })
 
   test('운영선 수리 갈래가 남아 있으면 → 종전대로 센다(갈래 이름까지 적는다)', () => {
-    const v = deployVerdict(chain(['auto/2026-09-21', 'origin/auto/2026-09-16-fix-billing']))
+    const v = deployVerdict(chain(['auto/2026-09-21', 'origin/auto/2026-09-16-fix-sample']))
     assert.equal(v.level, AMBER)
-    assert.match(v.why, /미머지 운영선 수리 갈래가 5일째입니다 — auto\/2026-09-16-fix-billing/)
+    assert.match(v.why, /미머지 운영선 수리 갈래가 5일째입니다 — auto\/2026-09-16-fix-sample/)
   })
 
   test('갈래 목록을 모르면 종전 숫자 하나로 센다(뒤로 호환)', () => {
@@ -525,8 +543,8 @@ describe('규칙 4 — 개발선 날짜 체인은 미머지로 세지 않는다'
 
 describe('규칙 5 — 개발선으로 확인된 주제 갈래는 목록으로 접는다 (2026-09-21)', () => {
   const NOW = new Date('2026-09-21T00:30:00.000Z') // KST 2026-09-21 09:30
-  const BR = ['auto/2026-09-21', 'origin/auto/2026-09-14-devline-5-1-browser-hint', 'origin/auto/2026-09-19-marketing-pilot']
-  const DEV = ['auto/2026-09-14-devline-5-1-browser-hint', 'auto/2026-09-19-marketing-pilot']
+  const BR = ['auto/2026-09-21', 'origin/auto/2026-09-14-devline-5-1-sample', 'origin/auto/2026-09-19-devline-pilot']
+  const DEV = ['auto/2026-09-14-devline-5-1-sample', 'auto/2026-09-19-devline-pilot']
 
   test('목록에 적힌 주제 갈래는 개발선으로 센다(origin/ 접두 무시)', () => {
     const s = splitChain(BR, '2026-09-21', DEV)
@@ -539,13 +557,13 @@ describe('규칙 5 — 개발선으로 확인된 주제 갈래는 목록으로 �
   })
 
   test('목록에 없는 주제 갈래는 종전대로 센다', () => {
-    const br = BR.concat(['origin/auto/2026-09-16-billing-dev-load'])
+    const br = BR.concat(['origin/auto/2026-09-16-feature-dev-load'])
     const s = splitChain(br, '2026-09-21', DEV)
-    assert.deepEqual(s.ops.branches, ['auto/2026-09-16-billing-dev-load'])
+    assert.deepEqual(s.ops.branches, ['auto/2026-09-16-feature-dev-load'])
     assert.equal(s.ops.days, 5)
     const v = deployVerdict({ ...GREEN_INPUT(), chainBranches: br, devLineBranches: DEV, now: NOW })
     assert.equal(v.level, AMBER)
-    assert.match(v.why, /5일째입니다 — auto\/2026-09-16-billing-dev-load/)
+    assert.match(v.why, /5일째입니다 — auto\/2026-09-16-feature-dev-load/)
   })
 })
 

@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { report } from './score.mjs'
 import { NOT_FOUND, EMPTY_DEST, GUIDED, isDenied } from './judge.mjs'
+import { assertWritableBase } from './view-guard.mjs'
 
 export const BASE = process.env.SC_BASE ?? 'http://127.0.0.1:5174'
 /** 문구 판정 규칙(JARGON·DENY·NOT_FOUND·EMPTY_DEST·GUIDED)은 judge.mjs 가 소유한다 — playwright 없이
@@ -28,6 +29,8 @@ export function readEnv(root) {
 }
 
 export async function setup({ story, source, root, headless = true }) {
+  // 쓰기 프로브가 있는 방식 — 비로컬 주소(운영·미리보기)나 SC_MODE=view 면 브라우저를 열기 전에 멈춘다(v0.3 · 보기 전용은 view-check.mjs)
+  assertWritableBase(BASE)
   const env = readEnv(root)
   const need = (k) => { if (!env[k]) throw new Error(`${k} 없음(.env.local)`); return env[k] }
   const OUT = resolve(root, 'e2e-shots', `${source}-${story}`); mkdirSync(OUT, { recursive: true })

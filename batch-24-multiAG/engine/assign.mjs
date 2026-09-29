@@ -42,6 +42,8 @@ export const RISK_KEYWORDS = Object.freeze([
   ['외부 발송', 'egress'], ['배포', 'deploy'],
 ])
 
+const SENSITIVE_PATH_FLAGS = new Set(['migration', 'auth-path', 'env-file', 'edge-function'])
+const HIGH_RISK_FLOOR = 4
 /** 위험도 0~10 — 파일 경로 + 스토리 본문 키워드. flags 에 근거를 남긴다. */
 export function storyRisk({ files = [], text = '' } = {}) {
   const flags = []
@@ -56,7 +58,11 @@ export function storyRisk({ files = [], text = '' } = {}) {
   }
   const body = String(text ?? '')
   for (const [needle, flag] of RISK_KEYWORDS) if (body.includes(needle)) add(flag, 2)
-  const score = Math.min(10, flags.reduce((a, f) => a + f.weight, 0))
+  const sum = Math.min(10, flags.reduce((a, f) => a + f.weight, 0))
+  // 민감 경로(DB 구조 · 인증 · 환경 파일 · 서버 함수)가 하나라도 있으면 점수 합이 낮아도 고위험 하한(4)으로 올린다 —
+  // 마이그레이션 1개뿐인 스토리가 합 3 으로 「낮음」에 들어가 저등급 구현·검토 경로를 타는 오분류를 막는다.
+  const sensitive = flags.some((f) => SENSITIVE_PATH_FLAGS.has(f.flag))
+  const score = sensitive ? Math.max(sum, HIGH_RISK_FLOOR) : sum
   return { score, flags: flags.map((f) => f.flag).sort() }
 }
 

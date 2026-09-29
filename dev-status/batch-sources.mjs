@@ -367,8 +367,7 @@ export function slotHeartbeat({ logMtimeMs = null, lockExists = false, lastNight
 
 // ── 상태 폴더 해석 ──────────────────────────────────────────────────────────
 /**
- * AUTO_BATCH_STATE_DIR → auto.config.json.stateDir → ~/.claude-auto/<project>
- *   → ~/.baroos-auto(jng-os 호환 폴백 · 실존할 때만).
+ * AUTO_BATCH_STATE_DIR → auto.config.json.stateDir → ~/.claude-auto/<project>(없으면 그 경로를 기본값으로).
  * 러너·편성기와 **같은 순서**여야 원장이 갈라지지 않는다(plan-queue.mjs:409 · run-night.mjs:78).
  */
 export function resolveStateDir(root, { env = process.env, home = homedir() } = {}) {
@@ -396,10 +395,8 @@ export function resolveStateDir(root, { env = process.env, home = homedir() } = 
   if (existsSync(def)) return take(def, '기본값 ~/.claude-auto/' + project)
   tried.push(def + '   없음')
 
-  const legacy = join(home, '.baroos-auto')
-  if (existsSync(legacy)) return take(legacy, 'jng-os 호환 폴백 ~/.baroos-auto')
-  tried.push(legacy + '   없음')
-
+  // 프로젝트 고유 옛 폴더 이름을 여기서 추측하지 않는다 — 옛 폴더를 쓰는 프로젝트는
+  // auto.config.json 의 stateDir 이나 환경변수로 적는다(위 두 단계).
   return take(def, '기본값(아직 만들어지지 않음)')
 }
 

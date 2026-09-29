@@ -2,12 +2,12 @@
 
 ```bash
 # 1) 대상 커밋을 별도 워크트리로(본 창·다른 창의 작업 트리 무접촉)
-git -C C:/Projects/jng-os worktree add "<scratchpad>/e2e-wt" <sha> --detach
-cp C:/Projects/jng-os/.env.local "<scratchpad>/e2e-wt/.env.local"      # QA 계정은 이 파일에서 스크립트가 읽는다
+git -C <프로젝트 폴더> worktree add "<scratchpad>/e2e-wt" <sha> --detach
+cp <프로젝트 폴더>/.env.local "<scratchpad>/e2e-wt/.env.local"      # QA 계정은 이 파일에서 스크립트가 읽는다
 ```
 ```powershell
 # 2) node_modules 는 junction(복사 0)
-New-Item -ItemType Junction -Path "<scratchpad>\e2e-wt\node_modules" -Target 'C:\Projects\jng-os\node_modules' | Out-Null
+New-Item -ItemType Junction -Path "<scratchpad>\e2e-wt\node_modules" -Target '<프로젝트 폴더>\node_modules' | Out-Null
 ```
 ```bash
 # 3) dev 서버 — 본 창 미리보기(5173)와 분리 · 백그라운드
@@ -23,6 +23,6 @@ node check-<story>.mjs
 (Get-Item "<scratchpad>\e2e-wt\node_modules").Delete()   # 링크만 삭제 — 실 node_modules 무손상
 ```
 ```bash
-git -C C:/Projects/jng-os worktree remove --force "<scratchpad>/e2e-wt"
+git -C <프로젝트 폴더> worktree remove --force "<scratchpad>/e2e-wt"
 ```
 vite 종료: 포트 5174 의 PID 를 `netstat -ano | findstr :5174` 로 찾아 `taskkill /PID <pid> /F`.

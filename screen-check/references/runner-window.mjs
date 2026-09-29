@@ -1,7 +1,7 @@
 // 러너 qa 창 감지(v0.2 · 파티 판정 3항) — 같은 PC 의 24시간 러너가 qa(typecheck·lint·vitest)를 돌리는 동안은
 // screen-check 를 시작하지 않는다(2026-09-09 429 원인 = 러너 qa 의 1분 100회 로그인 · 스크린체크가 아니다).
 // 판정 재료 3가지(하나라도 참이면 「바쁨」):
-//   ① (참고만) ~/.baroos-auto/runner.lock — 배치 진행 자체는 막지 않는다(24시간 러너라 항상 켜져 있을 수 있다) · 막는 건 qa 창·codex 창
+//   ① (참고만) <상태 폴더>/runner.lock — 배치 진행 자체는 막지 않는다(24시간 러너라 항상 켜져 있을 수 있다) · 막는 건 qa 창·codex 창
 //   ② slots.log 마지막 qa-gate 줄 이후에 「배치 종료」 줄이 없고 그 줄이 최근 N분 이내
 //   ③ vitest / tsc / eslint 프로세스가 살아 있음(대화형 세션의 qa 도 같은 부하)
 //   ④ 러너의 codex exec 프로세스(리뷰 진행 중)가 살아 있음 — 벌 C(Codex)는 이때 시작하지 않는다(Codex 끼리 동시 금지)
@@ -12,7 +12,7 @@ import { execSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 
-const STATE = process.env.BAROOS_STATE_DIR ?? resolve(homedir(), '.baroos-auto')
+const STATE = process.env.AUTO_BATCH_STATE_DIR ?? process.env.BAROOS_STATE_DIR ?? resolve(homedir(), '.claude-auto')
 const RECENT_MIN = Number(process.env.SC_QA_WINDOW_MIN ?? 20)
 
 function tailLines(file, n = 400) {

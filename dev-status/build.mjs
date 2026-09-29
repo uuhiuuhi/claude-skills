@@ -1,6 +1,6 @@
 // dev-status — BMad 프로젝트 개발 현황판: HTML 생성기 (다크 슬레이트 중립 팔레트)
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { writeFileSync, mkdirSync, existsSync, copyFileSync } from 'node:fs'
+import { join, resolve, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { scan, OUT_DIR } from './scan.mjs'
 import {
@@ -93,8 +93,12 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .it-sid{font-family:var(--mono);font-size:12px;color:var(--t3)}
 .it b.t{display:block;font-size:14px;font-weight:600;margin-top:6px}
 .it p{font-size:12px;color:var(--t2);margin-top:4px}
+/* 카드 왼쪽 칸 — 그리드 아이템 기본 min-width 는 auto 라 안의 긴 줄이 1fr 을 밀어내고
+   오른쪽 버튼째로 잘린다. 원천 경로는 한 줄 말줄임으로 자르지 않는다 — 어느 파일을 보라는 것이
+   이 줄의 전부라 뒤가 잘리면 쓸모가 없어진다. 여러 줄로 접고 긴 경로만 강제 개행한다. */
+.it > div:first-child{min-width:0}
 .it .src{font-size:12px;color:var(--t3);font-family:var(--mono);margin-top:6px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  line-height:1.6;overflow-wrap:anywhere}
 .it-act{display:flex;flex-direction:column;gap:6px;align-items:stretch}
 .sk{font-family:var(--mono);font-size:12px;color:var(--lblue);background:#080D1A;
   border:1px solid var(--line);border-radius:6px;padding:6px 10px;text-align:center;
@@ -108,6 +112,41 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 /* 자동 판정이 실행 버튼을 지웠을 때 — 근거와 대체 안내를 그 자리에 남긴다 */
 .it .gatewhy{font-size:12px;color:var(--orange);margin-top:4px}
 .noact{font-size:12px;color:var(--t3);line-height:1.5}
+/* 실행 버튼이 없는 항목은 오른쪽 220px 칸을 비워 두지 않는다 — 내용이 길면 그 칸 대부분이
+   빈 공간이 되어 내용이 왼쪽으로 쏠려 보인다. 안내문은 내용 아래 오른쪽 끝에 조용히 붙인다. */
+.it:has(.it-act > .noact){grid-template-columns:1fr;gap:8px}
+.it:has(.it-act > .noact) .it-act{align-items:flex-end}
+.it:has(.it-act > .noact) .noact{text-align:right}
+
+/* 무인 러너 실황(상태 폴더 slots.log) */
+.run-card{background:var(--ticker);border:1px solid var(--line);border-radius:8px;padding:12px 16px;
+  display:flex;gap:8px 16px;flex-wrap:wrap;align-items:center;margin-bottom:16px;font-size:13px}
+.run-card b{font-weight:600}
+.run-card.on{border-color:rgba(34,197,94,.4)}
+.run-card.warn{border-color:var(--orange)}
+.run-dot{width:8px;height:8px;border-radius:50%;background:var(--t3);flex:none}
+.run-card.on .run-dot{background:var(--green)}
+.run-card.warn .run-dot{background:var(--orange)}
+@media (prefers-reduced-motion:no-preference){
+  .run-card.on .run-dot{animation:runpulse 1.6s ease-in-out infinite}
+  @keyframes runpulse{50%{opacity:.35}}
+}
+.run-par{font-size:11px;border:1px solid var(--line);border-radius:999px;padding:1px 8px;color:var(--lblue)}
+.run-par.seq{color:var(--t2)}
+.run-story{color:var(--t2)} .run-story b{color:var(--t1);font-weight:600}
+.run-meta{margin-left:auto;color:var(--t3);font-size:12px}
+.devline{margin:8px 0 12px;font-size:12px;color:var(--t2);line-height:1.7;overflow-wrap:anywhere}
+.devline.off{color:var(--t3)}
+
+/* DB 마이그레이션 적용 상태 카드 — 결측은 0 이 아니라 — 로, 운영 줄은 빗금 회색 상시 */
+.it .mig-line{font-size:14px;color:var(--t1);margin-top:6px}
+.it .mig-line b{font-weight:600}
+.it .mig-prod{font-size:12px;color:var(--t3);margin-top:6px;padding:4px 8px;border-radius:4px;
+  background:repeating-linear-gradient(135deg,rgba(100,116,139,.10) 0 6px,transparent 6px 12px)}
+.it .mig-fail{font-size:12px;color:var(--t2);margin-top:6px;border-left:3px solid var(--line);padding-left:8px}
+.pill{display:inline-block;font-size:12px;border-radius:999px;padding:2px 10px;margin:6px 6px 0 0}
+.pill.fill{color:#020617;background:var(--orange);font-weight:600}
+.mig-note{font-size:12px;color:var(--t3);text-align:center}
 .batchbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;
   background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 16px;margin-bottom:16px}
 .batchbar em{width:8px;height:8px;border-radius:50%;font-style:normal;background:var(--t3);flex:0 0 auto}
@@ -176,7 +215,11 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .epic-title .ord.off{color:var(--lblue);font-weight:700;
   background:rgba(127,184,255,.14);border:1px solid rgba(127,184,255,.55);
   border-radius:999px;padding:2px 10px}
-.epic-desc{display:block;font-size:12px;color:var(--t2);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 에픽 헤더 왼쪽 칸 — 기본 min-width 가 auto 라 긴 줄이 있으면 칸을 밀어내 진행 막대까지 밀려난다 */
+.epic-main{min-width:0}
+/* 설명은 한 줄로 자르지 않고 두 줄까지 접는다 — 한 줄 말줄임으로는 뒷부분(범위·제외 사항)이 사라진다 */
+.epic-desc{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;
+  overflow:hidden;font-size:12px;color:var(--t2);margin-top:4px;line-height:1.5}
 .frac{font-family:var(--mono);font-size:12px;color:var(--t2);text-align:right}
 .caret{color:var(--t3);font-size:12px;justify-self:end}
 .stories{border-top:1px solid var(--line)}
@@ -231,6 +274,8 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .b-frrow.warn .b-frid{color:var(--orange)}
 .b-frrow.stale .b-frid{color:#1A0700;background:var(--orange);border-radius:4px;text-align:center}
 .b-frrow.unknown .b-fra{color:var(--t3)}
+.b-frrow.na{opacity:.7}
+.b-frrow.na .b-fra{color:var(--t3)}
 `
 
 const JS = `
@@ -311,7 +356,7 @@ function render(){
     const done = e.stories.filter((s)=>s.status==='done').length
     return '<section class="epic">'
       + '<button class="epic-head" aria-expanded="'+open+'" data-epic="'+e.num+'">'
-        + '<span><span class="epic-title">'+ '<span class="ord'+(e.jump?' off':'')+'" title="'+ (e.jump?'번호는 '+e.num+' 이지만 진행 순서는 '+e.order+'번째입니다 — 여기서 번호가 튑니다':'진행 순서 '+e.order+'번째')+ '">순서 '+e.order+(e.jump?' · 번호 튐':'')+'</span>'+ '<u>EPIC '+e.num+'</u>'+esc(e.title)+'</span>'
+        + '<span class="epic-main"><span class="epic-title">'+ '<span class="ord'+(e.jump?' off':'')+'" title="'+ (e.jump?'번호는 '+e.num+' 이지만 진행 순서는 '+e.order+'번째입니다 — 여기서 번호가 튑니다':'진행 순서 '+e.order+'번째')+ '">순서 '+e.order+(e.jump?' · 번호 튐':'')+'</span>'+ '<u>EPIC '+e.num+'</u>'+esc(e.title)+'</span>'
           + '<span class="epic-desc">'+esc(e.desc)+'</span></span>'
         + '<span class="bar-wrap"><span class="bar">'+barHTML(e.stories)+'</span></span>'
         + '<span class="frac">'+done+'/'+e.stories.length+'</span>'
@@ -347,6 +392,11 @@ renderFilters(); render()
 const live = document.getElementById('live')
 fetch('__served', {cache:'no-store'}).then((r)=>{ if(!r.ok) throw 0
   live.className = 'live'; live.lastChild.textContent = ' 새로고침(F5)하면 최신'
+  // 러너 실황 카드만 20초마다 갈아 끼운다 — 전체 새로고침이 아니라 검색어·스크롤이 유지된다
+  const pollRunner = ()=>fetch('__runner/status', {cache:'no-store'}).then((r)=>r.json())
+    .then((d)=>{ const el = document.getElementById('runner'); if (el && d.html) el.innerHTML = d.html })
+    .catch(()=>{})
+  setInterval(pollRunner, 20000)
 }).catch(()=>{ live.className = 'live off'; live.lastChild.textContent = ' 파일로 열림 — serve.mjs 로 열면 F5 마다 갱신' })
 
 // 지시문 복사 (실행은 하지 않는다)
@@ -371,10 +421,9 @@ const escHtml = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 // ── 현황판 신선도 검토 ───────────────────────────────────────────────────────
-// 「이 화면이 현재 시점을 반영하는가」를 화면 스스로 검토한 결과다(7줄 · F6 은 이 스킬에 없다 —
-// freshness.mjs 머리말 참조). 판정은 freshness.mjs(순수 함수)가 하고 여기서는 그리기만 한다.
-// 각 줄은 **무엇을 · 왜 · 다음에 뭘 하면 되는지** 순서다.
-const FR_MARK = { ok: '✅', warn: '⚠️', stale: '🔶', unknown: '❔' }
+// 「이 화면이 현재 시점을 반영하는가」를 화면 스스로 검토한 결과 8줄. 판정은 freshness.mjs
+// (순수 함수)가 하고 여기서는 그리기만 한다. 각 줄은 **무엇을 · 왜 · 다음에 뭘 하면 되는지** 순서다.
+const FR_MARK = { ok: '✅', warn: '⚠️', stale: '🔶', unknown: '❔', na: '➖' }
 export function renderFreshness(checks, verdict) {
   const rows = checks.map((c) =>
     '<div class="b-frrow ' + c.status + '">' +
@@ -387,8 +436,111 @@ export function renderFreshness(checks, verdict) {
   return '<section class="b-fresh' + (verdict.level === 'stale' ? ' stale' : '') + '">' +
     '<div class="b-frh"><span class="b-frv ' + verdict.level + '">' + escHtml(verdict.label) + '</span>' +
     '<span class="b-frwhy">' + escHtml(verdict.why) + '</span>' +
-    '<span class="b-frc">이상 없음 ' + n.ok + ' · 확인 ' + n.warn + ' · 낡음 ' + n.stale + ' · 판정 불가 ' + n.unknown + '</span>' +
+    '<span class="b-frc">이상 없음 ' + n.ok + ' · 확인 ' + n.warn + ' · 낡음 ' + n.stale + ' · 판정 불가 ' + n.unknown +
+    (n.na ? ' · 해당 없음 ' + n.na : '') + '</span>' +
     '</div>' + rows + '</section>'
+}
+
+// ── 무인 러너 실황 — build(정적)와 serve 의 __runner/status(20초 폴링)가 같은 렌더러를 쓴다 ──
+export function renderRunner(r) {
+  if (!r || !r.available) return '<div class="run-card off"><span class="run-dot"></span><b>무인 러너</b><span class="run-story">상태 폴더에 러너 로그(slots.log)가 없습니다(러너를 쓰지 않으면 정상)</span></div>'
+  const stageKo = { create: '기획서', dev: '구현', review: '적대 리뷰' }
+  const meta = []
+  if (r.queueSize != null) meta.push('이번 큐 ' + r.queueSize + '건')
+  if (r.today != null) meta.push('오늘 누계 ' + r.today + '배치')
+  meta.push(r.ageMin <= 1 ? '방금 활동' : r.ageMin + '분 전 활동')
+  if (r.running) {
+    const par = r.batch.parallel > 1
+      ? '<span class="run-par">병렬 ' + r.batch.parallel + '폭</span>'
+      : '<span class="run-par seq">순차</span>'
+    const rows = r.stories.map((s) =>
+      '<span class="run-story"><b>' + escHtml(s.key) + '</b> · ' + escHtml(stageKo[s.stage] || s.stage) + ' (' + escHtml(s.model) + ')</span>').join('') ||
+      '<span class="run-story">단계 준비 중 — ' + escHtml(r.batch.label) + '</span>'
+    return '<div class="run-card on"><span class="run-dot"></span><b>무인 러너 작업 중</b>' + par + rows +
+      '<span class="run-meta">' + meta.join(' · ') + '</span></div>'
+  }
+  if (r.stale) {
+    return '<div class="run-card warn"><span class="run-dot"></span><b>무인 러너 심박 없음</b>' +
+      '<span class="run-story">실행 표식(runner.lock)은 있는데 로그가 ' + r.ageMin + '분째 조용합니다 — 확인이 필요합니다</span>' +
+      '<span class="run-meta">' + meta.join(' · ') + '</span></div>'
+  }
+  return '<div class="run-card off"><span class="run-dot"></span><b>무인 러너 대기</b>' +
+    (r.lastDone ? '<span class="run-story">마지막 완주 — ' + escHtml(r.lastDone) + '</span>' : '') +
+    '<span class="run-meta">' + meta.join(' · ') + ' · 다음 예약 실행이 다시 깨웁니다</span></div>'
+}
+
+/** 개발선(러너 클론) 덮어 읽기 한 줄 — 이 화면의 스토리 상태·문서 중 무엇이 클론에서 왔는지 밝힌다. */
+export function renderDevLine(d) {
+  if (!d) return ''
+  if (!d.dir) {
+    // 설정이 아예 없으면 조용히 한 줄만 — 러너가 이 폴더에서 도는 프로젝트가 대부분이다.
+    return '<div class="devline off">' + (d.configured
+      ? '개발선 덮어 읽기 못 함 — 적어 둔 러너 클론 경로를 찾지 못했습니다(' + escHtml(d.why || '') + '). 이 화면은 이 폴더만 반영합니다.'
+      : '개발선 덮어 읽기 없음 — 러너 클론 경로 설정이 없어 이 폴더만 읽었습니다.') + '</div>'
+  }
+  const n = (a) => (Array.isArray(a) ? a.length : 0)
+  return '<div class="devline">' +
+    '<b>개발선 덮어 읽음</b> — 러너 클론 <code>' + escHtml(d.dir) + '</code>' +
+    (d.sprintMtime ? ' · 상태 파일 ' + escHtml(fmt(d.sprintMtime)) : '') +
+    ' · 앞선 상태로 덮은 스토리 <b class="mono">' + n(d.sprintOverridden) + '</b>건' +
+    ' · 클론 문서 <b class="mono">' + n(d.storiesFromChain) + '</b>건' +
+    ' <span style="color:var(--t3)">(클론이 이 폴더보다 앞선 항목만 · 뒤로 가는 값은 덮지 않음 · 읽기 전용)</span></div>'
+}
+
+/**
+ * DB 마이그레이션 적용 상태 카드. 상태 3가지 고정(측정 안 함 / 직전 성공 + 실패 배너 / 성공).
+ * 개수는 믿을 수 있는 측정(신선 · 개발용 프로젝트 확인)이 있을 때만 그린다 — 결측·낡음을 0 으로 보여 주지 않는다.
+ */
+export function renderMigration(m) {
+  if (!m || !m.applicable) return ''
+  const s = m.success
+  const a = m.attempt
+  const hide = !s || m.fresh === 'stale' || m.fresh === 'changed' || m.wrongProject || m.projectUnverified
+  const num = (v) => (hide ? '—' : String(v))
+  let head
+  if (m.wrongProject) head = 'DB 마이그레이션 — 개발용이 아닌 프로젝트를 쟀습니다 · 링크 대상을 확인하세요'
+  else if (!s) head = m.malformed
+    ? 'DB 마이그레이션 — 측정 안 함 · 산출물 형식이 이상해 숫자를 쓰지 않았습니다'
+    : 'DB 마이그레이션 — 측정 안 함 · 적용 상태를 알 수 없습니다'
+  else if (m.projectUnverified) head = 'DB 마이그레이션 — 어느 프로젝트를 쟀는지 확인할 수 없어 숫자를 가립니다(devProjectRef 설정 필요)'
+  else if (m.fresh === 'stale') head = 'DB 마이그레이션 — 마지막 측정이 7일을 넘어 숫자를 가립니다'
+  else if (m.fresh === 'changed') head = 'DB 마이그레이션 — 측정 이후 로컬 파일이 바뀜 · 적용 상태 미상 (지금 로컬 ' +
+    m.localFilesCount + '개 · 마지막 측정 당시 ' + s.total + '개)'
+  else if (s.localOnly === 0 && s.remoteOnly === 0)
+    head = 'DB 마이그레이션 ' + s.total + '개 전부 적용됨 · 미적용 0 (파일 적용 여부만 확인 · 내용 검증 아님)'
+  else head = 'DB 마이그레이션 ' + s.total + '개 중 적용 ' + s.applied + ' · 미적용 ' + s.localOnly +
+    (s.remoteOnly ? ' · 원격에만 ' + s.remoteOnly : '') + ' (파일 적용 여부만 확인 · 내용 검증 아님)'
+  const pills =
+    (m.fresh === 'changed' ? '<span class="pill fill">측정 이후 마이그레이션 파일이 바뀜 — 재측정 필요</span>' : '') +
+    (m.fresh === 'stale' ? '<span class="pill fill">측정 필요</span>' : '') +
+    (m.wrongProject ? '<span class="pill fill">링크 확인 필요</span>' : '') +
+    (m.projectUnverified ? '<span class="pill fill">설정 필요</span>' : '')
+  // 실패 배너는 숫자 위. 성공 이력이 없어도 뜬다 — 「실행했고 실패함」과 「실행 안 함」이 같아지면 안 된다.
+  // 원시 에러 문자열은 화면에 싣지 않는다 — 원문은 터미널 출력과 산출물 파일에 남는다.
+  const fail = (a && a.ok === false)
+    ? '<p class="mig-fail">마지막 시도 실패(' + escHtml(fmt(a.at)) + ') — ' +
+      (s ? '아래 숫자는 그 이전 측정값입니다' : '성공한 측정이 아직 없어 숫자를 낼 수 없습니다') +
+      ' · 실패 원인은 터미널 출력과 ' + escHtml(m.probeFile) + ' 에 적혀 있습니다</p>' : ''
+  const nums = s
+    ? '<p class="mig-line">총 <b class="mono">' + num(s.total) + '</b> · 적용 <b class="mono">' + num(s.applied) +
+      '</b> · 미적용 <b class="mono">' + num(s.localOnly) + '</b> · 원격에만 <b class="mono">' + num(s.remoteOnly) +
+      '</b> · ' + escHtml(m.projectLabel) + '(' + escHtml(s.projectRef) + ') · ' + escHtml(fmt(s.measuredAt)) + ' 측정</p>'
+    : '<p class="mig-line">총 <b class="mono">—</b> · 적용 <b class="mono">—</b> · 미적용 <b class="mono">—</b> · 원격에만 <b class="mono">—</b> · 측정 기록 없음</p>'
+  // 「운영은 안 쟀다」 안내는 **실제로 개발을 쟀을 때만** 참이다 — 다른 걸 잰 상태에서 붙이면 같은 카드가 모순된다.
+  const prod = (m.prodProjectRef && !m.wrongProject)
+    ? '<p class="mig-prod">' + escHtml(m.prodLabel || '운영') + '(' + escHtml(m.prodProjectRef) + '): 측정 안 함 — 이 도구는 운영을 재지 않습니다</p>' : ''
+  const text = [m.probeCommand, '',
+    'DB 마이그레이션 적용 상태를 실측해 ' + m.probeFile + ' 에 기록하는 명령입니다.',
+    '네트워크와 DB CLI 인증이 필요하고 몇 초 걸립니다. 끝나면 현황판을 새로고침(F5)하세요.'].join('\n')
+  return '<section class="sec3"><div class="s3-head"><h2>DB 마이그레이션 적용 상태</h2>' +
+    '<span class="n' + (hide || (s && (s.localOnly || s.remoteOnly)) ? ' warn' : '') + '">' + (hide ? '—' : s.localOnly) + '</span>' +
+    '<span class="sub">실측은 사람이 명령으로 합니다 — 이 화면은 그 기록만 읽습니다</span></div>' +
+    '<div class="it"><div><div class="it-top">' +
+    '<span class="tag ' + (s && !hide ? 'rd' : 'wa') + '">적용 상태</span></div>' +
+    '<b class="t">' + escHtml(head) + '</b>' + pills + fail + nums + prod +
+    '<div class="src">' + escHtml(m.dir) + ' · ' + escHtml(m.probeFile) + '</div>' +
+    '</div><div class="it-act"><button type="button" class="cp" data-copy="' + escHtml(text) + '">지시문 복사</button>' +
+    '<span class="mig-note">측정 명령 — 터미널에서 사람이 실행합니다</span></div></div></section>'
 }
 
 /**
@@ -434,7 +586,7 @@ function writeErrorPage(outDir, data) {
  *            스토리 문서 상대 링크는 **정본 출력 폴더 기준**이라 다른 폴더에 쓰면 링크가 어긋난다.
  *   plugins  프로젝트 고유 블록. 계약 = `{ name, sections(data) => string[] }` 하나뿐이고
  *            반환한 HTML 을 스토리 표 **아래·footer 위**에 순서대로 끼운다.
- *            (jng-os 의 목업 갤러리·앱 미리보기·파일럿 게이트·deferred RC1 이 이 자리에 온다.)
+ *            (프로젝트 고유의 목업 갤러리·앱 미리보기·출시 게이트 같은 블록이 이 자리에 온다.)
  *            플러그인이 던지면 그 플러그인만 경고 박스로 바뀌고 나머지 화면은 그대로다.
  */
 export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
@@ -443,6 +595,18 @@ export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
   // **예외 없이** 「원천을 읽지 못했습니다」 화면 한 장을 만든다 — 빈 화면도, 스택트레이스도 아니다.
   if (data.error) return writeErrorPage(outDir, data)
   for (const e of data.epics) for (const s of e.stories) delete s.body // 본문 전문은 화면에서 쓰지 않음
+
+  // 개발선(러너 클론)에만 있는 스토리 문서는 화면 폴더의 devline/ 로 복사해 링크가 열리게 한다.
+  // 클론에는 아무것도 쓰지 않는다. 복사에 실패한 항목은 readErrors 로 남겨 「복사 못 함」이 보이게 한다.
+  for (const c of data.devLine?.copies ?? []) {
+    try {
+      const to = join(outDir, c.to)
+      mkdirSync(dirname(to), { recursive: true })
+      copyFileSync(c.from, to)
+    } catch (err) {
+      data.readErrors.push({ file: c.from, code: err?.code || 'COPY', message: '개발선 사본 복사 실패 — ' + String(err?.message || err) })
+    }
+  }
 
   const stories = data.epics.flatMap((e) => e.stories)
   const done = stories.filter((s) => s.status === 'done').length
@@ -470,7 +634,9 @@ export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
   for (const s of stories) {
     // 기준은 늘 정본 OUT_DIR 이다 — 상대 링크를 그 폴더 기준으로 만들었기 때문에(scan.relFromOut)
     // `--out` 으로 다른 폴더에 써도 이 검사의 잣대는 바뀌지 않는다.
-    if (s.storyFile && !existsSync(resolve(OUT_DIR, s.storyFile))) {
+    // 개발선 사본(devline/…)은 이번 출력 폴더에 복사했으므로 그 폴더 기준으로 본다.
+    const base = String(s.storyFile || '').startsWith('devline/') ? outDir : OUT_DIR
+    if (s.storyFile && !existsSync(resolve(base, s.storyFile))) {
       console.error('[dev-status] 경고: 링크 대상 없음 — ' + s.storyFile)
     }
   }
@@ -658,6 +824,15 @@ export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
     ? frStamp(sp.gitAt || sp.mtime) + (data.sprintUpdated ? ' (파일 주석은 ' + data.sprintUpdated + ')' : '')
     : (data.sprintUpdated || '?')
 
+  // 마이그레이션 — 폴더가 있는 프로젝트에서만 섹션·티커 칸을 그린다(없으면 F6 이 「해당 없음」).
+  const mig = data.migration
+  const migHTML = safe('DB 마이그레이션', () => renderMigration(mig))
+  const migShown = !!(mig && mig.applicable && mig.success && mig.fresh === 'fresh' && !mig.wrongProject && !mig.projectUnverified)
+  const migTick = mig && mig.applicable
+    ? '<span class="dot"></span><span class="tk' + (!migShown || mig.success.localOnly || mig.success.remoteOnly ? ' warn' : '') +
+      '">미적용 <b class="mono">' + (migShown ? mig.success.localOnly : '—') + '</b></span>'
+    : ''
+
   const json = JSON.stringify(data).replace(/</g, '\\u003c')
 
   const html = '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8">' +
@@ -671,6 +846,7 @@ export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
     bannerHTML +
 
     freshHTML +
+    safe('개발선 덮어 읽기', () => renderDevLine(data.devLine)) +
 
     '<div class="ticker">' +
     '<span class="tk">에픽 <b class="mono">' + data.epics.length + '</b>개</span><span class="dot"></span>' +
@@ -678,12 +854,16 @@ export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
     '<span class="tk' + (high ? ' warn' : '') + '">불일치 <b class="mono">' + data.drift.length + '</b></span><span class="dot"></span>' +
     '<span class="tk">다음 작업 <b class="mono">' + B.next.length + '</b>건</span><span class="dot"></span>' +
     renderVerdictTick(BA.verdict) +
+    migTick +
     '</div>' +
+
+    '<div id="runner">' + safe('무인 러너', () => renderRunner(data.runner)) + '</div>' +
 
     heroHTML +
     inboxHTML +
 
     dqHTML +
+    migHTML +
 
     '<section class="board"><div><div class="pct mono">' + pct + '<small>%</small></div>' +
     '<div class="pct-label">전체 진행률 · 완료 ' + done + ' / ' + stories.length + '건</div></div>' +
@@ -709,6 +889,11 @@ export function build({ outDir = OUT_DIR, plugins = [] } = {}) {
     '<code>auto-pipeline-logs/metrics-&lt;id&gt;.json</code> · ' +
     '<code>' + esc2(BA.stateDir) + '</code>(상태 폴더 — ' + esc2(BA.stateDirWhy) + ': metrics-history.jsonl · assign-history.json · auto-queue-*.json · archive/*-evidence/ · slots.log) · ' +
     '<code>' + esc2(data.batch.inboxPath) + '</code>(결정)<br>' +
+    '지난밤 배치 재료는 ' + (BA.cloneLogDir
+      ? '<b>두 자리</b>에서 읽어 합쳤습니다 — 이 폴더의 <code>auto-pipeline-logs</code> 와 러너 클론 <code>' +
+        esc2(BA.cloneLogDir) + '</code>(경로 출처 ' + esc2(BA.cloneWhy) + ' · 읽기만 합니다). 같은 배치가 두 자리에 있으면 새것을 씁니다.'
+      : '이 폴더의 <code>auto-pipeline-logs</code> 에서만 읽었습니다' +
+        (data.devLine?.configured ? ' — 적어 둔 러너 클론을 찾지 못했습니다(' + esc2(BA.cloneWhy || '') + ').' : ' — 러너 클론 설정이 없습니다.')) + '<br>' +
     '이 화면은 열거나 새로고침(F5)할 때 위 파일에서 다시 만들어집니다. 직접 고치지 마세요 — 다음 갱신 때 덮어써집니다. ' +
     '판정 재료가 없는 항목은 「없음 / 판정 불가」로 적습니다 — <b>확인 못 한 것을 통과로 적지 않습니다.</b></footer>' +
 

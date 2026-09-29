@@ -253,3 +253,17 @@ test('codexDev.review (👤 2026-09-26 20:5x 「opus 를 astra 로 대체 · ast
   const [a] = assignWorkers({ stories: [{ key: 'x' }], providers, config: { modelPolicy: { enabled: true, codexDev } } });
   assert.deepEqual([a.dev, a.review], ['codex:gpt-6-astra', 'opus']);
 });
+
+test('codexDev maxRisk -1 은 새 Codex 구현을 0건으로 만들고 교차 검토 설정은 남긴다', () => {
+  const off = codexDevPolicy({ enabled: true, maxRisk: -1, models: ['codex:gpt-5.6-sol'], review: 'opus' });
+  assert.equal(off.enabled, true);
+  assert.equal(off.maxRisk, -1);
+  assert.equal(off.review, 'opus');
+  for (const risk of [0, 1, 3, 10]) {
+    const dev = modelCandidates({ role: 'dev', risk, difficulty: 3, preferProvider: 'claude', codexDev: { enabled: true, maxRisk: -1, models: ['codex:gpt-5.6-sol'], review: 'opus' } });
+    assert.ok(!dev.includes('codex:gpt-5.6-sol') || MODEL_CATALOG[dev[0]].provider === 'claude', `위험도 ${risk} 의 첫 구현 후보는 Claude 여야 한다`);
+  }
+  // 범위 밖 값은 잘라 낸다
+  assert.equal(codexDevPolicy({ enabled: true, maxRisk: -5, models: ['codex:gpt-5.6-sol'] }).maxRisk, -1);
+  assert.equal(codexDevPolicy({ enabled: true, maxRisk: 99, models: ['codex:gpt-5.6-sol'] }).maxRisk, 10);
+});

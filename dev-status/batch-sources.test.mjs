@@ -261,9 +261,9 @@ describe('⑧ 결정 인박스', () => {
     assert.equal(r.error, null)
     assert.equal(r.value.pending.length, 0)
   })
-  test('jng-os 실물 파일을 읽는다(읽기 전용 · 없으면 건너뜀)', () => {
-    const real = 'C:/Projects/jng-os/_bmad-output/implementation-artifacts/DECISIONS-INBOX.md'
-    if (!existsSync(real)) { console.log('  (실물 인박스 없음 — 건너뜀)'); return }
+  test('실물 인박스 파일을 읽는다(읽기 전용 · 환경변수 DEV_STATUS_REAL_INBOX 가 없으면 건너뜀)', () => {
+    const real = process.env.DEV_STATUS_REAL_INBOX || ''
+    if (!real || !existsSync(real)) { console.log('  (실물 인박스 경로 없음 — 건너뜀)'); return }
     const txt = readFileSync(real, 'utf8')
     const r = parseInbox(real, txt, { now: NOW })
     assert.equal(r.error, null)

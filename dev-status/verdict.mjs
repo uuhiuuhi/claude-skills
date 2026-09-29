@@ -26,10 +26,13 @@ const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0 }
 // 도는 개발선 배치의 리뷰 대기·STOP 을 운영 배포의 「막는 것」으로 세면 헤더가 영원히 RED 다
 // (원 프로젝트 2026-09-21 실측 296건). 개발선 재료는 버리지 않고 **참고 한 줄**로 접는다.
 //
-// **이 스킬은 운영선 에픽 목록을 스스로 알아내지 않는다.** 어느 에픽이 운영선인지는 프로젝트
-// 고유의 릴리스 규약이라, 프로젝트 루트의 `tools/dev-status/sources.json` 에 `opsLineEpics`
-// 가 적혀 있을 때만 이 가르기가 켜진다. 값이 없으면 `opsEpics = []` 이고, 그때는
-// **아무것도 접지 않는다**(종전 동작 그대로 전건을 센다 — 가릴 근거가 없으면 가리지 않는다).
+// **이 스킬은 운영선 에픽 목록을 추측하지 않는다.** 어느 에픽이 운영선인지는 프로젝트 고유의
+// 릴리스 규약이라, 두 곳 중 하나에 적혀 있을 때만 이 가르기가 켜진다 —
+//   ① 릴리스 갈래 문서(기본 `<implementation_artifacts>/RELEASE-LINES.md` · sources.json 의
+//      `releaseLinesFile` 로 바꿀 수 있다)의 「운영선 … Epic 1·2·3」 줄(`parseOpsEpics`)
+//   ② 프로젝트 루트 `tools/dev-status/sources.json` 의 `opsLineEpics` 배열(①을 못 읽을 때)
+// 둘 다 없으면 `opsEpics = []` 이고, 그때는 **아무것도 접지 않는다**(종전 동작 그대로 전건을
+// 센다 — 가릴 근거가 없으면 가리지 않는다).
 // 아래 `lineOfFinding`(진단 항목)·`splitChain`(미머지 갈래)도 같은 규칙을 따른다.
 
 /** 스토리 슬러그·번호의 에픽 번호. '13-2-…' → 13 · '1.29' → 1 · 못 읽으면 null */
@@ -38,6 +41,19 @@ export function epicOfStory(slug) {
   if (!m) return null
   const e = Number(m[1])
   return Number.isFinite(e) ? e : null
+}
+
+/**
+ * 릴리스 갈래 문서에서 **운영선 에픽 번호**를 읽는다 — 「운영선」이라는 말과 `Epic 1·2·3`
+ * (가운뎃점 또는 쉼표로 이은 번호)이 **같은 줄**에 있는 첫 줄이다.
+ * 문서가 바뀌면 판정도 따라간다 — 코드에 번호를 박지 않는다.
+ * 못 읽으면 빈 배열이고, 그때는 아무것도 접지 않는다(확인 못 한 것을 통과로 적지 않는다).
+ */
+export function parseOpsEpics(text) {
+  const m = /^[^\n]*운영선[^\n]*?Epic\s*([0-9]+(?:\s*[·,]\s*[0-9]+)*)/m.exec(String(text ?? ''))
+  if (!m) return []
+  const nums = (m[1].match(/\d+/g) || []).map(Number).filter((x) => Number.isFinite(x))
+  return [...new Set(nums)]
 }
 
 /** 매니페스트·계측의 스토리 슬러그들(매니페스트는 문자열 배열 · 계측은 {story} 객체 배열). */
@@ -49,7 +65,8 @@ export function storySlugs(item) {
 
 /**
  * 배치 산출물 1건이 어느 갈래인가.
- *   · 호출부가 `fromRunnerClone: true` 로 표시한 것은 전부 개발선(이 스킬은 표시하지 않는다 — 플러그인용 고리).
+ *   · 러너 클론(별도 폴더 · sources.json 의 runnerClone 등)에서 읽어 `fromRunnerClone: true` 가 붙은 것은
+ *     전부 개발선이다 — 두 갈래 운영에서 러너 클론은 개발선 체인을 도는 자리다.
  *   · 스토리 에픽이 **전부** 개발선 에픽이면 개발선.
  *   · 운영선 에픽이 하나라도 섞였거나 · 스토리를 모르거나 · 운영선 목록이 없으면 'ops'(센다).
  *     — 나쁜 쪽이 이긴다. 가릴 근거가 없으면 가리지 않는다.
@@ -179,7 +196,7 @@ export function splitBatchMaterial(items, { opsEpics = [], lastReleaseAt = null 
  *   chainBranches  미머지 갈래 이름 목록(chain-info.json `branches` · 비면 위 숫자 하나로 센다)
  *   devLineBranches 개발선으로 확인된 주제 갈래 이름(sources.json 의 devLineBranches · 비면 전건을 센다)
  *   qualityGatesSince 검사 종류별 도입일 맵({security:'2026-09-10',…} · 없으면 아무것도 접지 않는다)
- *   opsEpics       운영선 에픽 번호(sources.json 의 opsLineEpics · 비면 아무것도 접지 않는다)
+ *   opsEpics       운영선 에픽 번호(릴리스 갈래 문서 → sources.json 의 opsLineEpics · 비면 아무것도 접지 않는다)
  *   lastReleaseAt  마지막 운영 릴리스 시각(ISO · lastRelease() 산출 · 모르면 null)
  *   lastReleaseLabel 화면에 적을 릴리스 절 머리 문구
  *   now            오늘 기준 시각(체인 나이 계산 · 테스트가 고정한다)
