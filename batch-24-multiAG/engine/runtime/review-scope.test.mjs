@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { computeReviewScope, dropFileSections, entryMatches, foreignScopeBrief, parseFileListLoose, pathHasStoryKey, safeReviewScope } from './review-scope.mjs'
+import { computeReviewScope, dropFileSections, entryMatches, foreignScopeBrief, parseFileListLoose, parseSprintRows, pathHasStoryKey, safeReviewScope } from './review-scope.mjs'
 import { routeForeignFindings, applyReviewTail } from './review-tail.mjs'
 import { appendForeignDeferred, countOpenFindings } from './story-writes.mjs'
 import { codexReviewPrompt, renderReviewFindings } from './providers/codex.mjs'
@@ -175,4 +175,41 @@ describe('[review-scope] 지시문 · Codex 렌더러', () => {
     assert.equal(own.counts.high, 1)
     assert.equal(own.newStatus, 'in-progress')
   })
+})
+
+it('parseSprintRows — 한글 스토리 키(실제 sprint-status 형식)도 행으로 읽는다 (2026-10-03 실사고: ASCII 한정 정규식이 행 0 을 돌려 범위를 못 좁혔다)', () => {
+  const y = [
+    'development_status:',
+    '  4-21-계약-기준-정기점검-상주-현황과-인력-지정: review  # 2026-10-03 설명',
+    '  1-50-역할-홈-휴대폰-폭-가로-넘침-수리: done',
+    '  13-18-현장-증거-파생본: backlog',
+    '  not-a-story: review',
+  ].join('\n')
+  const rows = parseSprintRows(y)
+  assert.deepEqual(rows.map((r) => [r.key, r.status]), [
+    ['4-21-계약-기준-정기점검-상주-현황과-인력-지정', 'review'],
+    ['1-50-역할-홈-휴대폰-폭-가로-넘침-수리', 'done'],
+    ['13-18-현장-증거-파생본', 'backlog'],
+  ])
+})
+
+it('computeReviewScope — 한글 키 체계에서 다른 활성 스토리 소유 파일을 실제로 뺀다', () => {
+  const sprintText = ['  4-21-계약-기준-정기점검: review', '  4-20-계약에서-시작하는: in-progress', '  1-50-역할-홈: done', ''].join('\n')
+  const fl = (p) => ['## File List', '- `' + p + '`', ''].join('\n')
+  const stories = {
+    '4-21-계약-기준-정기점검': { key: '4-21-계약-기준-정기점검', file: '_bmad-output/implementation-artifacts/4-21-계약-기준-정기점검.md', text: fl('src/features/contracts/ContractsOverview.tsx') },
+    '4-20-계약에서-시작하는': { key: '4-20-계약에서-시작하는', file: '_bmad-output/implementation-artifacts/4-20-계약에서-시작하는.md', text: fl('src/features/contracts/ContractsPage.tsx') },
+    '1-50-역할-홈': { key: '1-50-역할-홈', file: '_bmad-output/implementation-artifacts/1-50-역할-홈.md', text: fl('src/features/home/SitBoard.tsx') },
+  }
+  const r = computeReviewScope({
+    files: ['src/features/contracts/ContractsOverview.tsx', 'src/features/contracts/ContractsPage.tsx', '_bmad-output/implementation-artifacts/4-20-계약에서-시작하는.md', '_bmad-output/implementation-artifacts/1-50-역할-홈.md', 'src/lib/unowned.ts'],
+    story: '4-21-계약-기준-정기점검', ownKey: '4-21-계약-기준-정기점검', ownText: stories['4-21-계약-기준-정기점검'].text, sprintText,
+    readStory: (k) => stories[k] ?? null,
+  })
+  assert.equal(r.fallback, null)
+  assert.deepEqual(r.kept, ['src/features/contracts/ContractsOverview.tsx', '_bmad-output/implementation-artifacts/1-50-역할-홈.md', 'src/lib/unowned.ts'])
+  assert.deepEqual(r.excludedByOwner.map((e) => [e.file, e.owner]), [
+    ['src/features/contracts/ContractsPage.tsx', '4-20-계약에서-시작하는'],
+    ['_bmad-output/implementation-artifacts/4-20-계약에서-시작하는.md', '4-20-계약에서-시작하는'],
+  ])
 })

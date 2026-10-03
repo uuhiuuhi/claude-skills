@@ -84,7 +84,7 @@ const sameStory = (a, b) => {
 export function parseSprintRows(text) {
   const rows = new Map()
   for (const line of String(text ?? '').split(/\r?\n/)) {
-    const m = /^\s{2,}(\d+-\d+[A-Za-z0-9._-]*)\s*:\s*([A-Za-z][A-Za-z-]*)/.exec(line)
+    const m = /^\s{2,}(\d+-\d+[^\s:]*)\s*:\s*([A-Za-z][A-Za-z-]*)/.exec(line) // 키 본문은 한글 등 비 ASCII 가 보통이다(2026-10-03 실사고: ASCII 한정 → 행 0 → 범위 안 좁혀짐)
     if (m) rows.set(m[1], { key: m[1], status: m[2].toLowerCase() })
   }
   return [...rows.values()]
