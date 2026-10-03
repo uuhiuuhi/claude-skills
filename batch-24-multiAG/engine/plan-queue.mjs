@@ -102,7 +102,9 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   // 상한은 페이스가 아니라 폭주 방지 백스톱이다 — 몫을 다 했다고 남은 슬롯이 쉬면 안 된다
   // (실사고: 상한 12 시절, 오전에 12건 소진 후 남은 슬롯이 통째로 놀았다). 실질 제동은
   // STOP 차단기·결정 대기 제외·사용량 한도 대기·리뷰 게이트가 맡는다.
-  const capBase = max ?? (AUTO && !(Number(cfg.dailyCap) > 0) ? Infinity : (cfg.dailyCap ?? 30)) // full: 0/없음 = 무제한
+  // 👤 2026-10-03 「하루 최대 N건 규정은 없어야 한다 — 사람 몫을 빼고 계획된 일을 프로젝트 끝까지 순차 진행」:
+  // 기본 = 무제한(모드 무관). 상한이 꼭 필요한 프로젝트만 dailyCap 에 양수를 적는다(0/없음 = 무제한).
+  const capBase = max ?? (Number(cfg.dailyCap) > 0 ? Number(cfg.dailyCap) : Infinity)
   const models = cfg.models ?? null // 예: { dev: 'fable', review: 'opus' } — 없으면 CLI 기본 모델
   // 주간 한도가 소진된 모델 — 배정 단계에서 미리 피한다(엔진 프로브가 헛돌지 않게).
   // 프로젝트 사정이라 config 소유이고 기본은 빈 목록이다.

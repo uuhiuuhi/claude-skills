@@ -59,9 +59,10 @@ const P = {
 }
 /** /extend 보너스 원장 — 당일 한정(자정이면 새 상한이라 이월 불요). 편성기는 읽기만 한다. */
 const capExtendPath = (ymd) => join(STATE_DIR, `cap-extend-${ymd}.json`)
-/** 기본 하루 상한 — 편성기(plan-queue.plan)의 `cfg.dailyCap ?? 30` 과 같은 값. 회신 문구 계산용일 뿐,
+/** 기본 하루 상한 — 편성기(plan-queue.plan)와 같은 규칙(양수만 상한 · 0/없음 = 무제한). 회신 문구 계산용일 뿐,
  *  실제 상한 판정은 편성기가 한다(여기서 상한을 정하지 않는다). */
-const DAILY_CAP = Number(CFG.dailyCap ?? 30)
+const DAILY_CAP = Number(CFG.dailyCap) > 0 ? Number(CFG.dailyCap) : Infinity
+const capLabel = (n) => (Number.isFinite(n) ? String(n) : '무제한')
 
 // BOM 제거 — PowerShell 이 쓴 JSON(예: telegram-chat.json)은 EF BB BF 로 시작해 JSON.parse 가 죽는다
 // (실기 테스트에서 실발생 · Windows 파일 교훈). 러너 notify 도 같은 내성을 갖는다.
@@ -169,7 +170,7 @@ function statusText(deps) {
     `미머지 auto/*(원격): ${remote.length ? remote.join(', ') : '없음'}${localOnlyNote(localOnly)}`,
     ...(chainLine ? [chainLine] : []),
     `이 창(${win}) STOP: ${stops}회`,
-    ...(bonus > 0 ? [`오늘 상한 보너스: +${bonus}(기본 ${DAILY_CAP} → ${DAILY_CAP + bonus})`] : []),
+    ...(bonus > 0 ? [`오늘 상한 보너스: +${bonus}(기본 ${capLabel(DAILY_CAP)} → ${capLabel(DAILY_CAP + bonus)})`] : []),
     `lock: ${lock === null ? '없음' : lock ? '실행 중' : '죽은 lock(pid 없음)'}`,
   ].join('\n')
 }
@@ -208,7 +209,7 @@ function doExtend(command, { dryRun = false } = {}) {
     mkdirSync(STATE_DIR, { recursive: true })
     writeJson(path, { extra: next, at: new Date().toISOString() })
   }
-  return `오늘(${ymd}) 상한 +${n} — 누적 보너스 ${next}(기본 ${DAILY_CAP} → ${DAILY_CAP + next}). 다음 편성부터 반영${dryRun ? ' (dry-run — 실제 미기록)' : ''}`
+  return `오늘(${ymd}) 상한 +${n} — 누적 보너스 ${next}(기본 ${capLabel(DAILY_CAP)} → ${capLabel(DAILY_CAP + next)}). 다음 편성부터 반영${dryRun ? ' (dry-run — 실제 미기록)' : ''}`
 }
 
 /** /resume 실행 — 이 창 차단기 리셋 · 죽은 lock 제거 · 러너 1회 기동 「요청」(성공 단정 금지 — 리뷰 2번) */
