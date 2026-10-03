@@ -47,8 +47,9 @@ export function setSprintStatus(yaml, key, status, date) {
 /** 열린 findings 수 — ⚠️ night-batch-ops/engine/story-ledger.mjs `openFindings` 와 **같은 정규식**이어야 한다
  *  (전역 스킬은 프로젝트 파일을 import 할 수 없어 사본을 둔다 · 굵게/기울임·들여쓰기 허용 · `[x]` 제외).
  *  이전 라운드의 열린 Patch/Decision 이 남아 있으면 「이번 라운드 0건」이어도 done 이 아니다(F30). */
+// (2026-10-02 5-18·4-18 오귀속 실사고) `[다른 스토리 소관: <경로>]` 표식 줄은 이 스토리의 열린 지적이 아니다 — 세지 않는다(줄은 원장에 남는다).
 export const countOpenFindings = (text, tag) =>
-  (String(text ?? '').match(new RegExp('^[ \\t]*- \\[ \\] [*_]{0,2}\\[Review\\]\\[' + tag + '\\]', 'gm')) ?? []).length
+  (String(text ?? '').match(new RegExp('^[ \\t]*- \\[ \\] [*_]{0,2}\\[Review\\]\\[' + tag + '\\](?![^\\n]*\\[다른 스토리 소관:)', 'gm')) ?? []).length
 
 /** DECISIONS-INBOX.md 맨 위(H1 아래)에 결정 대기 절을 끼운다 — 편성기 규칙 2 는 인박스에 스토리 번호(예 2.3)가
  *  있는지 본다(단일 창구). 형식은 현행 인박스 관례(`## 🟠 결정 대기 — … (등재 <날짜> …)`). */
@@ -97,6 +98,24 @@ export function appendDeferredWork(text, heading, bullets) {
   if (!bullets || bullets.length === 0) return t
   const body = [`## ${heading}`, '', ...bullets.map((b) => `- ${b}`)].join(nl)
   return t.replace(/\s*$/, '') + nl + nl + body + nl
+}
+
+/** 다른 스토리 소관 지적(review-tail.routeForeignFindings 의 closed)을 소유 스토리별 절로 deferred-work 끝에 붙인다 — **멱등**:
+ *  같은 지적 원문이 이미 「다른 스토리 소관(」 꼬리로 적혀 있으면 다시 넣지 않는다(다음 라운드가 같은 지적을 또 내도 한 번만). */
+export function appendForeignDeferred(text, { storyKey = '', date = '', source = 'code review', items = [] } = {}) {
+  let t = String(text ?? '')
+  const seen = new Set()
+  const byOwner = new Map()
+  for (const it of items ?? []) {
+    const key = `- ${it.text} — ⏭️ 다른 스토리 소관(`
+    if (seen.has(it.text) || t.includes(key)) continue
+    seen.add(it.text)
+    const owner = it.owner || '소유 미상'
+    if (!byOwner.has(owner)) byOwner.set(owner, [])
+    byOwner.get(owner).push(`${it.text} — ⏭️ 다른 스토리 소관(소유 = ${owner} · 출처 ${storyKey} · ${date} · 대상 ${it.path})${it.guarded ? ' ⚠ high/이월 금지 5범주 — 소유 스토리가 반드시 회수' : ''}`)
+  }
+  for (const [owner, bullets] of byOwner) t = appendDeferredWork(t, `Deferred from: ${source} of ${storyKey} (${date}) — 다른 스토리 소관(소유 = ${owner})`, bullets)
+  return t
 }
 
 /** `### Completion Notes List` **줄** 바로 아래에 완료 기록 블록을 끼운다.

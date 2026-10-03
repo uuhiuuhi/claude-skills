@@ -94,8 +94,9 @@ import { readEvidenceFor } from './providers/codex.mjs';
 import { deepRedact } from './providers/redact.mjs';
 import { parseFileList, REVIEW_PENDING_EXIT } from '../runner-rules.mjs';
 import { countReviewRounds } from '../story-ledger.mjs';
-import { applyReviewTail, applyReviewTailBlock } from './review-tail.mjs';
-import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendDecisionsInbox, appendCompletionNotes, countOpenFindings } from "./story-writes.mjs";
+import { applyReviewTail, applyReviewTailBlock, routeForeignFindings } from './review-tail.mjs';
+import { safeReviewScope, dropFileSections, foreignScopeBrief, ownerOfPath, summarizeExcluded } from './review-scope.mjs';
+import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendForeignDeferred, appendDecisionsInbox, appendCompletionNotes, countOpenFindings } from "./story-writes.mjs";
 import { detectGates, parseQaChain, classifyQaFailure, repairDecision, buildVerificationManifest, escalationReport } from "./quality-rules.mjs";
 
 import { fingerprint as qualityFingerprint } from './quality-gates.mjs';
@@ -800,7 +801,7 @@ const REVIEW_POLICY = (s) => {
 const prompts = {
   create: (s) => `/bmad-create-story ${s}\n\n${GUARD} 스토리 스펙(AC·파일 그라운딩)을 작성·저장하고 종료.`,
   dev: (s) => `/bmad-dev-story ${s}\n\n${GUARD} 구현 후 검증까지 자동 실행.${AUTO_DEV}${FULL ? ` [검사 관문] ${GATES_BRIEF.join(' ')}` : ''}`,
-  review: (s) => `/bmad-code-review ${s}\n\n${GUARD} 다른 LLM 관점에서 적대적으로. findings 리포트만 작성(코드 자동수정·commit 금지).${REVIEW_POLICY(s)} ⚠️ 판정은 발견 0건·재오픈 불요 결론이어도 **반드시 스토리 파일의 Review Findings 절에 라운드 기록으로 기재**하라 — stdout 채팅 보고만 하고 파일을 안 쓰면 엔진이 산출물 부재(NO-OP exit 4)로 실패 처리한다(실사고 3회).${AUTO_REVIEW}`,
+  review: (s, excluded = []) => `/bmad-code-review ${s}\n\n${GUARD} 다른 LLM 관점에서 적대적으로. findings 리포트만 작성(코드 자동수정·commit 금지).${REVIEW_POLICY(s)} ⚠️ 판정은 발견 0건·재오픈 불요 결론이어도 **반드시 스토리 파일의 Review Findings 절에 라운드 기록으로 기재**하라 — stdout 채팅 보고만 하고 파일을 안 쓰면 엔진이 산출물 부재(NO-OP exit 4)로 실패 처리한다(실사고 3회).${AUTO_REVIEW} ${foreignScopeBrief(excluded)}`,
   // replan — 시니어 개발 기획자 재계획(자율운전 · 2026-09-03). 스토리 md·인박스·sprint-status 만 쓴다(코드 0줄).
   replan: (s) => [
     `[REPLAN] 스토리 ${s} 재계획 — 너는 시니어 개발 기획자다. 결정이 필요한 항목은 스스로 판단해 기록하고(사람은 인박스에서 사후 확인한다) 스토리 파일(_bmad-output/implementation-artifacts/${s}*.md)을 갱신하라. 코드는 고치지 않는다.`,
@@ -862,18 +863,53 @@ function trackedDiffExcludingSensitive(names, ref) {
   return git(["diff", ...base, "--", ":(top)", ...excl]).out;
 }
 
-function prepareReviewDiff(story) {
-  const storyFile = findStoryFile(story);
-  const diffFile = resolve(logDir, `codex-${hash8(story)}-review-diff.txt`);
+// (2026-10-02 5-18·4-18 오귀속 실사고) 리뷰 범위 좁히기 — 「이 스토리 File List 밖 + 경로에 스토리 키 없음 + 다른 활성 스토리 File List 소유」만 뺀다.
+// 순수 판정은 review-scope.mjs · 여기는 파일 읽기와 fail-open 만 한다(어떤 오류도 리뷰를 막지 않는다 — 종전 전체 범위 + 경고 1줄).
+function scopeReviewFiles(story, storyFile, files) {
+  const warn = (m) => note(`⚠ [${story}] review: ${m}`);
+  try {
+    const readStory = (key) => { const f = findStoryFile(key); return f ? { key: basename(f, ".md"), file: rel(f), text: readFileSync(f, "utf8") } : null; };
+    const s = safeReviewScope({
+      files, story, ownKey: storyFile ? basename(storyFile, ".md") : story,
+      ownText: storyFile ? readFileSync(storyFile, "utf8") : null,
+      sprintText: existsSync(sprintStatusFile) ? readFileSync(sprintStatusFile, "utf8") : null,
+      readStory,
+    }, warn);
+    if (s.fallback && s.fallback !== "오류") warn(`리뷰 범위를 좁히지 않았다(${s.fallback}) — 종전 전체 범위로 리뷰한다`);
+    return s;
+  } catch (e) {
+    warn(`리뷰 범위 좁히기 실패(${e?.message ?? e}) — 종전 전체 범위로 리뷰한다`);
+    return { kept: [...files], excludedByOwner: [], owners: [], fallback: "오류" };
+  }
+}
+
+function collectReviewDiff(story, storyFile, scoped) {
+  let excludedByOwner = [], owners = [];
+  // 이번 단계의 변경 파일 → 남길 집합(scoped=false 면 전부)
+  const narrow = (list) => {
+    if (!scoped || !list.length) return new Set(list);
+    const s = scopeReviewFiles(story, storyFile, list);
+    excludedByOwner = s.excludedByOwner; owners = s.owners;
+    return new Set(s.kept);
+  };
+  // 뺀 파일은 pathspec 이 아니라 diff 본문 단계에서 절째 들어낸다(파일 수가 많아도 명령줄 길이와 무관)
+  const dropOwned = (diff) => {
+    if (!excludedByOwner.length) return diff;
+    const dropped = new Map(excludedByOwner.map((e) => [e.file.replace(/\\/g, "/"), e.owner]));
+    return dropFileSections(diff, (p) => dropped.has(p), (p) => `[리뷰 범위 밖 — 다른 활성 스토리(${dropped.get(p) ?? "?"}) 소유: ${p}]`);
+  };
   // 리뷰 diff 에 자격증명이 실리면 그대로 외부 벤더로 나간다 — gitignore·추적 여부와 무관하게 env·키·시크릿
   // 파일은 ① pathspec 제외 ② unified diff 에서 파일 섹션째 제거 ③ 최종 확정 후 값 마스킹, 셋을 모두 건다
   // (2026-09-02 codex-review-r1 #1: 종전에는 `git diff HEAD` 본문에 추적된 `.env.production` 이 그대로 실렸다).
-  let names = splitLines(git(["diff", "--name-only", "HEAD", "--"]).out).filter((f) => !isLedgerPath(f));
-  let diff = names.length ? trackedDiffExcludingSensitive(names) : "";
-  let files = names.filter((f) => !isSensitivePath(f));
+  const allNames = splitLines(git(["diff", "--name-only", "HEAD", "--"]).out).filter((f) => !isLedgerPath(f));
   const untracked = splitLines(git(["ls-files", "--others", "--exclude-standard"]).out)
     .filter((f) => !f.includes("auto-pipeline-logs/") && !isSensitivePath(f));
+  let keep = narrow([...allNames, ...untracked]);
+  let names = allNames.filter((f) => keep.has(f));
+  let diff = names.length ? dropOwned(trackedDiffExcludingSensitive(allNames)) : "";
+  let files = names.filter((f) => !isSensitivePath(f));
   for (const f of untracked) {
+    if (!keep.has(f)) continue;
     const d = untrackedUnifiedDiff(f);
     if (d) { diff += `\n${d}`; files.push(f); }
   }
@@ -883,12 +919,30 @@ function prepareReviewDiff(story) {
     // (종전에는 여기서 마스킹 **이후**에 원문 diff 로 덮어써 `sk-…`·URL 자격증명이 그대로 나갔다).
     const base = /^baseline_commit:\s*([0-9a-f]{7,40})/m.exec(readFileSync(storyFile, "utf8"))?.[1];
     if (base && git(["cat-file", "-e", `${base}^{commit}`]).code === 0) {
-      names = splitLines(git(["diff", "--name-only", `${base}..HEAD`, "--"]).out).filter((f) => !isLedgerPath(f));
-      diff = trackedDiffExcludingSensitive(names, `${base}..HEAD`);
+      excludedByOwner = []; owners = []; // 이 단계의 범위로 다시 판정한다
+      const committed = splitLines(git(["diff", "--name-only", `${base}..HEAD`, "--"]).out).filter((f) => !isLedgerPath(f));
+      keep = narrow(committed);
+      names = committed.filter((f) => keep.has(f));
+      diff = !scoped || names.length ? dropOwned(trackedDiffExcludingSensitive(committed, `${base}..HEAD`)) : "";
       files = names.filter((f) => !isSensitivePath(f));
       targetRef = `${base.slice(0, 7)}..HEAD`;
     }
   }
+  return { diff, files, targetRef, excludedByOwner, owners };
+}
+
+function prepareReviewDiff(story) {
+  const storyFile = findStoryFile(story);
+  const diffFile = resolve(logDir, `codex-${hash8(story)}-review-diff.txt`);
+  let r = collectReviewDiff(story, storyFile, true);
+  if (!r.diff.trim() && r.excludedByOwner.length) {
+    // 좁힌 결과가 비면 리뷰 대상 없음 STOP(exit 4)·전환이 나므로 종전 전체 범위로 되돌린다(fail-open)
+    note(`⚠ [${story}] review: 범위를 좁히자 리뷰 대상이 비었다(다른 활성 스토리 소유 ${r.excludedByOwner.length}건) — 종전 전체 범위로 리뷰한다`);
+    r = collectReviewDiff(story, storyFile, false);
+  }
+  if (r.excludedByOwner.length) note(`[${story}] review: ${summarizeExcluded(r.excludedByOwner)}`);
+  let { diff, files } = r;
+  const { targetRef, excludedByOwner, owners } = r;
   files = files.filter((f) => !f.includes("auto-pipeline-logs/"));
   diff = redactSecrets(stripSensitiveFileSections(diff));
   const MAX = 400_000;
@@ -896,7 +950,7 @@ function prepareReviewDiff(story) {
   diff = redactSecrets(diff); // 최종 확정본에 한 번 더(자름·표식 삽입 뒤 남은 값 0 을 보장)
   const empty = !diff.trim();
   writeFileSync(diffFile, diff || "(변경 없음)\n");
-  return { diffFile, files, targetRef, empty };
+  return { diffFile, files, targetRef, empty, excludedByOwner, owners };
 }
 const reviewRoundOf = (md) => countReviewRounds(md).reviewsAll; // 모든 리뷰어 라운드(골격 앵커 제외 · RESET 무관) — 헤딩 번호가 이어진다
 
@@ -934,9 +988,12 @@ function applyCodexReview(story, res, w) {
   const r = renderReviewFindings({ story: storyKey, model: w.spec.model, date: today(), targetRef: w.targetRef, round: reviewRoundOf(md) + 1, result: json });
   // (👤 2026-09-07 리뷰 꼬리 정책) N차 이상이면 high 가 아닌 열린 Patch 를 ⏭️ Defer 로 닫는다(이월 금지 5범주 제외 · review-tail.mjs).
   // **삽입 전 렌더 블록**에 적용한다 — insertReviewFindings 는 Tasks 절 끝에 넣으므로 파일 순서상 마지막 리뷰가 아닐 수 있다(Codex 교차리뷰 1차 M3).
-  const tail = applyReviewTailBlock(r.block, { round: reviewRoundOf(md) + 1, fromRound: deferTailFromRound, date: today(), story: storyKey, noDeferPaths });
+  // (2026-10-02) [다른 스토리 소관: …] 표식 지적은 이 스토리 몫이 아니다 — 꼬리 정책보다 먼저 닫고 소유 스토리 몫으로 deferred-work 에 이관한다
+  const foreign = routeForeignFindings(r.block, { date: today(), ownerOf: (p) => ownerOfPath(ri.owners ?? [], p) });
+  if (foreign.closed.length) note(`[${story}][CODEX][REVIEW] 다른 스토리 소관 ${foreign.closed.length}건 — 이 스토리 Patch 로 세지 않고 소유 스토리로 이관(${foreign.closed.map((c) => `${c.path}→${c.owner}`).join(", ")})`);
+  const tail = applyReviewTailBlock(foreign.text, { round: reviewRoundOf(md) + 1, fromRound: deferTailFromRound, date: today(), story: storyKey, noDeferPaths });
   if (tail.applied) note(`[${story}][CODEX][REVIEW] 리뷰 꼬리 정책 — ${tail.why}`);
-  let next = insertReviewFindings(md, tail.applied ? tail.text : r.block);
+  let next = insertReviewFindings(md, tail.applied ? tail.text : foreign.text);
   // (F30) 이번 라운드 0건이어도 **이전 라운드의 열린 Patch/Decision** 이 남아 있으면 done 이 아니다
   let newStatus = r.newStatus;
   const openLeft = countOpenFindings(next, "Patch") + countOpenFindings(next, "Decision");
@@ -969,8 +1026,11 @@ function applyCodexReview(story, res, w) {
   }
   // 확정 순서 = 인박스 → 이월 원장 → 스토리 → sprint — 원장 기록이 실패하면 지적은 열린 채 남아야 한다(Codex 2차 H2)
   const deferredAll = [...r.deferred, ...tail.deferred];
-  if (deferredAll.length) {
-    writes.push({ path: deferredWorkFile, text: appendDeferredWork(deferredWorkBase(), `Deferred from: Codex code review of ${storyKey} (${today()} · codex exec${tail.applied ? ` · 리뷰 꼬리 정책 ${tail.deferred.length}건` : ""})`, deferredAll), label: "deferred-work" });
+  if (deferredAll.length || foreign.closed.length) {
+    let dw = deferredWorkBase();
+    if (deferredAll.length) dw = appendDeferredWork(dw, `Deferred from: Codex code review of ${storyKey} (${today()} · codex exec${tail.applied ? ` · 리뷰 꼬리 정책 ${tail.deferred.length}건` : ""})`, deferredAll);
+    if (foreign.closed.length) dw = appendForeignDeferred(dw, { storyKey, date: today(), source: "Codex code review", items: foreign.closed });
+    writes.push({ path: deferredWorkFile, text: dw, label: "deferred-work" });
   }
   writes.push({ path: storyFile, text: next, label: "스토리" });
   if (existsSync(sprintStatusFile)) {
@@ -1064,8 +1124,8 @@ function prepareWorker(stage, story, variant) {
       targetRef = d.targetRef;
       schemaPath = CODEX_REVIEW_SCHEMA;
       transient.push(d.diffFile);
-      reviewInputs = { storyFile: storyRel, diffFile: rel(d.diffFile), changedFiles: d.files };
-      prompt = codexReviewPrompt({ story, storyFile: storyRel, diffFile: rel(d.diffFile), changedFiles: d.files, targetRef });
+      reviewInputs = { storyFile: storyRel, diffFile: rel(d.diffFile), changedFiles: d.files, excludedByOwner: d.excludedByOwner, owners: d.owners };
+      prompt = codexReviewPrompt({ story, storyFile: storyRel, diffFile: rel(d.diffFile), changedFiles: d.files, targetRef, excludedByOwner: d.excludedByOwner });
     } else if (role === "repair") {
       prompt = codexRepairPrompt({ story, storyFile: storyRel, qaCmd, attempt: variant.attempt, maxAttempts: variant.maxAttempts, failure: variant.failure, integrity: variant.integrity ?? [], guard: GUARD });
     } else {
@@ -1085,16 +1145,17 @@ function prepareWorker(stage, story, variant) {
       classify: (_text, res) => classifyCodexFailure(codexFailureText(res)),
     };
   }
+  const reviewDiff = role === "review" ? prepareReviewDiff(story) : null; // 지시문에 「범위 밖으로 뺀 파일」을 싣기 위해 먼저 만든다
   let prompt = role === "repair"
     ? codexRepairPrompt({ story, storyFile: storyRel, qaCmd, attempt: variant.attempt, maxAttempts: variant.maxAttempts, failure: variant.failure, integrity: variant.integrity ?? [], guard: GUARD })
-    : prompts[stage](story);
+    : prompts[stage](story, reviewDiff?.excludedByOwner ?? []);
   // --settings pipeline-settings.json = nested 인스턴스에만 commit/push/파괴 deny 적용
   // (사람의 settings.json은 deny-free → 대화형 커밋 자유). 엔진 no-commit 가드레일 이중 방어.
   const built = buildClaudeCommand({ bin: claudeBin, model: spec.model, permMode, settingsPath, stream: role === "review" });
   let claudeInputs = null;
   if (role === "review") {
-    const d = prepareReviewDiff(story);
-    claudeInputs = { storyFile: storyRel, diffFile: rel(d.diffFile), changedFiles: d.files };
+    const d = reviewDiff;
+    claudeInputs = { storyFile: storyRel, diffFile: rel(d.diffFile), changedFiles: d.files, excludedByOwner: d.excludedByOwner, owners: d.owners };
     prompt += "\n리뷰 전 아래 스토리·diff·변경 파일을 실제 Read 도구로 읽고, 열린 지적과 완료 상태를 스토리에 기록하라.\nREVIEW_INPUTS_JSON:" + JSON.stringify([...new Set([storyRel, rel(d.diffFile), ...d.files])]);
   }
   return {
@@ -1238,12 +1299,28 @@ function runClaude(stage, story, variant = null) {
     // (👤 2026-09-07 리뷰 꼬리 정책) bmad-code-review 가 기재한 이번 라운드 블록에도 같은 규칙 — N차 이상이면 high 외 Patch 를 ⏭️ Defer 로 닫고,
     // 열린 findings 가 0 이 되면 리뷰어의 clean 전이와 같은 자리(Status·sprint)를 done 으로 맞춘다(완주 게이트 T1~T8 이 최종 판정).
     const sfTail = findStoryFile(story);
-    const mdTail = sfTail ? readFileSync(sfTail, 'utf8') : '';
+    let mdTail = sfTail ? readFileSync(sfTail, 'utf8') : '';
+    // (2026-10-02 5-18·4-18 오귀속 실사고) [다른 스토리 소관: …] 표식 줄은 이 스토리의 열린 지적이 아니다 — 꼬리 정책보다 먼저 닫고 소유 스토리 몫으로 이관한다.
+    // 쓰기 순서 = 이월 원장 → 스토리(원장 기록이 실패하면 줄은 열린 채 남는다 — 그래도 표식 줄은 계수에서 빠진다).
+    let foreignClosed = 0;
+    if (sfTail && postOk) {
+      const foreign = routeForeignFindings(mdTail, { date: today(), ownerOf: (p) => ownerOfPath(w.reviewInputs?.owners ?? [], p) });
+      if (foreign.closed.length) {
+        try {
+          writeFileSync(deferredWorkFile, appendForeignDeferred(deferredWorkBase(), { storyKey: basename(sfTail, '.md'), date: today(), source: 'bmad-code-review', items: foreign.closed }));
+          writeFileSync(sfTail, foreign.text);
+          mdTail = foreign.text; foreignClosed = foreign.closed.length;
+          note(`[${story}][CLAUDE][REVIEW] 다른 스토리 소관 ${foreignClosed}건 — 이 스토리 Patch 로 세지 않고 소유 스토리로 이관(${foreign.closed.map((c) => `${c.path}→${c.owner}`).join(', ')})`);
+        } catch (e) { note(`⚠ [${story}][CLAUDE][REVIEW] 다른 스토리 소관 이관 기록 실패(${e?.code ?? e?.message}) — 표식 줄은 열린 채 남는다(계수에서는 빠진다)`); }
+      }
+    }
+    let tailApplied = false;
     if (sfTail && postOk && reviewRoundOf(mdTail) <= reviewRoundsBefore) note(`⚠ [${story}][CLAUDE][REVIEW] 이번 라운드 헤딩(### Review Findings — N차)이 새로 생기지 않았다 — 라운드 계수·꼬리 정책 미적용(리뷰 지시문 ⑦ 위반 · 다음 라운드에서 헤딩을 요구한다)`);
     if (sfTail && postOk && reviewRoundOf(mdTail) > reviewRoundsBefore) {
       // before 를 주면 이번에 새로 생긴 리뷰 헤딩을 블록으로 고른다 — 리뷰어가 Tasks 절에 끼워 넣어 파일 순서상 마지막이 아닐 수 있다(Codex 2차 M3)
       const tail = applyReviewTail(mdTail, { round: reviewRoundOf(mdTail), fromRound: deferTailFromRound, date: today(), story: basename(sfTail, '.md'), before: storyTextBefore, noDeferPaths });
       if (tail.applied) {
+        tailApplied = true;
         let nextTail = tail.text;
         const openNow = countOpenFindings(nextTail, 'Patch') + countOpenFindings(nextTail, 'Decision');
         if (openNow === 0) nextTail = setStoryStatus(nextTail, 'done').text;
@@ -1254,11 +1331,18 @@ function runClaude(stage, story, variant = null) {
         note(`[${story}][CLAUDE][REVIEW] 리뷰 꼬리 정책 — ${tail.why}${openNow === 0 ? ' · 열린 findings 0 ⇒ done(완주 게이트가 최종 판정)' : ` · 열린 findings ${openNow}건 잔존`}`);
       }
     }
+    if (foreignClosed && !tailApplied && countOpenFindings(mdTail, 'Patch') + countOpenFindings(mdTail, 'Decision') === 0) {
+      // 남은 지적이 전부 다른 스토리 소관이었다 — 꼬리 정책과 같은 자리(Status·sprint)를 done 으로 맞춘다(완주 게이트가 최종 판정)
+      const st = setStoryStatus(mdTail, 'done');
+      if (st.changed) writeFileSync(sfTail, st.text);
+      if (existsSync(sprintStatusFile)) { const s = setSprintStatus(readFileSync(sprintStatusFile, 'utf8'), basename(sfTail, '.md'), 'done', today()); if (s.changed) writeFileSync(sprintStatusFile, s.text); }
+      note(`[${story}][CLAUDE][REVIEW] 다른 스토리 소관 이관 뒤 열린 findings 0 ⇒ done(완주 게이트가 최종 판정)`);
+    }
     const required = [...new Set([w.reviewInputs.storyFile, w.reviewInputs.diffFile, ...w.reviewInputs.changedFiles])];
     const normalizeRead = path => resolve(path).replace(/\\/g, '/').toLowerCase();
     const readEvidence = required.filter(path => (res.events?.filePaths ?? []).some(read => normalizeRead(read) === normalizeRead(path)));
     const text = readFileSync(findStoryFile(story), 'utf8');
-    const counts = { patch: countOpenFindings(text, 'Patch'), decision: countOpenFindings(text, 'Decision'), high: (text.match(/^- \[ \].*\[(?:high|critical)\]/gmi) ?? []).length };
+    const counts = { patch: countOpenFindings(text, 'Patch'), decision: countOpenFindings(text, 'Decision'), high: (text.match(/^- \[ \](?!.*\[다른 스토리 소관:).*\[(?:high|critical)\]/gmi) ?? []).length };
     const verified = required.length > 1 && readEvidence.length === required.length;
     reviewResults[story] = { provider: 'claude', model: w.spec.model || 'cli-default', result: verified ? counts.patch + counts.decision ? 'findings' : 'clean' : 'not-run(missing read evidence)', counts, readEvidence };
     if (!verified) note(`[${story}][CLAUDE][REVIEW] 열람 근거 미달 ${readEvidence.length}/${required.length} — 완료 차단`);

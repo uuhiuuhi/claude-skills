@@ -26,6 +26,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, 
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { assertSafeConfig, assertSafeModel, assertSafePath, spawnSafe, UnsafeArgumentError } from './spawn-safe.mjs'
+import { FOREIGN_MARK_RE, foreignScopeBrief } from '../review-scope.mjs'
 
 export const CODEX_REASONING_EFFORTS = Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 
@@ -575,7 +576,7 @@ export const GATES_BRIEF = Object.freeze([
   '수리 중이라면 지금 걸린 관문 하나만 고치고 끝내지 말고, 나머지 관문도 같은 라운드에 확인한다.',
 ])
 
-export function codexReviewPrompt({ story, storyFile, diffFile, changedFiles = [], targetRef = '', extraContext = '' }) {
+export function codexReviewPrompt({ story, storyFile, diffFile, changedFiles = [], targetRef = '', extraContext = '', excludedByOwner = [] }) {
   const files = changedFiles.length ? changedFiles.map((f) => `  - ${f}`).join('\n') : '  (diff 파일 참조)'
   return [
     `# 적대적 코드 리뷰 — 스토리 ${story}`,
@@ -605,6 +606,7 @@ export function codexReviewPrompt({ story, storyFile, diffFile, changedFiles = [
     '- 보안·권한 / 개인정보 / 데이터 손실·복구 / 결제·청구 / 외부 발송·배포 안전장치에 닿는 문제는 심각도와 무관하게 patch 또는 decision 으로 낸다(이월 금지 5범주 — defer/optional 로 내면 엔진이 patch 로 승격한다). · 👤 2026-09-07: severity=high 로 매기고 title 앞에 [5범주] 를 붙여라 — 엔진의 꼬리 이월 정책이 이 표식·파일 경로·범주 어휘로 유지 여부를 정하니 에둘러 쓰지 마라).',
     '- 발견 0건이면 verdict=clean 이고 findings 는 빈 배열이다 — 억지로 만들지 마라. 확실하지 않으면 severity=low + kind=optional.',
     '- **재검토(이 스토리가 이미 검토를 받은 적이 있을 때)**: 스토리 파일 Review Findings 절의 앞선 라운드를 먼저 읽는다. 새로 내는 patch 는 ① 앞선 지적이 실제로 고쳐지지 않은 것 ② 이번 수리가 만든 회귀 ③ severity=high(이월 금지 5범주 포함) 뿐이다. 앞선 라운드에 없던 medium·low 는 kind=optional 로 적는다 — 라운드마다 새 사소한 지적을 더하면 검토가 끝나지 않는다. 새 중대 결함(high)은 몇 차 라운드든 반드시 낸다.',
+    `- ${foreignScopeBrief(excludedByOwner, { codex: true })}`,
     '- 각 finding 의 detail 은 재현 조건 → 결과 → 왜 문제인지 순으로 한 단락. evidence 는 코드 인용(짧게). 한국어로 쓴다.',
     '',
     '## 출력',
@@ -717,9 +719,12 @@ export function renderReviewFindings({ model = '', date, result, targetRef = '',
   for (const f of optional) lines.push(`- [x] [Review][Optional] ${oneLine(f.title)}${loc(f)} — ⏭️ optional(정확성·명시 요구사항 영향 없음) — ${oneLine(f.detail)}`)
   if (decision.length + patch.length + defer.length + optional.length === 0) lines.push('- ✅ Clean review — 발견 0건(3렌즈 통과 · 재오픈 불요)')
   if (acLine) lines.push(acLine)
-  const counts = { decision: decision.length, patch: patch.length, defer: defer.length, optional: optional.length, high: patch.filter((f) => f.severity === 'high').length, promoted: patch.filter((f) => f.promoted).length }
-  const newStatus = decision.length + patch.length > 0 ? 'in-progress' : 'done'
+  // (2026-10-02) title 에 [다른 스토리 소관: …] 표식이 든 지적은 이 스토리 몫이 아니다 — 줄은 기재하되(엔진이 소유 스토리로 이관) high·상태 판정에서 뺀다
+  const own = (f) => !FOREIGN_MARK_RE.test(String(f.title ?? ''))
+  const ownDecision = decision.filter(own).length, ownPatch = patch.filter(own).length
+  const counts = { decision: ownDecision, patch: ownPatch, defer: defer.length, optional: optional.length, high: patch.filter((f) => own(f) && f.severity === 'high').length, promoted: patch.filter((f) => f.promoted).length }
+  const newStatus = ownDecision + ownPatch > 0 ? 'in-progress' : 'done'
   const deferred = defer.map((f) => `${oneLine(f.title)}${loc(f)} — ${oneLine(f.detail)}`)
-  const decisions = decision.map((f) => `${oneLine(f.title)} — ${oneLine(f.detail)}${loc(f)}`)
+  const decisions = decision.filter(own).map((f) => `${oneLine(f.title)} — ${oneLine(f.detail)}${loc(f)}`)
   return { block: lines.join('\n'), counts, newStatus, deferred, decisions }
 }

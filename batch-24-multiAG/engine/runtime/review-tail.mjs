@@ -12,6 +12,7 @@
 //       applyReviewTailBlock = 삽입 전 렌더 블록 전체(Codex 경로 · 1차 M3). 펜스는 story-ledger.fenceStep(기호·길이 추적).
 import { NO_DEFER_RE } from './providers/codex.mjs'
 import { fenceStep, atxHeadingDepth, reviewRoundHeadingDepth } from '../story-ledger.mjs'
+import { FOREIGN_MARK_RE } from './review-scope.mjs'
 
 // 심각도는 닫는 강조 기호·공백 뒤에도 올 수 있다: `**[Review][Patch]**[high]` · `[Review][Patch] [low]` (1차 H2)
 const OPEN_PATCH_RE = /^([ \t]*- )\[ \] ([*_]{0,2}\[Review\]\[Patch\][*_]{0,2}[ \t]*(?:\[([A-Za-z]+)\])?.*)$/
@@ -70,6 +71,7 @@ function rewriteRegion(lines, from, to, { round, date, story, noDeferPaths }) {
     if (f.toggled || fence) continue
     const m = OPEN_PATCH_RE.exec(line)
     if (!m) continue
+    if (FOREIGN_MARK_RE.test(line)) continue // 다른 스토리 소관 줄은 이 스토리 몫이 아니다 — routeForeignFindings 가 소유 스토리로 이관한다
     const cont = collectContinuation(lines, i, to)
     const full = [line, ...cont].join('\n')
     const tagged = Boolean(m[3])
@@ -149,4 +151,39 @@ export function applyReviewTailBlock(block, { round, fromRound = 3, date = '', s
   const nl = text.includes('\r\n') ? '\r\n' : '\n'
   const lines = text.split(/\r?\n/)
   return finish(text, lines, nl, rewriteRegion(lines, 0, lines.length, { round, date, story, noDeferPaths }), round)
+}
+
+// ── 다른 스토리 소관 지적 이관(2026-10-02 5-18·4-18 오귀속 실사고) ──────────────────────────────────────────────
+// 리뷰어가 변경 파일 목록 밖 파일의 문제에 `[다른 스토리 소관: <경로>]` 를 붙이면 그 줄은 이 스토리의 열린 Patch 가 아니다.
+// 엔진이 `- [x] ~~원문~~ — ⏭️ 다른 스토리 소관: <경로>(이관 · 소유 <키> · 날짜)` 로 닫고(원장 가드 닫힘 기호 ⏭️) deferred-work 로 넘긴다 —
+// 지적은 사라지지 않는다. 이월 금지 5범주·high 도 같은 길로 **소유 스토리 몫으로** 이관하되 guarded 표시를 남긴다.
+const FOREIGN_OPEN_RE = /^([ \t]*- )\[ \] ([*_]{0,2}\[Review\]\[(?:Patch|Decision)\].*?\[다른 스토리 소관:[ \t]*([^\]]*)\].*)$/
+/**
+ * @param {string} md 스토리 원문 또는 렌더 블록
+ * @param {{date?:string, ownerOf?:(path:string)=>string}} o ownerOf = 경로 → 소유 스토리 키('' = 미상)
+ * @returns {{text:string, closed:{path:string, owner:string, guarded:boolean, text:string}[]}}
+ */
+export function routeForeignFindings(md, { date = '', ownerOf = () => '' } = {}) {
+  const text = String(md ?? '')
+  const nl = text.includes('\r\n') ? '\r\n' : '\n'
+  const lines = text.split(/\r?\n/)
+  const closed = []
+  let fence = null
+  for (let i = 0; i < lines.length; i++) {
+    const f = fenceStep(fence, lines[i]); fence = f.state
+    if (f.toggled || fence) continue
+    const m = FOREIGN_OPEN_RE.exec(lines[i])
+    if (!m) continue
+    const cont = collectContinuation(lines, i, lines.length)
+    const full = [lines[i], ...cont].join('\n')
+    const path = m[3].trim()
+    let owner
+    try { owner = String(ownerOf(path) ?? '') } catch { owner = '' }
+    owner = owner || '소유 미상'
+    const guarded = /\[(?:high|critical)\]/i.test(lines[i]) || NO_DEFER_RE.test(full) || GUARD_TAG_RE.test(full)
+    const body = m[2].replace(/\s+$/, '')
+    lines[i] = m[1] + '[x] ~~' + body + '~~ — ⏭️ 다른 스토리 소관: ' + path + '(이관 · 소유 ' + owner + (date ? ' · ' + date : '') + ')'
+    closed.push({ path, owner, guarded, text: oneLine(body + (cont.length ? ' ' + cont.map(oneLine).join(' ') : '')) })
+  }
+  return { text: closed.length ? lines.join(nl) : text, closed }
 }

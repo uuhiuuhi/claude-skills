@@ -119,6 +119,11 @@ if (m) {
   const key = m[1]
   log('review ' + key)
   const f = join(art, findStory(key))
+  if (process.env.E2E_CLAUDE_FOREIGN === '1') {
+    // (2026-10-02) 리뷰어가 범위 밖 파일 지적을 [다른 스토리 소관] 표식으로 분리하고, 그것 때문에 in-progress 로 둔 경우
+    writeFileSync(join(process.env.E2E_STATE, 'claude-review-prompt.txt'), prompt)
+    writeFileSync(f, readFileSync(f, 'utf8').replace(/^Status:\s*\S+/m, 'Status: in-progress') + '\n### Review Findings — 1차 (claude 스텁)\n\n- [ ] [Review][Patch][medium] [다른 스토리 소관: src/b.ts] 이웃 화면 정렬 [src/b.ts:1] — 이 스토리 변경이 아니다\n')
+  } else
   writeFileSync(f, readFileSync(f, 'utf8').replace(/^Status:\s*\S+/m, 'Status: done') + '\n### Review Findings — claude 스텁\n\n- ✅ Clean review — 발견 0건\n')
   if (process.env.E2E_CLAUDE_TRACE === '1') {
     const line = prompt.split('\n').find(l => l.startsWith('REVIEW_INPUTS_JSON:'))
@@ -228,7 +233,11 @@ if (sandbox === 'workspace-write') {
 const decision = process.env.E2E_CODEX_DECISION === '1'
   ? [{ lens: 'auditor', severity: 'medium', kind: 'decision', title: '기간 필터 기본값', file: 'src/a.ts', line: 1, detail: '사람이 정해야 한다', evidence: '-', preExisting: false }]
   : []
-const json = { summary: '스텁 리뷰', verdict: decision.length ? 'findings' : 'clean', acVerdicts: [{ ac: 'AC-1', status: 'pass', evidence: 'stub' }], findings: decision }
+// (2026-10-02) 변경 파일 목록 밖 파일의 지적 — title 앞 [다른 스토리 소관: …] 표식(엔진이 소유 스토리로 이관)
+const foreign = process.env.E2E_CODEX_FOREIGN === '1'
+  ? [{ lens: 'blind', severity: 'high', kind: 'patch', title: '[다른 스토리 소관: src/b.ts] 이웃 화면 정렬이 흔들린다', file: 'src/b.ts', line: 1, detail: '이 스토리 변경이 아니다', evidence: '-', preExisting: false }]
+  : []
+const json = { summary: '스텁 리뷰', verdict: decision.length + foreign.length ? 'findings' : 'clean', acVerdicts: [{ ac: 'AC-1', status: 'pass', evidence: 'stub' }], findings: [...decision, ...foreign] }
 ev({ type: 'thread.started', thread_id: 't1' })
 ev({ type: 'item.completed', item: { id: 'i1', type: 'command_execution', command: 'cat ' + (diffFile ?? 'x'), exit_code: 0 } })
 ev({ type: 'item.completed', item: { id: 'i2', type: 'command_execution', command: 'cat _bmad-output/implementation-artifacts/' + story + '.md', exit_code: 0 } })
@@ -338,6 +347,8 @@ function runEngine(fx, { args = [], env = {}, cwd = null } = {}) {
       E2E_BATCH_EXIT: '0', E2E_BATCH_LEAK: '', E2E_WATCH: '', E2E_CODEX_WRITE: '',
       E2E_DUMP_ENV: '',
       E2E_CODEX_NO_IMPL: '',
+      E2E_CODEX_FOREIGN: '',
+      E2E_CLAUDE_FOREIGN: '',
       ...env,
     },
   })
@@ -406,6 +417,64 @@ describe('[engine-e2e][#2] baseline 폴백 diff 도 마스킹된다 — 최종 d
       assert.ok(!r.reviewDiff.includes(raw), `원문 유출: ${raw}`)
     }
     assert.ok(!/\bsk-[A-Za-z0-9]{20,}/.test(r.reviewDiff), '정규식 스윕: 마스킹되지 않은 키 형태가 남았다')
+  })
+})
+
+// ── 리뷰 diff 범위(2026-10-02 5-18·4-18 오귀속 실사고) — 같은 갈래의 다른 활성 스토리 소유 파일은 리뷰 범위 밖 ──────────
+describe('[engine-e2e][범위] baseline..HEAD 에 섞인 다른 활성 스토리의 File List 파일은 리뷰 diff 에서 빠진다', { timeout: 180_000 }, () => {
+  const setup = () => {
+    const fx = makeFixture({ stories: { '2-1-a': 'src/a.ts', '2-2-b': 'src/b.ts' } }) // 둘 다 ready-for-dev = 활성
+    const base = git(fx.proj, ['rev-parse', 'HEAD']).stdout.trim()
+    writeFileSync(join(fx.proj, 'src', 'a.ts'), 'export const a = 2\n') // 이 스토리 File List
+    writeFileSync(join(fx.proj, 'src', 'b.ts'), 'export const b = 2\n') // 다른 활성 스토리(2-2-b) File List
+    writeFileSync(join(fx.proj, 'src', 'c.ts'), 'export const c = 2\n') // 소유 불분명 — 남긴다
+    const md = join(fx.art, '2-1-a.md')
+    writeFileSync(md, readFileSync(md, 'utf8').replace('# Story 2-1-a', `# Story 2-1-a\nbaseline_commit: ${base}`))
+    ok(git(fx.proj, ['add', '-A']), 'add')
+    ok(git(fx.proj, ['commit', '-q', '-m', 'round 1 + 이웃 스토리 잔여물']), 'commit')
+    return fx
+  }
+  it('자기 File List·미소유 파일은 남고 2-2-b 소유 파일은 표식 한 줄로만 남는다 · 지시문에 제외 목록과 표식 규칙', () => {
+    const fx = setup()
+    const r = runEngine(fx, { args: ['--stages', 'review', '--review-model', 'codex'] })
+    assert.equal(r.status, 0, r.out.slice(-2000))
+    assert.match(r.reviewDiff, /^diff --git a\/src\/a\.ts b\/src\/a\.ts$/m)
+    assert.match(r.reviewDiff, /^diff --git a\/src\/c\.ts b\/src\/c\.ts$/m, '소유 불분명 파일은 남겨야 한다(보수적)')
+    assert.ok(!/^diff --git a\/src\/b\.ts/m.test(r.reviewDiff), '다른 활성 스토리 소유 파일 본문이 실렸다')
+    assert.ok(!r.reviewDiff.includes('export const b = 2'), '다른 스토리 본문이 실렸다')
+    assert.match(r.reviewDiff, /\[리뷰 범위 밖 — 다른 활성 스토리\(2-2-b\) 소유: src\/b\.ts\]/)
+    const list = r.prompt.slice(r.prompt.indexOf('- 변경 파일:'), r.prompt.indexOf('## 방법'))
+    assert.ok(!list.includes('src/b.ts'), list)
+    assert.match(r.prompt, /\[다른 스토리 소관: <경로>\]/)
+    assert.match(r.prompt, /제외된 파일 목록: src\/b\.ts\(2-2-b\)/)
+    assert.match(r.log('run-summary.log'), /리뷰 범위 밖 1건 — 다른 활성 스토리 소유: src\/b\.ts\(2-2-b\)/)
+  })
+  it('리뷰어가 [다른 스토리 소관] 지적(high)을 내면 이 스토리 Patch 로 세지 않고 닫아 deferred-work 로 이관 → done', () => {
+    const fx = setup()
+    const r = runEngine(fx, { args: ['--stages', 'review', '--review-model', 'codex'], env: { E2E_CODEX_FOREIGN: '1' } })
+    assert.equal(r.status, 0, r.out.slice(-2000))
+    const md = readFileSync(join(fx.art, '2-1-a.md'), 'utf8')
+    assert.match(md, /^- \[x\] ~~\[Review\]\[Patch\]\[high\] \[다른 스토리 소관: src\/b\.ts\] 이웃 화면 정렬이 흔들린다.*~~ — ⏭️ 다른 스토리 소관: src\/b\.ts\(이관 · 소유 2-2-b · \d{4}-\d{2}-\d{2}\)$/m)
+    // 리뷰 적용 단계의 전이(이후 완주 게이트가 미완 Task 로 다시 내릴 수 있다 — 여기서는 리뷰 판정만 본다)
+    assert.match(r.log('run-summary.log'), /\[2-1-a\]\[CODEX\]\[REVIEW\] 기재 완료 — decision 0 · patch 0\(high 0\) .*→ status=done/)
+    assert.match(r.log('run-summary.log'), /다른 스토리 소관 1건 — 이 스토리 Patch 로 세지 않고 소유 스토리로 이관\(src\/b\.ts→2-2-b\)/)
+    const dw = readFileSync(join(fx.art, 'deferred-work.md'), 'utf8')
+    assert.match(dw, /^## Deferred from: Codex code review of 2-1-a \(\d{4}-\d{2}-\d{2}\) — 다른 스토리 소관\(소유 = 2-2-b\)$/m)
+    assert.match(dw, /이웃 화면 정렬이 흔들린다.* — ⏭️ 다른 스토리 소관\(소유 = 2-2-b · 출처 2-1-a .* ⚠ high\/이월 금지 5범주/)
+    assert.equal(r.manifest('2-1-a')?.review?.counts?.high, 0, '다른 스토리 소관 high 가 이 스토리 high 로 세어졌다')
+  })
+  it('claude(bmad-code-review) 경로 — 지시문에 표식 규칙·제외 목록 · 표식 줄을 닫아 이관하고 남은 지적 0 이면 done 전이', () => {
+    const fx = setup()
+    const r = runEngine(fx, { args: ['--stages', 'review', '--dev-model', 'codex:dev-m'], env: { E2E_CLAUDE_TRACE: '1', E2E_CLAUDE_FOREIGN: '1' } })
+    assert.ok(/^review 2-1-a$/m.test(r.calls), r.out.slice(-2000))
+    const prompt = readFileSync(join(fx.state, 'claude-review-prompt.txt'), 'utf8')
+    assert.match(prompt, /\[다른 스토리 소관: <경로>\]/)
+    assert.match(prompt, /제외된 파일 목록: src\/b\.ts\(2-2-b\)/)
+    assert.ok(!/REVIEW_INPUTS_JSON:.*src\/b\.ts/.test(prompt), '제외 파일이 필수 열람 목록에 남았다')
+    const md = readFileSync(join(fx.art, '2-1-a.md'), 'utf8')
+    assert.match(md, /^- \[x\] ~~\[Review\]\[Patch\]\[medium\] \[다른 스토리 소관: src\/b\.ts\] 이웃 화면 정렬 .*~~ — ⏭️ 다른 스토리 소관: src\/b\.ts\(이관 · 소유 2-2-b · \d{4}-\d{2}-\d{2}\)$/m)
+    assert.match(readFileSync(join(fx.art, 'deferred-work.md'), 'utf8'), /^## Deferred from: bmad-code-review of 2-1-a \(\d{4}-\d{2}-\d{2}\) — 다른 스토리 소관\(소유 = 2-2-b\)$/m)
+    assert.match(r.log('run-summary.log'), /다른 스토리 소관 이관 뒤 열린 findings 0 ⇒ done/)
   })
 })
 
