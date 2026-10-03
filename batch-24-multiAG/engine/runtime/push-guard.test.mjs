@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { prePushScan, pushRefVerdict, safeGitPush } from './push-guard.mjs'
+import { prePushScan, pushRefVerdict, safeGitPush, secretHits, SECRET_RES } from './push-guard.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8' })
@@ -139,6 +139,34 @@ describe('[push-guard] push 전 내용 검사 — 금지 경로·시크릿은 �
     commitOn(fx.proj, 'auto/2026-09-03', { 'src/a.ts': 'export const a = 1\n' })
     const s = prePushScan({ cwd: fx.proj })
     assert.deepEqual(s.files, ['src/a.ts'], JSON.stringify(s.files))
+  })
+})
+
+describe('[push-guard] 시크릿 판정 — 환경변수 참조는 값이 아니다(2026-10-01 보존 실패 · 38시간 정지 교훈)', () => {
+  // 가짜 값은 런타임에 조립한다 — 리터럴로 두면 이 파일을 커밋하는 순간 스캐너가 자기 자신을 잡는다.
+  const V = 'Ab3' + 'x'.repeat(20)
+  const N = 'SUPABASE_' + 'SERVICE_ROLE_KEY'
+  const plus = (l) => '+' + l
+  it('참조 줄은 통과 — env.X · process.env.X · import.meta.env.X · ${X} · ${{ secrets.X }}', () => {
+    const lines = [
+      '  const server = startServer(port, { NEXT_PUBLIC_SUPABASE_URL: env.NEXT_PUBLIC_SUPABASE_URL, ' + N + ': env.' + N + ' });',
+      '> 비밀값 검사 2건은 `' + N + ': env.' + N + '` 같은 참조',
+      N + ': process.env.' + N + ',',
+      N + ' = import.meta.env.' + N,
+      N + '="${' + N + '}"',
+      N + ': ${{ secrets.' + N + ' }}',
+    ]
+    assert.deepEqual(secretHits(lines.map(plus).join('\n')), [])
+  })
+  it('실제 값은 계속 잡는다 — = · : · 따옴표', () => {
+    for (const l of [N + '=' + V, N + ': "' + V + '"', "CLOUDFLARE_API_TOKEN='" + V + "'", 'OPENAI_API_KEY = ' + V]) {
+      assert.equal(secretHits(plus(l)).length, 1, l)
+    }
+  })
+  it('엔진(auto-story-pipeline.mjs)의 이름 패턴과 어긋나지 않는다', () => {
+    const engine = readFileSync(join(here, 'auto-story-pipeline.mjs'), 'utf8')
+    const named = SECRET_RES.find((re) => re.source.startsWith('(CLOUDFLARE_API_TOKEN'))
+    assert.ok(named && engine.includes('  /' + named.source + '/,'), '엔진의 이름 패턴이 push-guard 와 다르다')
   })
 })
 

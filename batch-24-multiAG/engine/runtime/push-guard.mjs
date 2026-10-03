@@ -24,7 +24,8 @@ export const DENY_LOG_RE = /\.log$/i
 /** 값이 실제로 붙은 형태만 — 이름·정규식 정의는 통과(2026-08-17 오탐 STOP 교훈). */
 export const SECRET_RES = [
   /sb_secret_[A-Za-z0-9_-]{8,}/,
-  /(CLOUDFLARE_API_TOKEN|CF_API_TOKEN|OPENAI_API_KEY|SUPABASE_ACCESS_TOKEN|SUPABASE_SERVICE_ROLE_KEY|OUTBOX_DISPATCH_SECRET|AWS_SECRET_ACCESS_KEY)\s*[=:]\s*['"]?[A-Za-z0-9_\-/+.]{16,}/,
+  // `env.X`·`process.env.X`·`import.meta.env.X` 는 값이 아니라 참조(2026-10-01 보존 실패 · 38시간 정지 교훈)
+  /(CLOUDFLARE_API_TOKEN|CF_API_TOKEN|OPENAI_API_KEY|SUPABASE_ACCESS_TOKEN|SUPABASE_SERVICE_ROLE_KEY|OUTBOX_DISPATCH_SECRET|AWS_SECRET_ACCESS_KEY)\s*[=:]\s*['"]?(?!(?:process\.|import\.meta\.)?env\.)[A-Za-z0-9_\-/+.]{16,}/,
   /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/,
   /sk-[A-Za-z0-9]{24,}/,
   /gh[pousr]_[A-Za-z0-9]{30,}/,

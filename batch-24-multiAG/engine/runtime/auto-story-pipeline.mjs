@@ -646,7 +646,8 @@ const DENY_LOG_RE = /\.log$/i;
 const SECRET_RES = [
   /sb_secret_[A-Za-z0-9_-]{8,}/,
   // sb_publishable_ 는 공개 키(VITE_ 공개값)라 시크릿이 아니다 — 2026-08-17 밤샘 배치에서 스토리 문서의 뮤테이션 예시값에 오탐 STOP(1.5h 손실) → 제외
-  /(CLOUDFLARE_API_TOKEN|CF_API_TOKEN|OPENAI_API_KEY|SUPABASE_ACCESS_TOKEN|SUPABASE_SERVICE_ROLE_KEY|OUTBOX_DISPATCH_SECRET|AWS_SECRET_ACCESS_KEY)\s*[=:]\s*['"]?[A-Za-z0-9_\-/+.]{16,}/,
+  // `env.X`·`process.env.X`·`import.meta.env.X` 는 값이 아니라 참조 — 2026-10-01 STOP 잔여물 보존 실패(38시간 정지) → 제외
+  /(CLOUDFLARE_API_TOKEN|CF_API_TOKEN|OPENAI_API_KEY|SUPABASE_ACCESS_TOKEN|SUPABASE_SERVICE_ROLE_KEY|OUTBOX_DISPATCH_SECRET|AWS_SECRET_ACCESS_KEY)\s*[=:]\s*['"]?(?!(?:process\.|import\.meta\.)?env\.)[A-Za-z0-9_\-/+.]{16,}/,
   /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/,
   /sk-[A-Za-z0-9]{24,}/,
   /AKIA[0-9A-Z]{16}/,
