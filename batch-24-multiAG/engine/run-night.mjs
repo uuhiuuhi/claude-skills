@@ -29,7 +29,7 @@ import { readRecord } from './runtime/schema-migration.mjs';
 // 판정 규칙은 전부 runner-rules.mjs 소유(순수 함수 — 테스트가 문다).
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
@@ -1325,8 +1325,16 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   const wtBase = resolve('..')
   const myName = basename(process.cwd())
   const wts = []
+  // ‼️ 2026-10-03 실사고(Inspectir): Git for Windows 의 `worktree remove --force` 는 워크트리 안 node_modules
+  // junction 을 **따라 들어가** 본 클론의 node_modules 와 그 안 workspace 링크가 가리키는 apps/·packages/ 까지 지웠다
+  // (추적 파일 765건 삭제 · git 2.52 재현). 지우기 전에 링크만 먼저 끊는다 — 링크 자체 삭제는 대상을 건드리지 않는다.
+  const detachSharedLink = (dir) => {
+    const link = join(dir, 'node_modules')
+    try { if (lstatSync(link).isSymbolicLink()) unlinkSync(link) } catch { /* 없음 = 무해 */ }
+  }
   const cleanup = (targets = wts) => {
     for (const w of targets) {
+      detachSharedLink(w.dir)
       spawnSync('git', ['worktree', 'remove', '--force', w.dir])
       // node_modules junction(대상 부재 시)·잠긴 파일로 git 이 폴더를 못 지우면 직접 지운다 — 남은 폴더는 다음 라운드의
       // `worktree add` 를 막지는 않지만(remove --force 선행) 디스크와 혼란을 남긴다(2026-09-02 e2e 실측).
@@ -1336,6 +1344,7 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   }
   for (let i = 0; i < storyList.length; i++) {
     const dir = join(wtBase, `${myName}-wt${i}`)
+    detachSharedLink(dir) // 잔재 워크트리의 junction 도 먼저 끊는다(위 실사고)
     spawnSync('git', ['worktree', 'remove', '--force', dir]) // 잔재 정리(없으면 무해)
     const add = spawnSync('git', ['worktree', 'add', '--detach', dir, 'HEAD'], { encoding: 'utf8' })
     if (add.status !== 0) { record(`· 병렬 폴백 — worktree 생성 실패: ${(add.stderr ?? '').trim().split('\n')[0]}`); cleanup(); return null }
