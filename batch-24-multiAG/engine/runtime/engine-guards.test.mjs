@@ -216,3 +216,19 @@ describe('[engine-guards] v3 다중 프로바이더 규율', () => {
     assert.ok(!/checks\.unit\s*=\s*\{/.test(src), 'checks.unit 은 pass/fail 문자열이어야 한다(readiness·현황판이 그렇게 읽는다)')
   })
 })
+
+describe('[engine-guards] 품질 보고서 신선도 · 판정 일치(2026-10-08 coverage::ready 실사고)', () => {
+  it('게이트 실행 전에 이전 보고서를 지우고, 보고서 판정은 qualityRunOutcome 하나로 읽는다', () => {
+    const loop = src.slice(src.indexOf('function runQualityLoop(story)'), src.indexOf('function setVerifiedStoryStatus('))
+    const unlink = loop.indexOf('unlinkSync(policyFile)')
+    const spawn = loop.indexOf("spawnSync(process.execPath, [join(SKILL_DIR, 'quality-gates.mjs')")
+    assert.ok(unlink > 0 && spawn > unlink, '이전 보고서 삭제가 게이트 실행보다 먼저여야 한다')
+    assert.ok(loop.includes('qualityRunOutcome({ status: policyRun.status, report, stderr: policyRun.stderr })'))
+    assert.ok(loop.includes('const qa = { code: outcome.code,'), 'qa 종료 판정은 보고서 판정(outcome)에서 온다')
+    assert.ok(!loop.includes('codeFingerprint() }; }'), '보고서가 없을 때 지문을 다시 계산하다 던지지 않는다')
+  })
+  it('실패 종류는 qualityFailureKind 가 가른다(not-required 커버리지는 coverage 실패가 아니다)', () => {
+    assert.ok(has('const kind = qualityFailureKind(q.policy, failedGate);'))
+    assert.ok(!src.includes("q.policy.coverage.result !== 'pass' ? 'coverage'"))
+  })
+})

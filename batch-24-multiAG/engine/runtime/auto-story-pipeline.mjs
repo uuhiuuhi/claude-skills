@@ -99,7 +99,7 @@ import { safeReviewScope, dropFileSections, foreignScopeBrief, ownerOfPath, summ
 import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendForeignDeferred, appendDecisionsInbox, appendCompletionNotes, countOpenFindings } from "./story-writes.mjs";
 import { detectGates, parseQaChain, classifyQaFailure, repairDecision, buildVerificationManifest, escalationReport } from "./quality-rules.mjs";
 
-import { fingerprint as qualityFingerprint } from './quality-gates.mjs';
+import { fingerprint as qualityFingerprint, qualityRunOutcome, qualityFailureKind } from './quality-gates.mjs';
 import { readRecord } from './schema-migration.mjs';
 const SKILL_DIR = dirname(fileURLToPath(import.meta.url));
 const CODEX_REVIEW_SCHEMA = join(SKILL_DIR, "providers", "codex-review.schema.json");
@@ -1640,11 +1640,19 @@ function runQualityLoop(story) {
     if (blocks.length === 0) {
       const policyFile = resolve(logDir, `${story}-quality.json`);
       note(`→ [${story}] qa-gate: batch-24-multiag scoped quality`);
+      // 이전 실행의 보고서를 먼저 지운다 — 게이트가 보고서를 못 쓰고 죽으면 종전엔 어제의 docs/ready 보고서를 다시 읽어
+      // `coverage::ready` 로 3회 수리 뒤 STOP 했다(2026-10-08 2-18·1-54·4-22). 지우지 못하면 수정 시각으로 신선도를 가른다.
+      let staleMtime = null;
+      try { unlinkSync(policyFile); } catch (e) { if (e?.code !== 'ENOENT') { try { staleMtime = statSync(policyFile).mtimeMs; } catch { /* gone */ } } }
       const policyRun = spawnSync(process.execPath, [join(SKILL_DIR, 'quality-gates.mjs'), '--base', opt('quality-base', 'HEAD'), '--out', policyFile], { encoding: 'utf8', timeout: stageTimeoutMs, windowsHide: true });
-      try { q.policy = JSON.parse(readFileSync(policyFile, 'utf8')); } catch { q.policy = { verdict: 'not-verified', gates: [], codeFingerprint: codeFingerprint() }; }
+      let report = null;
+      try { if (staleMtime === null || statSync(policyFile).mtimeMs !== staleMtime) report = JSON.parse(readFileSync(policyFile, 'utf8')); } catch { report = null; }
+      const outcome = qualityRunOutcome({ status: policyRun.status, report, stderr: policyRun.stderr });
+      q.policy = outcome.policy;
       note(`   qa exit=${policyRun.status} log=${policyFile}`);
-      const qa = { code: policyRun.status === 0 && q.policy.verdict === 'ready' ? 0 : 1, out: JSON.stringify(q.policy) + String(policyRun.stderr ?? '') };
-      if (qa.code !== 0) note(`[${story}][QUALITY][DETAIL] ${JSON.stringify({ tests: q.policy.testEvidence, execution: q.policy.executedTests, gates: q.policy.gates.map(g => ({ name: g.name, result: g.result, output: g.output?.slice(-1000) })), coverage: q.policy.coverage, integrity: q.policy.integrity })}`);
+      if (outcome.mismatch) note(`[${story}][QUALITY][MISMATCH] ${outcome.mismatch}`);
+      const qa = { code: outcome.code, out: JSON.stringify(q.policy) + String(policyRun.stderr ?? '') };
+      if (qa.code !== 0) note(`[${story}][QUALITY][DETAIL] ${JSON.stringify({ verdict: q.policy.verdict, why: q.policy.why, tests: q.policy.testEvidence, execution: q.policy.executedTests, gates: q.policy.gates.map(g => ({ name: g.name, result: g.result, output: g.output?.slice(-1000) })), coverage: q.policy.coverage, integrity: q.policy.integrity })}`);
       for (const gate of q.policy.gates ?? []) {
         if (gate.output != null) writeFileSync(resolve(logDir, `${story}-${gate.name}.log`), scrubLog(`# ${gate.command}\n${gate.output}`));
         if (['security', 'performance'].includes(gate.name)) {
@@ -1673,8 +1681,8 @@ function runQualityLoop(story) {
       } else {
         const failedGate = q.policy?.gates?.find(g => g.result === 'required-missing') ?? q.policy?.gates?.find(g => g.result !== 'pass');
         const classified = classifyQaFailure(failedGate?.output ?? qa.out);
-        const kind = q.policy?.integrity?.some(f => f.level === 'block') ? 'integrity' : q.policy?.executedTests?.result === 'not-verified' ? 'unit-evidence' : q.policy?.coverage && q.policy.coverage.result !== 'pass' ? 'coverage' : failedGate?.name ?? 'quality';
-        failure = { kind, signature: `${kind}:${failedGate?.script ?? ''}:${classified.kind === 'unknown' ? (q.policy?.verdict ?? 'not-verified') : classified.signature}`, excerpt: JSON.stringify({ gate: failedGate?.result, coverage: q.policy?.coverage, tests: q.policy?.testEvidence, execution: q.policy?.executedTests, integrity: q.policy?.integrity }) };
+        const kind = qualityFailureKind(q.policy, failedGate);
+        failure = { kind, signature: `${kind}:${failedGate?.script ?? ''}:${classified.kind === 'unknown' ? (q.policy?.verdict ?? 'not-verified') : classified.signature}`, excerpt: JSON.stringify({ gate: failedGate?.result, why: q.policy?.why, coverage: q.policy?.coverage, tests: q.policy?.testEvidence, execution: q.policy?.executedTests, integrity: q.policy?.integrity }) };
         q.failureKind = failure.kind;
       }
     } else {

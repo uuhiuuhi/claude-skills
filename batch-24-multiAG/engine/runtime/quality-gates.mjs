@@ -73,8 +73,10 @@ export function collectChanges(root, base = 'HEAD') {
 }
 
 export function fingerprint(root) {
-  const r = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8', windowsHide: true });
-  if (r.status !== 0) throw new Error('cannot fingerprint code');
+  // maxBuffer: spawnSync defaults to 1 MiB. The runner clone's tracked list reached 1,054,484 bytes → ENOBUFS → status null →
+  // 'cannot fingerprint code' on every story (2026-10-08 2-18 · 1-54 · 4-22 coverage::ready STOP). Same cap as collectChanges.
+  const r = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+  if (r.status !== 0) throw new Error(`cannot fingerprint code${r.error?.code ? ` (${r.error.code})` : ''}`);
   const h = createHash('sha256');
   for (const p of [...new Set(r.stdout.split('\0').filter(Boolean))].filter(p => !generated.test(p)).sort()) {
     h.update(p).update('\0');
@@ -204,8 +206,18 @@ export function apiAuthorizationVerdict(report, { nonce, codeFingerprint, endpoi
   return { result: scope.missing.length || !report.endpoints.length ? 'fail' : 'pass', missing: scope.missing, endpoints: report.endpoints };
 }
 
-export async function runQuality({ root = process.cwd(), base = 'HEAD', phase = 'worker', execute = executeGate } = {}) {
-  const started = Date.now(), changes = collectChanges(root, base), before = fingerprint(root);
+// A fingerprint failure is retried once, then reported as not-verified instead of throwing — a thrown error left no fresh
+// report behind and the engine re-read the previous one (2026-10-08). No gate runs without a code fingerprint.
+function tryFingerprint(fingerprintCode, root) {
+  let error;
+  for (let attempt = 0; attempt < 2; attempt++) { try { return { value: fingerprintCode(root) }; } catch (e) { error = e; } }
+  return { error: String(error?.message ?? error) };
+}
+
+export async function runQuality({ root = process.cwd(), base = 'HEAD', phase = 'worker', execute = executeGate, fingerprintCode = fingerprint } = {}) {
+  const started = Date.now(), changes = collectChanges(root, base), fp = tryFingerprint(fingerprintCode, root);
+  if (fp.error) return { schema: QUALITY_SCHEMA, generatedAt: new Date().toISOString(), phase, base: changes.base, codeFingerprint: null, gates: [], verdict: 'not-verified', why: fp.error, durationMs: Date.now() - started };
+  const before = fp.value;
   const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
   const cfgPath = resolve(root, 'tools/auto/quality.config.json');
   const config = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, 'utf8')) : {};
@@ -288,10 +300,36 @@ export async function runQuality({ root = process.cwd(), base = 'HEAD', phase = 
       }
     }
   }
-  const after = fingerprint(root); result.afterFingerprint = after;
+  const fpAfter = tryFingerprint(fingerprintCode, root);
+  if (fpAfter.error) { result.verdict = 'not-verified'; result.why = fpAfter.error; return finish(); }
+  const after = fpAfter.value; result.afterFingerprint = after;
   const complete = result.gates.length === plan.length && result.gates.every(g => g.result === 'pass') && result.coverage?.result === 'pass' && (phase === 'landing' || ((!risk.authDb || result.authorization?.result === 'pass') && (!risk.api || result.api?.result === 'pass'))) && before === after;
   result.verdict = complete ? 'ready' : 'not-ready';
   return finish();
+}
+
+// ---- Engine side (auto-story-pipeline): how the parent reads the child's report ----
+// The engine removes the report file before spawning the gate, so `report` here is either this run's report or null.
+// The verdict is the judgement; the process exit code is only a transport. They can disagree (a crash after the write,
+// a kill after the write); the verdict wins and the disagreement is surfaced as `mismatch`. A missing/unreadable
+// report is never GREEN — that path used to fall back to the previous run's file (2026-10-08 coverage::ready).
+export function qualityRunOutcome({ status, report, stderr = '' } = {}) {
+  if (!report || typeof report !== 'object' || Array.isArray(report)) {
+    const tail = String(stderr ?? '').trim().split(/\r?\n/).filter(Boolean).slice(-2).join(' | ').slice(0, 300);
+    return { code: 1, mismatch: null, policy: { verdict: 'not-verified', gates: [], why: `quality report missing (gate exit=${status})${tail ? `: ${tail}` : ''}` } };
+  }
+  const code = report.verdict === 'ready' ? 0 : 1;
+  const mismatch = (status === 0) === (code === 0) ? null : `gate exit=${status} but report verdict=${report.verdict} — verdict 를 따른다`;
+  return { code, mismatch, policy: { ...report, gates: Array.isArray(report.gates) ? report.gates : [] } };
+}
+
+// Failure family for repair signatures. `coverage.result === 'not-required'` (docs scope) is not a coverage failure.
+export function qualityFailureKind(policy, failedGate) {
+  if (policy?.integrity?.some?.(f => f.level === 'block')) return 'integrity';
+  if (policy?.executedTests?.result === 'not-verified') return 'unit-evidence';
+  const coverage = policy?.coverage?.result;
+  if (coverage && coverage !== 'pass' && coverage !== 'not-required') return 'coverage';
+  return failedGate?.name ?? 'quality';
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

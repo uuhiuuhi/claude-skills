@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { classifyRisk, changedCoverage, gatePlan, authorizationVerdict, runQuality, fingerprint, collectChanges, executeGate, executedTestVerdict, apiAuthorizationVerdict } from './quality-gates.mjs';
+import { classifyRisk, changedCoverage, gatePlan, authorizationVerdict, runQuality, fingerprint, collectChanges, executeGate, executedTestVerdict, apiAuthorizationVerdict, qualityRunOutcome, qualityFailureKind } from './quality-gates.mjs';
 import { testIntegrityFindings } from './quality-rules.mjs';
 import { readRecord } from './schema-migration.mjs';
 
@@ -286,3 +286,60 @@ test('authorization accepts an intentionally public endpoint only with a specifi
   assert.equal(authorizationVerdict({ nonce: 'fresh', codeFingerprint: 'fp', endpoints: [{ ...pub, publicReason: 'short' }] }, { nonce: 'fresh', codeFingerprint: 'fp', endpoints: scope }).result, 'fail');
   assert.equal(authorizationVerdict({ nonce: 'fresh', codeFingerprint: 'fp', endpoints: [{ ...pub, public: false }] }, { nonce: 'fresh', codeFingerprint: 'fp', endpoints: scope }).result, 'fail');
 })
+
+// ---- 2026-10-08 실사고: coverage::ready 반복 STOP (2-18 R5 · 1-54 · 4-22) ----
+// 러너 클론의 `git ls-files -z --cached --others` 출력이 1,054,484 바이트로 spawnSync 기본 maxBuffer(1 MiB)를 넘어
+// ENOBUFS → fingerprint() 가 'cannot fingerprint code' 를 던짐 → quality-gates CLI 가 보고서를 못 쓰고 exit 1 →
+// 파이프라인이 **어제의 docs/ready 보고서**를 다시 읽어 coverage.result 'not-required' !== 'pass' 로 coverage 실패로 분류했다.
+test('fingerprint: tracked file list over 1 MiB still fingerprints (ENOBUFS 실사고 2026-10-08)', t => {
+  const fx = fixture(t, { docs: true });
+  const blob = fx.git(['hash-object', '-w', '--stdin']);
+  const dir = 'd/' + 'x'.repeat(150);
+  const lines = Array.from({ length: 7000 }, (_, i) => `100644 ${blob}\t${dir}/f${i}.md`).join('\n') + '\n';
+  const r = spawnSync('git', ['update-index', '--index-info'], { cwd: fx.root, input: lines, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const size = spawnSync('git', ['ls-files', '-z', '--cached'], { cwd: fx.root, maxBuffer: 64 * 1024 * 1024 }).stdout.length;
+  assert.ok(size > 1024 * 1024, `fixture must exceed 1 MiB (got ${size})`);
+  assert.match(fingerprint(fx.root), /^[0-9a-f]{64}$/);
+});
+test('run boundary: fingerprint fails once → retried once → normal verdict', async t => {
+  const fx = fixture(t, { docs: true }); let n = 0;
+  const flaky = root => { if (n++ === 0) throw new Error('cannot fingerprint code'); return fingerprint(root); };
+  const r = await runQuality({ root: fx.root, execute: fake(fx, []), fingerprintCode: flaky });
+  assert.equal(r.verdict, 'ready'); assert.equal(n, 2);
+});
+test('run failure: fingerprint fails twice → not-verified report instead of an exception (no stale report)', async t => {
+  const fx = fixture(t); const calls = []; let n = 0;
+  const broken = () => { n++; throw new Error('cannot fingerprint code'); };
+  const r = await runQuality({ root: fx.root, execute: fake(fx, calls), fingerprintCode: broken });
+  assert.equal(r.verdict, 'not-verified'); assert.match(r.why, /cannot fingerprint code/); assert.equal(n, 2);
+  assert.deepEqual(calls, [], 'no gate runs without a code fingerprint');
+});
+test('outcome normal: fresh ready report with exit 0 is GREEN without mismatch', () => {
+  const o = qualityRunOutcome({ status: 0, report: { verdict: 'ready', gates: [] } });
+  assert.equal(o.code, 0); assert.equal(o.mismatch, null); assert.equal(o.policy.verdict, 'ready');
+});
+test('outcome boundary: ready report with non-zero exit trusts verdict and records the mismatch', () => {
+  const o = qualityRunOutcome({ status: 1, report: { verdict: 'ready', gates: [], coverage: { result: 'not-required' } } });
+  assert.equal(o.code, 0); assert.match(o.mismatch, /exit=1/); assert.match(o.mismatch, /verdict=ready/);
+  const killed = qualityRunOutcome({ status: null, report: { verdict: 'ready', gates: [] } });
+  assert.equal(killed.code, 0); assert.match(killed.mismatch, /exit=null/);
+});
+test('outcome failure: missing report is not-verified RED; not-ready with exit 0 stays RED', () => {
+  const missing = qualityRunOutcome({ status: 1, report: null, stderr: 'quality not-verified: cannot fingerprint code\n' });
+  assert.equal(missing.code, 1); assert.equal(missing.policy.verdict, 'not-verified'); assert.match(missing.policy.why, /cannot fingerprint code/);
+  const lying = qualityRunOutcome({ status: 0, report: { verdict: 'not-ready', gates: [] } });
+  assert.equal(lying.code, 1); assert.match(lying.mismatch, /verdict=not-ready/);
+  assert.equal(qualityRunOutcome({ status: 0, report: { verdict: 'not-verified', gates: [] } }).code, 1);
+  assert.equal(qualityRunOutcome({ status: 0, report: 'garbage' }).code, 1);
+});
+test('failure kind: coverage not-required is not a coverage failure; fail/not-verified still are', () => {
+  assert.notEqual(qualityFailureKind({ coverage: { result: 'not-required' } }, null), 'coverage');
+  assert.equal(qualityFailureKind({ coverage: { result: 'not-required' } }, { name: 'unit' }), 'unit');
+  assert.equal(qualityFailureKind({ coverage: { result: 'fail' } }, null), 'coverage');
+  assert.equal(qualityFailureKind({ coverage: { result: 'not-verified' } }, { name: 'coverage' }), 'coverage');
+  assert.equal(qualityFailureKind({ coverage: { result: 'pass' } }, { name: 'lint' }), 'lint');
+  assert.equal(qualityFailureKind({ integrity: [{ level: 'block' }], coverage: { result: 'fail' } }, null), 'integrity');
+  assert.equal(qualityFailureKind({ executedTests: { result: 'not-verified' }, coverage: { result: 'fail' } }, null), 'unit-evidence');
+  assert.equal(qualityFailureKind({ verdict: 'not-verified' }, null), 'quality');
+});
