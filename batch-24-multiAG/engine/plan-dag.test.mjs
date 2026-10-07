@@ -52,6 +52,8 @@ describe('[DAG] 위상 순서 · 간선', () => {
   it('선행 표기는 줄머리 라벨만 인정한다 — 본문에 스친 「선행」은 의존이 아니다', () => {
     assert.deepEqual(parseDependsOn('선행: 2.1, 11-3'), ['2-1', '11-3'])
     assert.deepEqual(parseDependsOn('- **선행 조건**: 4-6 완료 후'), ['4-6'])
+    // 2026-10-07 실사고: 설명에 섞인 날짜를 키로 읽어 unresolved-dep 가 났다 — 날짜·버전·4자리 수는 키가 아니다
+    assert.deepEqual(parseDependsOn('선행: 4-21 · 5-18 — 두 건이 review 에 도달한 뒤 돌렸다(2026-10-03) · v1.2.3 · 13-11'), ['4-21', '5-18', '13-11'])
     assert.deepEqual(parseDependsOn('depends-on: 2-9'), ['2-9'])
     assert.deepEqual(parseDependsOn('이 스토리는 2.1 의 선행 작업을 참고한다'), [])
     assert.deepEqual(parseDependsOn('선행: 없음'), [])
