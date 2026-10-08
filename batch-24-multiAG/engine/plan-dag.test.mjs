@@ -55,6 +55,9 @@ describe('[DAG] 위상 순서 · 간선', () => {
     // 2026-10-07 실사고: 설명에 섞인 날짜를 키로 읽어 unresolved-dep 가 났다 — 날짜·버전·4자리 수는 키가 아니다
     assert.deepEqual(parseDependsOn('선행: 4-21 · 5-18 — 두 건이 review 에 도달한 뒤 돌렸다(2026-10-03) · v1.2.3 · 13-11'), ['4-21', '5-18', '13-11'])
     assert.deepEqual(parseDependsOn('depends-on: 2-9'), ['2-9'])
+    // 2026-10-08: 파일 전체 이름(1.54·5.20 이 적은 꼴)도 읽는다 · 날짜·3단 번호는 여전히 아니다
+    assert.deepEqual(parseDependsOn('선행: 5-1-직출-장소-자동-채움.md · 4-22-근태-미리-채워-주기.md'), ['5-1', '4-22'])
+    assert.deepEqual(parseDependsOn('선행: 2-16-b 완료 후 (2026-10-03 · v1.2.3)'), ['2-16'])
     assert.deepEqual(parseDependsOn('이 스토리는 2.1 의 선행 작업을 참고한다'), [])
     assert.deepEqual(parseDependsOn('선행: 없음'), [])
     assert.equal(shortKey('2-16-티켓목록'), '2-16')
