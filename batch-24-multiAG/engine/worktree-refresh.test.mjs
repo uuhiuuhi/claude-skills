@@ -536,3 +536,49 @@ test('date-suffixed topic branches are never chain candidates (2026-09-20: 22h o
   assert.equal(second.inheritance.ref, 'origin/auto/2026-09-20')
   assert.equal(second.head, newer)
 })
+
+test('preserveStopLeftovers keeps a tracked file inside an ignored folder and is not fooled by CRLF warnings (2026-10-06~08: 40h · 191 slots stopped)', (t) => {
+  const f = fixture(t)
+  f.git('checkout', '-qb', branch)
+  // 실사고 재현: `_bmad-output/planning-artifacts/` 는 무시 폴더(info/exclude)지만 epics.md 는 추적 중이다.
+  f.write('_bmad-output/planning-artifacts/epics.md', '# Epics\n')
+  f.git('add', '-f', '--', '_bmad-output/planning-artifacts/epics.md')
+  f.git('commit', '-qm', 'track epics inside ignored folder')
+  f.write('.git/info/exclude', '_bmad-output/planning-artifacts/\n')
+  f.git('config', 'core.autocrlf', 'true') // LF 파일마다 「LF will be replaced by CRLF」 경고가 stderr 로 나온다
+  f.write('_bmad-output/planning-artifacts/epics.md', '# Epics\n\n### Story 22.5: new\n')
+  f.write('_bmad-output/implementation-artifacts/22-5-new.md', '# 22.5\n')
+  const r = preserveStopLeftovers({ cwd: f.cwd, label: 'AUTO-1: 22-4 (회수)', exitCode: 1 })
+  assert.equal(typeof r.committed, 'string', JSON.stringify(r))
+  assert.equal(r.entries, 2)
+  assert.deepEqual(f.git('show', '--name-only', '--format=', 'HEAD').split('\n').sort(),
+    ['_bmad-output/implementation-artifacts/22-5-new.md', '_bmad-output/planning-artifacts/epics.md'])
+  assert.equal(f.git('status', '--porcelain=v1', '--untracked-files=all'), '', 'nothing may stay staged or dirty')
+  f.run() // 다음 슬롯의 refresh 가 「unfinished changes preserved in place」 로 멈추지 않는다
+})
+
+test('preserveStopLeftovers failure unstages its own paths and reports the git error without warning noise', (t) => {
+  const f = fixture(t)
+  f.git('checkout', '-qb', branch)
+  f.write('story.md', 'leftover\n')
+  const runGit = (file, args, opts) => {
+    const a = args.slice(2); while (a[0] === '-c') a.splice(0, 2)
+    if (a[0] === 'commit') return { status: 1, stdout: '', stderr: "warning: in the working copy of 'story.md', LF will be replaced by CRLF the next time Git touches it\nfatal: unable to write index\n" }
+    return spawnSync(file, args, opts)
+  }
+  const r = preserveStopLeftovers({ cwd: f.cwd, label: 'x', exitCode: 1, runGit })
+  assert.equal(r.failed, 'commit: fatal: unable to write index (exit 1)')
+  assert.equal(f.git('diff', '--cached', '--name-only'), '', 'a failed preserve must not leave a half-staged index behind')
+})
+
+test('preserveStopLeftovers names the exit code even when git fails with an empty stderr (2026-10-08 12:29: 「add: 」 only)', (t) => {
+  const f = fixture(t)
+  f.git('checkout', '-qb', branch)
+  f.write('story.md', 'leftover\n')
+  const runGit = (file, args, opts) => {
+    const a = args.slice(2); while (a[0] === '-c') a.splice(0, 2)
+    if (a[0] === 'add') return { status: null, stdout: '', stderr: '', error: Object.assign(new Error('spawn'), { code: 'EPERM' }) }
+    return spawnSync(file, args, opts)
+  }
+  assert.equal(preserveStopLeftovers({ cwd: f.cwd, label: 'x', exitCode: 6, runGit }).failed, 'add: (exit null error EPERM)')
+})

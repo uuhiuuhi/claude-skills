@@ -256,6 +256,17 @@ export function stopBlocked(win, { total = BREAKER_WINDOW_TOTAL } = {}) {
   return Object.values(win.sigs ?? {}).some((n) => n >= 2)
 }
 
+/** 「워크트리 새로고침 중단」 연속 슬롯 스트릭 — 2026-10-06 19:30~10-08 11:30 슬롯 191회가 같은 이유로 멈추는 동안 알림 0건이었다.
+ *  상태 최상위에 두어 자정을 넘겨도 이어 센다(실사고가 이틀에 걸쳤다). 성공 슬롯이면 0 으로 되돌린다.
+ *  `after` 슬롯을 **넘겨**(기본 3번째부터) 이어지면 창(낮/밤)당 1회 알린다. */
+export const REFRESH_STALL_NOTIFY_AFTER = 2
+export function refreshStall(prev, { ok, at, winId, after = REFRESH_STALL_NOTIFY_AFTER }) {
+  if (ok) return { count: 0, notify: false }
+  const count = (prev?.count ?? 0) + 1
+  const notify = count > after && prev?.notifiedWin !== winId
+  return { count, since: prev?.since ?? at, notifiedWin: notify ? winId : prev?.notifiedWin, notify }
+}
+
 /** 하향 동기 충돌 처분 — 정본(main)→작업 브랜치 merge 의 충돌 파일 목록을 받아:
  *  'resolve' = 전부 로그·공유 장부 클래스 → landingResolution 계획으로 자동 해소(검증된 부품 재사용)
  *  'halt'    = 코드 파일 충돌 → merge 중단 + 이 라운드 휴면(자동으로 뭉개지 않는다).
