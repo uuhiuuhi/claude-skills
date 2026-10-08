@@ -239,8 +239,21 @@ function preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGi
   // Sol-high round 14 H1: porcelain names go back to git as pathspecs — `:(literal)` disables glob/magic so a file named
   // `[ab].txt` or `:(top)*` can never widen the selection past the filtered list (even after `--`).
   const specs = kept.map(literalPathspec)
-  const add = git(['add', '-A', '--', ...specs])
-  if (add.status !== 0) return { failed: `add: ${(add.stderr ?? '').trim()}`, denied }
+  // 2026-10-06~08 실사고(40시간 · 슬롯 191회 정지): 추적 중인 `_bmad-output/planning-artifacts/epics.md` 가 무시 폴더(info/exclude) 안에
+  // 있어 `git add -A -- <그 경로>` 가 「paths are ignored」로 non-zero 종료 → 나머지는 staged 로 남고 커밋 없이 끝나 다음 슬롯마다 refresh 가
+  // 거부했다. 추적 파일은 이미 저장소에 있으므로 `-f` 로 스테이징한다. 미추적 파일은 `-f` 없이 — status 는 무시된 미추적 파일을 애초에
+  // 나열하지 않으므로 `-f` 가 새 무시 파일을 끌어들이지 않는다. 빈 목록으로 add 를 부르면 트리 전체가 스테이징되므로 건너뛴다.
+  const ls = git(['ls-files', '-z', '--', ...specs])
+  if (ls.status !== 0) return { failed: `ls-files: ${gitError(ls)}`, denied }
+  const trackedSet = new Set((ls.stdout ?? '').split('\0').filter(Boolean))
+  const trackedSpecs = kept.filter((p) => trackedSet.has(p.replaceAll('\\', '/'))).map(literalPathspec)
+  const untrackedSpecs = specs.filter((s) => !trackedSpecs.includes(s))
+  // 성공 판정은 exit code 만 본다 — LF/CRLF 같은 warning 은 stderr 에 나와도 실패가 아니다(보고 문구에서만 걸러 낸다).
+  for (const [flags, list] of [[['-A', '-f'], trackedSpecs], [['-A'], untrackedSpecs]]) {
+    if (!list.length) continue
+    const add = git(['add', ...flags, '--', ...list])
+    if (add.status !== 0) { git(['reset', '-q', '--', ...specs]); return { failed: `add: ${gitError(add)}`, denied } }
+  }
   const staged = git(['diff', '--cached', '--unified=0', '--', ...specs])
   const secrets = secretHits(staged.stdout ?? '')
   if (secrets.length) {
@@ -249,9 +262,18 @@ function preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGi
   }
   const message = `chore(batch): STOP 잔여물 보존 — ${label || '(배치)'}${exitCode == null ? '' : ` (exit ${exitCode})`} · 워커가 본 트리에 남긴 미완 변경 ${kept.length}건${engineTracked.length ? ` · 엔진 사본 변경 ${engineTracked.length}건 되돌림(patch 보존)` : ''} · 다음 라운드/사람 검토 대상`
   const commit = git(['-c', 'core.editor=true', 'commit', '-q', '-m', message, '--', ...specs])
-  if (commit.status !== 0) return { failed: `commit: ${(commit.stderr ?? commit.stdout ?? '').trim()}`, denied }
+  if (commit.status !== 0) { git(['reset', '-q', '--', ...specs]); return { failed: `commit: ${gitError(commit)}`, denied } }
   const head = (git(['rev-parse', 'HEAD']).stdout ?? '').trim()
   return { committed: head, entries: kept.length, denied, message, engineReverted: engineTracked.length, enginePatch }
+}
+
+/** 실패 보고용 git 오류 문장 — `warning:`·`hint:` 줄(LF/CRLF 경고 등)은 빼고 실제 오류만 남긴다. 판정 근거는 아니다(exit code 가 판정).
+ *  종료 코드·spawn 오류는 항상 붙인다 — 2026-10-08 12:29 실사고는 stderr 가 비어 「add: 」만 남아 원인을 추적할 수 없었다. */
+function gitError(r) {
+  const lines = String(r.stderr || r.stdout || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  const real = lines.filter((l) => !/^(warning|hint):/i.test(l))
+  const why = `exit ${r.status ?? 'null'}${r.signal ? ` signal ${r.signal}` : ''}${r.error ? ` error ${r.error.code ?? r.error.message}` : ''}`
+  return [(real.length ? real : lines).join(' / '), `(${why})`].filter(Boolean).join(' ')
 }
 
 /** `git status --porcelain=v1 -z` → 경로 목록. rename/copy 레코드(`R  new\0old\0` · 대상 → 원본 순 — git-status 문서)는

@@ -48,7 +48,7 @@ import { parallelHazardsCompat } from './conflicts.mjs'
 import { appendJsonl, metricsHistoryPath, parseCodexUsage, parseEngineLog, renderMetricsTable, summarizeTimeline, writeJsonAtomic } from './metrics.mjs'
 import { makeClaudePlanRunner, requestPlan } from './orchestrate.mjs'
 import { buildDag, parseDependsOn } from './plan-dag.mjs'
-import { REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, LOG_PREFIX, shouldArchiveEvidence, evidenceLogKeep, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, LOG_PREFIX, shouldArchiveEvidence, evidenceLogKeep, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refreshStall, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = fileURLToPath(resolveAsf('auto-story-pipeline.mjs'))
 // mockup 단계가 든 배치는 목업 폴더(config mockupGate.mockupsDir · 기본 mockups)를 스토리 커밋에 함께 싣는다 —
@@ -581,6 +581,8 @@ if (autoPlan) {
     assertOperationalRuntime()
     if (!refreshed.skipped) {
       console.log(`워크트리 기준: ${refreshed.ref}`)
+      const { s, save } = loadState()
+      if (s.refreshStall?.count) { s.refreshStall = { count: 0 }; save() } // 새로고침 성공 — 연속 중단 스트릭 소거
       const inh = refreshed.inheritance
       if (inh) {
         const { day, save } = loadState()
@@ -597,17 +599,34 @@ if (autoPlan) {
   } catch (error) {
     // 👤 2026-09-08 동결 예외 ① — 핀 거부(exit 3)는 30분 슬롯이 무기한 반복하는데 알림이 없어 09-07 16:0x~09-08 10:35
     //    슬롯 36회(18시간) 무음 정지했다(11-4 워커의 엔진 수정이 STOP 잔여물로 실려 tools/auto ≠ 핀). 창당 1회만 알린다.
+    let pinNotified = false
     if (!dryRun && /runtime pin|tooling/i.test(String(error?.message ?? ''))) {
       try {
         const { day, save } = loadState(); const winId = stopWindowId(new Date()); day.notified ??= {}
         if (day.notified.pinRefused !== winId) {
           notify('러너 정지 — 런타임 핀 불일치', `${error.message}
 슬롯이 시작하지 못한다(exit 3 · 30분마다 반복). tools/auto 를 핀 커밋과 맞추거나 <stateDir>/runtime-pin.json 을 검토된 커밋으로 재기록할 것.`)
-          day.notified.pinRefused = winId; save()
+          day.notified.pinRefused = winId; save(); pinNotified = true
         }
       } catch { /* 알림 실패가 종료 코드(3)를 바꾸지 않게 */ }
     }
-    fail(`워크트리 새로고침 중단 — ${error.message}`, 3)
+    // 2026-10-06 19:30~10-08 11:30 실사고: 「unfinished changes preserved」 로 슬롯 191회(40시간)가 멈추는 동안 알림 0건.
+    // 원인을 가리지 않고 새로고침 중단이 2슬롯을 넘겨 이어지면 창당 1회 알린다(스트릭은 자정을 넘겨 이어 센다).
+    if (!dryRun) {
+      try {
+        const { s, save } = loadState()
+        const st = refreshStall(s.refreshStall, { ok: false, at: new Date().toISOString(), winId: stopWindowId(new Date()) })
+        s.refreshStall = { count: st.count, since: st.since, notifiedWin: st.notifiedWin }; save()
+        if (st.notify && !pinNotified) {
+          notify(`러너 정지 — 워크트리 새로고침 중단 ${st.count}슬롯 연속`, `${error.message}
+${st.since} 부터 슬롯이 시작하지 못한다(exit 3 · 30분마다 반복). 러너 클론의 git status 를 사람이 확인할 것(잔여물이면 auto/* 에 보존 커밋).`,
+            `새로고침 중단 ${st.count}슬롯 연속 — 러너 정지. ${NTFY_BRIEF}`)
+        }
+      } catch { /* 알림 실패가 종료 코드(3)를 바꾸지 않게 */ }
+    }
+    // fail() 은 즉시 process.exit 이라 위 알림 fetch 가 잘린다 — 같은 문구를 내고 shutdown 으로 배출 뒤 종료한다.
+    console.error(`✖ 워크트리 새로고침 중단 — ${error.message}`)
+    await shutdown(3)
   }
 
   // ③ 연속 중단 차단기 v2 — 「원인 서명」(exit 코드 + 배치 라벨) 2회만 차단하고 **다른 원인은
@@ -1812,8 +1831,15 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
         else if (!archive) record(`- 증거 보관 생략(한도 exit 5 · 로그 밖 변경 0 — 잔여물 보존 커밋이 트리를 지킨다)`)
         const kept = preserveStopLeftovers({ label, exitCode: code, dryRun })
         if (kept?.committed) record(`- STOP 잔여물 보존 커밋: ${kept.committed.slice(0, 12)} (${kept.entries}건${kept.denied?.length ? ` · 금지 경로 ${kept.denied.length}건은 미커밋` : ''})`)
-        else if (kept?.failed) record(`⚠ STOP 잔여물 보존 실패 — ${kept.failed}. 다음 슬롯이 refresh 에서 멈추면 사람이 트리를 검토할 것`)
-        else if (kept?.skipped && kept.skipped !== 'clean') record(`⚠ STOP 잔여물 보존 건너뜀 — ${kept.skipped}${kept.branch ? `(${kept.branch})` : ''}`)
+        else if (kept?.failed) {
+          // 2026-10-06 실사고: 실패를 기록만 하고 다음 배치를 계속 돌려 dirty 트리 위에 STOP 이 겹쳤고, 이후 슬롯 191회가 무음으로 멈췄다.
+          // 보존 실패는 1급 경보 — 즉시 알리고 이 라운드의 남은 배치를 돌리지 않는다(다음 슬롯도 refresh 에서 멈추므로 재시도는 헛돈다).
+          record(`⚠ STOP 잔여물 보존 실패 — ${kept.failed}. 남은 배치 중단 · 사람이 러너 클론 트리를 검토할 것`)
+          notify('러너 정지 — STOP 잔여물 보존 실패', `${label} (exit ${code})\n${kept.failed}\n러너 클론에 미완 변경이 남아 다음 슬롯부터 시작하지 못한다. git status 를 확인하고 auto/* 에 보존 커밋할 것.`,
+            `STOP 잔여물 보존 실패 — 러너 정지(사람 확인 필요). ${NTFY_BRIEF}`)
+          record(`- 남은 배치는 실행하지 않았다 — 잔여물 보존 실패(1급 경보)`)
+          break
+        } else if (kept?.skipped && kept.skipped !== 'clean') record(`⚠ STOP 잔여물 보존 건너뜀 — ${kept.skipped}${kept.branch ? `(${kept.branch})` : ''}`)
       }
       // 리뷰 대기(exit 8)는 고장이 아니다 — 잔여물은 위에서 보존했고, 남은 배치는 계속 돈다(👤 2026-09-07 · 동결 예외).
       if (isReviewPendingExit(code)) continue
