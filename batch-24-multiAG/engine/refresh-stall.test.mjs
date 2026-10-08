@@ -31,5 +31,5 @@ test('run-night wires the refresh-stall alert and the STOP-preserve failure alar
   assert.ok(failedAt > 0, 'preserve failure must be its own branch')
   const branch = src.slice(failedAt, src.indexOf('} else if (kept?.skipped', failedAt))
   assert.match(branch, /notify\('러너 정지 — STOP 잔여물 보존 실패'/)
-  assert.match(branch, /\n\s*break\n/, 'preserve failure must stop the remaining batches')
+  assert.match(branch, /\r?\n\s*break\r?\n/, 'preserve failure must stop the remaining batches')
 })
