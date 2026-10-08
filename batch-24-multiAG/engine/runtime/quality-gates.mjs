@@ -329,6 +329,10 @@ export function qualityFailureKind(policy, failedGate) {
   if (policy?.executedTests?.result === 'not-verified') return 'unit-evidence';
   const coverage = policy?.coverage?.result;
   if (coverage && coverage !== 'pass' && coverage !== 'not-required') return 'coverage';
+  // 2026-10-08 5-21 실사고: 모든 게이트 pass 인데 authorization 이 not-verified(실DB 권한 보고서 없음 — 워커에 .env.local 부재)여서
+  // verdict not-ready 인데 신호가 `quality::lint::` 로 찍혀 수리 워커가 lint 를 세 번 고치고 STOP 했다. 진짜 원인을 이름으로 돌려준다.
+  if (policy?.authorization?.result && policy.authorization.result !== 'pass') return 'authorization';
+  if (policy?.api?.result && policy.api.result !== 'pass') return 'api';
   return failedGate?.name ?? 'quality';
 }
 

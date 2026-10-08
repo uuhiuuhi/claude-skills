@@ -336,6 +336,10 @@ test('outcome failure: missing report is not-verified RED; not-ready with exit 0
 test('failure kind: coverage not-required is not a coverage failure; fail/not-verified still are', () => {
   assert.notEqual(qualityFailureKind({ coverage: { result: 'not-required' } }, null), 'coverage');
   assert.equal(qualityFailureKind({ coverage: { result: 'not-required' } }, { name: 'unit' }), 'unit');
+  // 2026-10-08: 게이트 전부 pass 인데 권한 보고서가 not-verified 면 원인 이름은 authorization 이다(lint 로 오표기 금지)
+  assert.equal(qualityFailureKind({ coverage: { result: 'pass' }, authorization: { result: 'not-verified' }, gates: [{ name: 'lint', result: 'pass' }] }, undefined), 'authorization');
+  assert.equal(qualityFailureKind({ coverage: { result: 'pass' }, api: { result: 'fail' } }, undefined), 'api');
+  assert.equal(qualityFailureKind({ coverage: { result: 'pass' }, authorization: { result: 'pass' } }, { name: 'unit' }), 'unit');
   assert.equal(qualityFailureKind({ coverage: { result: 'fail' } }, null), 'coverage');
   assert.equal(qualityFailureKind({ coverage: { result: 'not-verified' } }, { name: 'coverage' }), 'coverage');
   assert.equal(qualityFailureKind({ coverage: { result: 'pass' } }, { name: 'lint' }), 'lint');
