@@ -22,9 +22,9 @@
 // 원자 선점으로 · #11 `.env` 격리·복원 fail-closed(중첩 디렉터리 포함) · #12 「미열람 clean」을 실제 열람 증거로
 // 판정 · #8 마스킹 강화 + 민감 파일 diff 섹션 제거.
 import { spawn as spawnChild, spawnSync } from 'node:child_process'
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { assertSafeConfig, assertSafeModel, assertSafePath, spawnSafe, UnsafeArgumentError } from './spawn-safe.mjs'
 import { FOREIGN_MARK_RE, foreignScopeBrief } from '../review-scope.mjs'
 
@@ -277,11 +277,53 @@ export function collectSensitiveFiles(cwd, { skipDirs = ENV_SCAN_SKIP_DIRS, sens
 /** 하위 호환 별칭 — 종전 이름(`.env` 전용 시절)을 쓰는 호출부를 깨지 않는다. */
 export const collectEnvFiles = collectSensitiveFiles
 
+const ORIGIN_MARK = '.hold-origin'
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true } catch (e) { return e?.code === 'EPERM' } }
+
+/** 2026-10-08 실사고(BaroOS 10-03~10-08): Codex 실행 중 워커가 죽으면(한도 정지 · 경계 정지 · 강제 종료) `restoreEnvFiles` 가 못 돌아
+ *  `.env.local` 이 보관 폴더에 고아로 남고, 그 뒤 모든 실DB·권한 검사가 「건너뜀」으로 돈다(품질 게이트가 비는데 초록 · 5-21 은 권한 보고서
+ *  부재로 not-ready 반복). 다음 격리 전에 **죽은 PID 의 보관 폴더 중 출처가 이 cwd 인 것**만 되돌린다 — 출처 표식이 없는 옛 보관본은 어느
+ *  프로젝트 것인지 알 수 없어 손대지 않는다(기록만). 반환 { recovered: [rel…], stale: [holdDir…] }. */
+export function recoverOrphanedHolds(cwd, { holdRoot = join(tmpdir(), 'auto-story-codex-env-hold') } = {}) {
+  const recovered = []
+  const stale = []
+  let dirs
+  try { dirs = readdirSync(holdRoot) } catch { return { recovered, stale } }
+  for (const d of dirs) {
+    const m = /^(\d+)-(\d+)$/.exec(d)
+    if (!m) continue
+    const pid = Number(m[1])
+    if (pid === process.pid || pidAlive(pid)) continue
+    const holdDir = join(holdRoot, d)
+    let origin = null
+    try { origin = readFileSync(join(holdDir, ORIGIN_MARK), 'utf8').trim() } catch { /* 표식 없음 = 옛 보관본 */ }
+    if (origin !== resolve(cwd)) { stale.push(holdDir); continue }
+    const walk = (dir, rel) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const r = rel ? `${rel}/${e.name}` : e.name
+        if (e.isDirectory()) { walk(join(dir, e.name), r); continue }
+        if (r === ORIGIN_MARK) continue
+        const dst = join(cwd, ...r.split('/'))
+        if (existsSync(dst)) continue // 새로 생긴 파일이 우선 — 보관본은 남긴다
+        try { mkdirSync(dirname(dst), { recursive: true }); renameSync(join(dir, e.name), dst); recovered.push(r) } catch { /* 다음 기회 */ }
+      }
+    }
+    try { walk(holdDir, '') } catch { /* 폴더가 사라졌거나 잠김 */ }
+    try {
+      const left = readdirSync(holdDir).filter((n) => n !== ORIGIN_MARK)
+      if (!left.length) rmSync(holdDir, { recursive: true, force: true })
+    } catch { /* 남아도 무해 */ }
+  }
+  return { recovered, stale }
+}
+
 export function hideSensitiveFiles(cwd, { holdRoot = join(tmpdir(), 'auto-story-codex-env-hold'), files = null } = {}) {
+  const orphans = recoverOrphanedHolds(cwd, { holdRoot })
   const names = files ?? collectSensitiveFiles(cwd)
-  if (names.length === 0) return { moved: [], holdDir: null }
+  if (names.length === 0) return { moved: [], holdDir: null, orphans }
   const holdDir = join(holdRoot, `${process.pid}-${Date.now()}`)
   mkdirSync(holdDir, { recursive: true })
+  try { writeFileSync(join(holdDir, ORIGIN_MARK), resolve(cwd)) } catch { /* 표식 실패 = 이 보관본은 자동 회수 대상에서 빠질 뿐 */ }
   const moved = []
   for (const n of names) {
     const dest = join(holdDir, ...n.split('/'))
@@ -302,7 +344,7 @@ export function hideSensitiveFiles(cwd, { holdRoot = join(tmpdir(), 'auto-story-
         { file: n, holdDir, moved, rollbackErrors })
     }
   }
-  return { moved, holdDir }
+  return { moved, holdDir, orphans }
 }
 
 /** 하위 호환 별칭 — 종전 이름. */

@@ -1352,7 +1352,11 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   const detachSharedLink = (dir) => {
     const link = join(dir, 'node_modules')
     let st
-    try { st = lstatSync(link) } catch { return true } // 없음 = 무해
+    try { st = lstatSync(link) } catch (e) {
+      if (e?.code === 'ENOENT') return true // 없음 = 무해
+      record(`· 워크트리 정리 보류 — node_modules 링크 조회 실패(${e?.code ?? 'unknown'}) · 있는지 모르는 링크를 따라 지울 수 없어 ${dir} 삭제를 건너뜀(4-24 리뷰 5범주 · EACCES/EPERM)`)
+      return false
+    }
     if (!st.isSymbolicLink()) return true
     try { unlinkSync(link); return true } catch (e) {
       record(`· 워크트리 정리 보류 — node_modules 링크 해제 실패(${e?.code ?? 'unknown'}) · 공유 폴더 보호를 위해 ${dir} 삭제를 건너뜀(다음 라운드 재시도)`)
