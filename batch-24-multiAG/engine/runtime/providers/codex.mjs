@@ -287,7 +287,7 @@ const pidAlive = (pid) => { try { process.kill(pid, 0); return true } catch (e) 
 export function recoverOrphanedHolds(cwd, { holdRoot = join(tmpdir(), 'auto-story-codex-env-hold') } = {}) {
   const recovered = []
   const stale = []
-  let dirs = []
+  let dirs
   try { dirs = readdirSync(holdRoot) } catch { return { recovered, stale } }
   for (const d of dirs) {
     const m = /^(\d+)-(\d+)$/.exec(d)
