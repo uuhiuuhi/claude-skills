@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { affectedModules, GENERATED_CHANGE, inside, readConfig, capabilities, assertRunEvidence, selectAffected, runAdapter, validateSkipPolicy, evaluateSkip, withProjectEnvFile, loadTypeScript, analyzeSource, resolvesImport } from './vitest-quality.mjs';
+import { affectedModules, GENERATED_CHANGE, inside, readConfig, capabilities, assertRunEvidence, selectAffected, runAdapter, validateSkipPolicy, evaluateSkip, withProjectEnvFile, loadTypeScript, analyzeSource, resolvesImport, testTouched, diffHunks, touchedByDiff } from './vitest-quality.mjs';
 
 const dependencies = { vitest: '4.1.10', '@vitest/coverage-v8': '4.1.10' };
 const adapter = fileURLToPath(new URL('./vitest-quality.mjs', import.meta.url));
@@ -235,7 +235,7 @@ test('skip decisions: unlisted, required, unknown change scope, affected module,
     { file: 'tests/db/live.test.js', test: 'required one', category: 'required-missing', kind: 'stale-static-skip', rationale: 'QA account exists; test still it.skip' },
   ]);
   // Vitest reports `suite > … > name`; a covering test may be named by its own name or its full name.
-  const scope = (files = [], reasons = []) => ({ modules: new Set(files), all: reasons.length > 0, reasons });
+  const scope = (files = [], reasons = [], over = {}) => ({ modules: new Set(files), all: reasons.length > 0, reasons, ...over });
   const ctx = (over = {}) => ({ env: {}, passed: new Set(['tests/db/anon.test.js\0anon suite > anon baseline']), affected: scope(), ...over });
   const at = (name, over = {}) => ({ file: 'tests/db/live.test.js', name, state: 'skipped', ...over });
   assert.equal(evaluateSkip(at('unarmed probe'), policy, ctx()).verdict, 'approved');
@@ -243,6 +243,17 @@ test('skip decisions: unlisted, required, unknown change scope, affected module,
   assert.match(evaluateSkip(at('required one'), policy, ctx()).reason, /required-missing/);
   assert.match(evaluateSkip(at('unarmed probe'), policy, ctx({ affected: null })).reason, /change scope unknown/);
   assert.match(evaluateSkip(at('unarmed probe'), policy, ctx({ affected: scope(['tests/db/live.test.js']) })).reason, /affected by the change/);
+  // 2026-10-10: the test module itself was edited (tests appended) and nothing changed maps to it → the skipped test's block decides.
+  const direct = (touched) => scope(['tests/db/live.test.js'], [], { direct: new Set(['tests/db/live.test.js']), transitive: new Set(), touched: () => touched });
+  const untouched = evaluateSkip(at('unarmed probe'), policy, ctx({ affected: direct(false) }));
+  assert.equal(untouched.verdict, 'approved');
+  assert.match(untouched.reason, /outside the diff/);
+  assert.match(evaluateSkip(at('unarmed probe'), policy, ctx({ affected: direct(true) })).reason, /lies in the edited lines/);
+  // No diff probe wired (older caller) → conservative block; a transitively affected module blocks even when the block is untouched.
+  assert.match(evaluateSkip(at('unarmed probe'), policy, ctx({ affected: scope(['tests/db/live.test.js'], [], { direct: new Set(['tests/db/live.test.js']), transitive: new Set() }) })).reason, /affected by the change/);
+  assert.match(evaluateSkip(at('unarmed probe'), policy, ctx({ affected: scope(['tests/db/live.test.js'], [], { direct: new Set(['tests/db/live.test.js']), transitive: new Set(['tests/db/live.test.js']), touched: () => false }) })).reason, /affected by the change/);
+  // Evidence still decides after the module tolerance: a covering test that did not pass keeps blocking.
+  assert.match(evaluateSkip(at('covered duplicate'), policy, ctx({ affected: direct(false), passed: new Set() })).reason, /covering test did not pass/);
   assert.match(evaluateSkip(at('unarmed probe'), policy, ctx({ affected: scope([], ['non-JavaScript change cannot be mapped: supabase/migrations/x.sql']) })).reason, /cannot be mapped to integration modules \(non-JavaScript change cannot be mapped: supabase\/migrations\/x\.sql\)/);
   // Arming follows the project's probes: any non-empty value except '0'/'false' arms — 'off', 'no', '00' are armed.
   for (const value of ['1', 'true', 'yes', 'on', 'off', 'no', '00', ' x ']) assert.match(evaluateSkip(at('unarmed probe'), policy, ctx({ env: { QA_PROBE_ARMED: value } })).reason, /is armed/, value);
@@ -305,16 +316,36 @@ test('real Vitest integration with a reviewed policy: approved optional skip lan
   const armed = cli(root, 'integration', { ...base, BATCH_BASE: 'HEAD', BATCH_CHANGED_FILES: '["src/math.js"]', QA_LOCAL_PROBE_ARMED: '1' });
   assert.notEqual(armed.status, 0);
   assert.match(armed.stderr, /QA_LOCAL_PROBE_ARMED is armed/);
-  // 4. the change touches the skipped test's own module → optional tolerance denied
+  // 4. the change is the skipped test's own module. 2026-10-10: tests appended elsewhere in the file keep the tolerance
+  //    (the skipped test's block lies outside the diff); editing the skipped test itself still denies it.
+  const multiline = ['import { test, expect } from "vitest";', 'const armed = process.env.QA_LOCAL_PROBE_ARMED;', 'test("live read", () => {', '  expect(1).toBe(1);', '});', 'test.skip("unarmed write probe", () => {', '  expect(armed).toBe("1");', '});', ''].join('\n');
+  writeFileSync(join(root, 'tests/db/live.test.js'), multiline);
+  for (const args of [['add', 'tests/db/live.test.js'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'multiline probe']]) {
+    const r = spawnSync('git', args, { cwd: root, windowsHide: true, encoding: 'utf8' });
+    assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  }
+  writeFileSync(join(root, 'tests/db/live.test.js'), multiline + ['test("appended read", () => {', '  expect(3).toBe(3);', '});', ''].join('\n'));
+  const appended = cli(root, 'integration', { ...base, BATCH_BASE: 'HEAD', BATCH_CHANGED_FILES: '["tests/db/live.test.js"]' });
+  assert.equal(appended.status, 0, appended.stdout + appended.stderr);
+  assert.match(appended.stdout, /"approvedOptional":\[\{"file":"tests\/db\/live\.test\.js","test":"unarmed write probe"/);
+  assert.match(appended.stdout, /outside the diff/);
+  writeFileSync(join(root, 'tests/db/live.test.js'), multiline.replace('expect(armed).toBe("1")', 'expect(armed).toBe("yes")'));
   const affected = cli(root, 'integration', { ...base, BATCH_BASE: 'HEAD', BATCH_CHANGED_FILES: '["tests/db/live.test.js"]' });
   assert.notEqual(affected.status, 0);
-  assert.match(affected.stderr, /affected by the change/);
+  assert.match(affected.stderr, /affected by the change[^\n]*lies in the edited lines/);
+  // A declared module change with no diff at all (the file equals the base) is not a touch either — the diff decides, not the list.
+  writeFileSync(join(root, 'tests/db/live.test.js'), multiline);
+  const nodiff = cli(root, 'integration', { ...base, BATCH_BASE: 'HEAD', BATCH_CHANGED_FILES: '["tests/db/live.test.js"]' });
+  assert.equal(nodiff.status, 0, nodiff.stdout + nodiff.stderr);
   // 5. a non-JavaScript change (SQL migration, the policy file itself) cannot be mapped → all optional tolerance denied
-  for (const file of ['supabase/migrations/20260906_security.sql', 'quality-adapter.config.json', 'package.json', 'tools/migrate/samples/billing/contracts.jsonl', 'tests/db/fixtures/rows.csv', 'docs/samples/contracts.jsonl', '_bmad-output/seed.json']) {
+  for (const file of ['supabase/migrations/20260906_security.sql', 'quality-adapter.config.json', 'package.json', 'tools/migrate/samples/billing/contracts.jsonl', 'tests/db/fixtures/rows.csv', 'docs/samples/contracts.jsonl']) {
     const r = cli(root, 'integration', { ...base, BATCH_BASE: 'HEAD', BATCH_CHANGED_FILES: JSON.stringify(['src/math.js', file]) });
     assert.notEqual(r.status, 0, file);
     assert.match(r.stderr, /cannot be mapped to integration modules \(non-JavaScript change cannot be mapped: /, file);
   }
+  // 5a. an engine artifact nothing maps to (GENERATED_CHANGE, 2026-09-28) is ignored — the tolerance stays (expectation was stale until 2026-10-10).
+  const artifact = cli(root, 'integration', { ...base, BATCH_BASE: 'HEAD', BATCH_CHANGED_FILES: JSON.stringify(['src/math.js', '_bmad-output/seed.json']) });
+  assert.equal(artifact.status, 0, artifact.stdout + artifact.stderr);
   // 5b. a non-JavaScript executable referenced by a test module (guard test naming the migration) maps to that module — tolerance kept
   writeFileSync(join(root, 'tests/db/guard.test.js'), 'import { test, expect } from "vitest"; test("guard 20260906_security",()=>expect("supabase/migrations/20260906_security.sql").toContain("20260906_security"));');
   const guarded = cli(root, 'integration', { ...base, BATCH_BASE: 'HEAD', BATCH_CHANGED_FILES: JSON.stringify(['src/math.js', 'supabase/migrations/20260906_security.sql']) });
@@ -410,12 +441,17 @@ test('change scope: engine artifacts nothing maps to are ignored; mapped artifac
   ];
   // The 2026-09-27 landing shape: evidence files only → no reason, tolerance stays available.
   const onlyArtifacts = await affectedModules(ctx, root, artifacts);
-  assert.deepEqual(onlyArtifacts, { modules: new Set(), all: false, reasons: [] });
+  assert.deepEqual(onlyArtifacts, { modules: new Set(), all: false, reasons: [], direct: new Set(), transitive: new Set() });
   assert.equal(ctx.config.related, undefined);
   // An artifact a test names (non-JavaScript) or imports (JavaScript) still affects that test — never silently dropped.
   const named = await affectedModules(ctx, root, ['_bmad-output/implementation-artifacts/sprint-status.yaml', '_bmad-output/tools/imported-helper.mjs']);
   assert.deepEqual([...named.modules].sort(), ['tests/db/ledger-guard.test.js', 'tests/db/uses-helper.test.js']);
   assert.equal(named.all, false);
+  assert.deepEqual([...named.transitive].sort(), ['tests/db/ledger-guard.test.js', 'tests/db/uses-helper.test.js']);
+  assert.equal(named.direct.size, 0);
+  const edited = await affectedModules(ctx, root, ['tests/db/live.test.js', '_bmad-output/tools/imported-helper.mjs']);
+  assert.deepEqual([...edited.direct], ['tests/db/live.test.js']);
+  assert.deepEqual([...edited.transitive], ['tests/db/uses-helper.test.js']);
   // Real code keeps failing closed — artifacts beside it do not launder it.
   const mixed = await affectedModules(ctx, root, [...artifacts, 'src/orphan.js', 'supabase/migrations/20990101000000_x.sql', 'package.json']);
   assert.equal(mixed.all, true);
@@ -430,4 +466,50 @@ test('change scope pattern stays identical to the quality gate judgement exclusi
   const gate = readFileSync(resolve(fileURLToPath(new URL('.', import.meta.url)), '../engine/runtime/quality-gates.mjs'), 'utf8');
   const declared = /const generated = (\/.*\/);/.exec(gate)?.[1];
   assert.equal(declared, String(GENERATED_CHANGE));
+});
+
+test('skipped-test block location: only hunks inside the named test count as touching it; unlocatable tests stay touched', () => {
+  const content = [
+    "describe('suite', () => {",
+    "  it('first one', async () => {",
+    "    await run();",
+    "    expect(1).toBe(1);",
+    "  });",
+    "",
+    "  it(",
+    "    'second one with a long name',",
+    "    async (ctx) => {",
+    "      ctx.skip();",
+    "    },",
+    "  );",
+    "  it('third one', () => {});",
+    "});",
+  ].join('\n');
+  assert.equal(testTouched(content, [[13, 13]], 'first one'), false);          // hunk on the third test only
+  assert.equal(testTouched(content, [[3, 4]], 'first one'), true);             // body of the first test edited
+  assert.equal(testTouched(content, [[5, 5]], 'first one'), true);             // its closing line
+  assert.equal(testTouched(content, [[10, 10]], 'second one with a long name'), true); // multi-line it( — opener on the previous line
+  assert.equal(testTouched(content, [[6, 6]], 'second one with a long name'), false);  // blank line between tests
+  assert.equal(testTouched(content, [[13, 13]], 'second one with a long name'), false);
+  assert.equal(testTouched(content, [[2, 2]], 'nobody'), true);                // not found → conservative
+  assert.equal(testTouched(content, null, 'first one'), true);                 // diff unavailable → conservative
+  assert.equal(testTouched(content, [], 'first one'), false);                  // no hunks at all
+});
+
+test('diff hunks against a base commit come back as new-file line ranges and feed the memoized touched() probe', t => {
+  const root = fixture(t);
+  const git = (...args) => { const r = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true }); assert.equal(r.status, 0, r.stderr); return r.stdout; };
+  git('init', '-q'); git('config', 'user.email', 'x@y'); git('config', 'user.name', 'x'); git('config', 'commit.gpgsign', 'false');
+  mkdirSync(join(root, 'tests/db'), { recursive: true });
+  const before = ["it('a', () => {", "  one();", "});", "it('b', () => {", "  two();", "});", ''].join('\n');
+  writeFileSync(join(root, 'tests/db/live.test.js'), before);
+  git('add', '.'); git('commit', '-q', '-m', 'base');
+  const after = ["it('a', () => {", "  one();", "});", "it('b', () => {", "  two();", "});", "it('c', () => {", "  three();", "});", ''].join('\n');
+  writeFileSync(join(root, 'tests/db/live.test.js'), after);
+  assert.deepEqual(diffHunks(root, 'HEAD', 'tests/db/live.test.js'), [[7, 9]]);
+  const touched = touchedByDiff(root, 'HEAD');
+  assert.equal(touched('tests/db/live.test.js', 'a'), false);
+  assert.equal(touched('tests/db/live.test.js', 'c'), true);
+  assert.equal(touched('tests/db/missing.test.js', 'a'), true);
+  assert.equal(diffHunks(root, 'no-such-base', 'tests/db/live.test.js'), null);
 });

@@ -205,13 +205,75 @@ export function evaluateSkip({ file, name, note, state }, policy, { env = {}, pa
   if (entry.category !== 'optional-not-applicable') return block(`${entry.category}: ${entry.rationale}`);
   if (affected === null) return block('optional-not-applicable but change scope unknown (BATCH_BASE/BATCH_CHANGED_FILES missing) — optional tolerance applies only to landing runs');
   if (affected.all) return block(`optional-not-applicable but the landing change cannot be mapped to integration modules (${affected.reasons.join('; ')}) — optional tolerance denied`);
-  if (affected.modules.has(file)) return block('optional-not-applicable but its module is affected by the change under landing');
+  let editedElsewhere = false;
+  if (affected.modules.has(file)) {
+    // 2026-10-10: a story that only APPENDS tests to a shared integration module (tests/db/authed.test.ts, 5k lines) must not be
+    // denied by that module's pre-existing approved skips. The module counts as affected only through the direct edit (no
+    // changed source maps to it), and the skipped test's own block lies outside the diff → the skip's reason is unchanged.
+    // A transitively affected module (changed source it exercises) or a skipped test whose block was edited still blocks
+    // (2026-09-28 4.16: the story fixed exactly the test that was skipped — the gate was right).
+    const directOnly = affected.direct instanceof Set && affected.direct.has(file) && !(affected.transitive instanceof Set && affected.transitive.has(file));
+    const touched = directOnly && typeof affected.touched === 'function' ? affected.touched(file, name) : true;
+    if (touched !== false) return block(`optional-not-applicable but its module is affected by the change under landing${directOnly ? ' (the skipped test itself lies in the edited lines)' : ''}`);
+    editedElsewhere = true;
+  }
   if (entry.note !== undefined && !(typeof note === 'string' && note.includes(entry.note))) return block(`skip note does not match the reviewed note (${entry.note})`);
   const ev = entry.evidence ?? {};
   if (ev.coveredBy !== undefined && !coveringPassed(passed, ev.coveredBy)) return block(`covering test did not pass in this run: ${ev.coveredBy.file} > ${ev.coveredBy.test}`);
   if (ev.envMissing !== undefined) { const present = ev.envMissing.filter(key => env[key]?.trim()); if (present.length) return block(`environment provides ${present.join(', ')} — the test should run`); }
   if (ev.envNotArmed !== undefined && armed(env[ev.envNotArmed])) return block(`${ev.envNotArmed} is armed — the probe should run`);
-  return { verdict: 'approved', reason: `${entry.kind}: ${entry.rationale}`, entry };
+  return { verdict: 'approved', reason: `${entry.kind}: ${entry.rationale}${editedElsewhere ? ' (module edited directly; this skipped test lies outside the diff)' : ''}`, entry };
+}
+
+/** Unified-diff hunks of one file against `base` as new-file line ranges `[start, end]` (1-based, inclusive). A pure deletion
+ * at line N is recorded as [N, N+1] so a test whose body lost lines still counts as touched. */
+export function diffHunks(root, base, file) {
+  const git = spawnSync('git', ['diff', '-U0', '--no-color', base, '--', file], { cwd: root, encoding: 'utf8', windowsHide: true });
+  if (git.status !== 0) return null;
+  const ranges = [];
+  for (const line of git.stdout.split(/\r?\n/)) {
+    const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (!m) continue;
+    const start = Number(m[1]), count = m[2] === undefined ? 1 : Number(m[2]);
+    ranges.push(count === 0 ? [Math.max(1, start), start + 1] : [start, start + count - 1]);
+  }
+  return ranges;
+}
+
+const TEST_OPEN = /^\s*(?:it|test|describe)(?:\.\w+)*\s*\(/;
+const indentOf = line => /^(\s*)/.exec(line)[1].length;
+/** Does any hunk overlap the block of the test named `name` in `content`? Conservative: an unlocatable test counts as touched. */
+export function testTouched(content, hunks, name) {
+  if (!Array.isArray(hunks)) return true;
+  const lines = content.split(/\r?\n/);
+  const starts = [];
+  lines.forEach((line, i) => { if (line.includes(name)) starts.push(i); });
+  if (!starts.length) return true;
+  const overlaps = (a, b) => hunks.some(([s, e]) => s <= b && e >= a);
+  for (let start of starts) {
+    if (!TEST_OPEN.test(lines[start]) && start > 0 && /^\s*(?:it|test|describe)(?:\.\w+)*\s*\(\s*$/.test(lines[start - 1])) start -= 1;
+    const indent = indentOf(lines[start]);
+    let end = lines.length - 1;
+    for (let j = start + 1; j < lines.length; j += 1) {
+      if (lines[j].trim() === '' || indentOf(lines[j]) > indent) continue;
+      end = /^\s*\}/.test(lines[j]) ? j : j - 1;
+      break;
+    }
+    if (overlaps(start + 1, end + 1)) return true;
+  }
+  return false;
+}
+
+/** `touched(file, name)` for evaluateSkip — one git diff per file, memoized. */
+export function touchedByDiff(root, base) {
+  const hunks = new Map(), contents = new Map();
+  return (file, name) => {
+    if (!hunks.has(file)) hunks.set(file, diffHunks(root, base, file));
+    if (!contents.has(file)) { try { contents.set(file, readFileSync(resolve(root, file), 'utf8')); } catch { contents.set(file, null); } }
+    const content = contents.get(file);
+    if (content === null) return true;
+    return testTouched(content, hunks.get(file), name);
+  };
 }
 
 export function parseChanged(root, env) {
@@ -345,29 +407,29 @@ export function referencingTests(root, file) {
 }
 
 export async function affectedModules(ctx, root, changed) {
-  const modules = new Set(), reasons = [];
+  const modules = new Set(), reasons = [], direct = new Set(), transitive = new Set();
   const previous = ctx.config.related;
   try {
     for (const raw of changed) {
       const file = normalize(raw);
       if (DOC_CHANGE.test(file)) continue; // by extension only — a data file under docs/ is still data
-      if (TEST.test(file)) { modules.add(file); continue; }
+      if (TEST.test(file)) { modules.add(file); direct.add(file); continue; }
       if (!JS.test(file)) {
         // A non-JavaScript executable (SQL migration, Deno function source, migration script) is mapped to the test modules that
         // name it — the project's guard tests reference the file by path or basename (2026-09-10: every migration story was
         // denied all optional tolerance and could never land). No referencing test → still unmappable (fail closed).
         const referencing = referencingTests(root, file);
-        if (referencing.length) { for (const spec of referencing) modules.add(spec); continue; }
+        if (referencing.length) { for (const spec of referencing) { modules.add(spec); transitive.add(spec); } continue; }
         if (GENERATED_CHANGE.test(file)) continue; // artifact no test names — no integration impact to establish
         reasons.push(`non-JavaScript change cannot be mapped: ${file}`); continue;
       }
       ctx.config.related = [normalize(resolve(root, file))];
       const specs = await ctx.getRelevantTestSpecifications();
       if (!specs.length) { if (GENERATED_CHANGE.test(file)) continue; reasons.push(`unmapped changed file: ${file}`); continue; }
-      for (const spec of specs) modules.add(normalize(relative(root, spec.moduleId)));
+      for (const spec of specs) { const id = normalize(relative(root, spec.moduleId)); modules.add(id); transitive.add(id); }
     }
   } finally { ctx.config.related = previous; }
-  return { modules, all: reasons.length > 0, reasons };
+  return { modules, all: reasons.length > 0, reasons, direct, transitive };
 }
 
 export async function selectAffected(ctx, root, changed, config) {
@@ -449,6 +511,7 @@ export async function runAdapter({ root = process.cwd(), mode = 'affected', env 
       // through the same specification API as the affected path (start() after a mapping query does not return in Vitest 4).
       const mapping = await createVitest('test', { root, watch: false, run: true, passWithNoTests: true, include: [...new Set([...(config.unit?.include ?? []), ...scope.include])], exclude: ['**/node_modules/**'], reporters: [], coverage: { enabled: false } });
       try { skipPolicy.affected = await affectedModules(mapping, root, parseChanged(root, env)); } finally { await mapping.close(); }
+      skipPolicy.affected.touched = touchedByDiff(root, env.BATCH_BASE);
       const specs = await ctx.getRelevantTestSpecifications();
       if (!specs.length) throw new Error('zero integration test specifications');
       await ctx.standalone();
