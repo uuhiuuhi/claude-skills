@@ -281,7 +281,10 @@ function storyRootRelOf(slug) {
   return p ? relFromRoot(p) : ''
 }
 
-const norm = (s) => s.replace(/[\s·\-—()[\]{}/,.:]/g, '').toLowerCase()
+// 제목 ↔ 상태 키 대조용 정규화 — 슬러그가 버리는 기호(백틱·`+`·`_`·따옴표)도 같이 버린다.
+// 안 버리면 "Tag `git verify-…`" 같은 코드 제목이 전부 「제목이 어긋납니다」로 잡힌다.
+const norm = (s) => s.replace(/[\s·\-—()[\]{}/,.:`+_"'‘’“”]/g, '').toLowerCase()
+const hasHangul = (s) => /[ㄱ-힝]/.test(s)
 
 // ── epics.md: 에픽 본문 절과 스토리 ─────────────────────────────
 // 같은 에픽 번호가 두 절(요약 목록 + 본문)로 나뉘어 각각 다른 스토리를 들고 있을 수 있다.
@@ -399,7 +402,9 @@ export function parseSprintText(txt) {
     if (!m) continue
     const key = m[1]
     const value = m[2]
-    if (/-retrospective$/.test(key)) continue
+    // 에픽 회고 항목(`epic-N-retrospective`)만 건너뛴다 — 스토리 키의 꼬리가 우연히 같을 수 있다
+    // (`0-5-tam-gate-evaluation-retrospective` 가 「상태 파일에 없음」으로 오탐됐다).
+    if (/^epic-\d+-retrospective$/.test(key)) continue
 
     const ek = /^epic-(\d+)$/.exec(key)
     if (ek) {
@@ -1101,7 +1106,8 @@ function scanInner() {
         const b = norm(rec.slugTitle)
         let common = 0
         while (common < Math.min(a.length, b.length) && a[common] === b[common]) common++
-        if (common < 4) {
+        // 한글 제목 ↔ 영문 슬러그(또는 그 반대)는 글자가 겹칠 수 없어 비교 자체가 성립하지 않는다 — 판정하지 않는다
+        if (common < 4 && hasHangul(a) === hasHangul(b)) {
           drift.push({ level: 'mid', where: 'Story ' + s.id, msg: '제목이 어긋납니다 — 에픽 문서 "' + s.title + '" vs 상태 파일 "' + rec.slugTitle.replace(/-/g, ' ') + '"' })
         }
       } else {
@@ -1127,8 +1133,10 @@ function scanInner() {
       drift.push({ level: 'high', where: 'Story ' + id, msg: '"' + sprint.storyStatus[id].slugTitle.replace(/-/g, ' ') + '" — 상태 파일에는 있으나 에픽 문서에 없습니다' })
     }
   }
-  for (const k of sprint.extra) {
-    drift.push({ level: 'mid', where: '상태 파일', msg: '해석할 수 없는 항목: ' + k })
+  // 에픽 번호 체계 밖 키(`cc-…`·`s-a-…`·`2-5a-…` 같은 수시 과제)는 불일치가 아니라 참고다 —
+  // 에픽 문서에 자리가 없으니 대조할 상대가 없다. 건수로 세지 않되 키는 그대로 남긴다.
+  if (sprint.extra.length) {
+    driftNotes.push({ level: 'info', where: '상태 파일', msg: '참고 — 에픽 번호 없는 항목 ' + sprint.extra.length + '건(수시 과제 · 에픽 문서와 대조하지 않음): ' + sprint.extra.join(', ') })
   }
 
   // 매치 0건 경고 — 경로·서식이 어긋나도 "정상처럼 보이는 빈 화면"이 되지 않게 한다.
