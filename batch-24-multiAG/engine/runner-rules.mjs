@@ -670,6 +670,26 @@ export function blockedProviderFromExit(info) {
   return info.provider === 'codex' ? 'codex' : info.provider === 'claude' ? 'claude' : null
 }
 
+/** 감시자 플레이북 「구현자 기록 부재」의 state.json 복원(순수 · st 를 직접 고친다).
+ *  검증 매니페스트는 `workers[<story>::dev]` **와** `done[<story>::dev]` 가 둘 다 있어야 dev 구현자를 싣는다
+ *  (auto-story-pipeline finalizeManifest · `actual && isDone`). workers 만 복원하면 다음 마감 재검수가 T6 「구현자 기록 없음」으로
+ *  또 선다(2026-10-11 실사고). 있는 칸은 건드리지 않고 없는 칸만 같은 시각(at)으로 채운다. 반환 added = 새로 적은 칸 이름. */
+export function restoreDevProvenance(st, story, who, at) {
+  st.workers ??= {}
+  st.done ??= {}
+  const key = `${story}::dev`
+  const added = []
+  if (!st.workers[key]?.model) {
+    st.workers[key] = { ...who, at, provenance: 'watchdog-restore', note: '감시자 복원 — 스토리 Dev Agent Record 에서 구현 모델을 읽음(없으면 opus 기본)' }
+    added.push('workers')
+  }
+  if (!st.done[key]) {
+    st.done[key] = at
+    added.push('done')
+  }
+  return { key, added, worker: st.workers[key] }
+}
+
 // ── 오케스트레이터 모델 사다리 (👤 2026-09-04 「사다리(fable→opus)를 정본에 넣기 진행해줘」) ─────────────
 // 계획기 실행기가 **살아서 답하지 못한** 경우(runner-timeout · runner-error · runner-nonzero = 한도·인증·프로세스 사고)에만
 // 다음 모델로 한 번 더 묻는다. 형식 불량·검증 거부·지어낸 스토리(parse/validator/invented)는 모델이 답을 한 것이므로

@@ -28,7 +28,7 @@ import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { stopBlocked, stopWindowId } from './runner-rules.mjs'
+import { restoreDevProvenance, stopBlocked, stopWindowId } from './runner-rules.mjs'
 
 const args = process.argv.slice(2)
 const has = (k) => args.includes(k)
@@ -186,13 +186,13 @@ const PLAYBOOK = [
     match: (s) => /missing implementation provenance|구현자 모델 기록/.test(s),
     fix: () => {
       const story = exitInfo?.story; if (!story) return '스토리 미상'
-      const p = join(LOGS, 'state.json'); const st = readJson(p, { done: {}, workers: {} }); st.workers ??= {}
-      const K = `${story}::dev`
-      if (st.workers[K]?.model) return `이미 기록 있음 ${JSON.stringify(st.workers[K]).slice(0, 80)}`
+      const p = join(LOGS, 'state.json'); const st = readJson(p, { done: {}, workers: {} })
+      // 매니페스트는 workers 와 done 이 둘 다 있어야 구현자를 싣는다 — workers 만 복원하면 T6 에서 또 선다(2026-10-11 실사고).
       const who = implementerFromStory(story) ?? { provider: 'claude', model: 'opus' }
-      st.workers[K] = { ...who, at: now().toISOString(), provenance: 'watchdog-restore', note: '감시자 복원 — 스토리 Dev Agent Record 에서 구현 모델을 읽음(없으면 opus 기본)' }
+      const { key: K, added, worker } = restoreDevProvenance(st, story, who, now().toISOString())
+      if (!added.length) return `이미 기록 있음(workers+done) ${JSON.stringify(worker).slice(0, 80)}`
       if (!DRY) writeFileSync(p, JSON.stringify(st, null, 2))
-      return `state.json workers[${K}] = ${who.provider}/${who.model} 기록`
+      return `state.json workers+done[${K}] 확인 — 새로 적은 칸 ${added.join('+')} · 구현자 ${worker.provider}/${worker.model}`
     },
   },
   {

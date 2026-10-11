@@ -254,7 +254,7 @@ function crossReviewVerdict(manifest) {
   // (codex-review-r3 M1) 한쪽 provider 기록이 없으면 「다른 쪽이 봤다」를 확인할 방법이 없다 —
   // 종전에는 `devP && revP` 라 **누락 = 통과**였고, 구형·부분 손상 매니페스트가 프로젝트를 ready 로 올렸다.
   // 규칙은 `completion-rules.mjs:crossReviewResult` 와 같다: 누락은 PASS 도 FAIL 도 아닌 not-verified.
-  if (!devP || !revP) return [NOT_VERIFIED, `교차 검토 제공자 기록이 빠졌다(만든 쪽 ${devP || '미상'} · 검토한 쪽 ${revP || '미상'}) — 다른 쪽이 봤는지 확인할 수 없다`]
+  if (!devP || !revP) return [NOT_VERIFIED, `교차 검토 제공자 기록이 빠졌다(만든 쪽 ${devP || '미상'} · 검토한 쪽 ${revP || '미상'}) — 다른 쪽이 봤는지 확인할 수 없다${devP ? '' : ' · 만든 쪽 기록은 state.json 의 workers[<스토리>::dev] 와 done[<스토리>::dev] 둘 다 있어야 매니페스트에 실린다'}`]
   // 👤 2026-09-26 (나) codex 구현(sol) → codex 리뷰(astra): 모델이 다르면 교차(completion-rules.crossReviewResult 와 같은 규칙)
   const modelName = (m) => str(m).replace(/^codex:/, '')
   const devM = modelName(manifest?.workers?.dev?.model), revM = modelName(review.model)

@@ -176,6 +176,8 @@ describe('readiness — 작업(스토리) 8조건', () => {
     // ② workers.dev.provider 누락
     const noDev = task({ manifest: { workers: { dev: { model: 'opus' }, review: { provider: 'codex' } }, review: { ...clean, provider: 'codex' }, completion } })
     assert.equal(idOf(noDev, 'T6').result, NOT_VERIFIED)
+    // 2026-10-11: 만든 쪽 기록이 빠졌으면 원인 위치(state.json workers·done 둘 다)를 문구에 적는다
+    assert.match(idOf(noDev, 'T6').why, /workers\[<스토리>::dev\] 와 done\[<스토리>::dev\] 둘 다/)
 
     // ③ 둘 다 있고 서로 다르면 그때만 PASS
     const ok = task({ manifest: { review: { ...clean, provider: 'codex' }, completion } })

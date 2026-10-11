@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { limitNoWorkKeys, shouldArchiveEvidence, evidenceLogKeep, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn } from './runner-rules.mjs'
+import { limitNoWorkKeys, shouldArchiveEvidence, evidenceLogKeep, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn, restoreDevProvenance } from './runner-rules.mjs'
 
 const RUN_NIGHT_URL = new URL('./run-night.mjs', import.meta.url)
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -584,4 +584,51 @@ it('limitNoWorkKeys — 라운드 안 모든 exit 5 무작업 배치를 환불 �
   const lists = (r) => (r.batchBase === 'c' ? [['_bmad-output/implementation-artifacts/7-6-w.md']] : [])
   assert.deepEqual(limitNoWorkKeys(results, lists), ['5-1-x', '7-4-z', '9-4-u'])
   assert.deepEqual(limitNoWorkKeys([], lists), [])
+})
+
+// 2026-10-11 실사고(2-31): 감시자 플레이북 「구현자 기록 부재」가 workers[<story>::dev] 만 복원해, 검증 매니페스트(finalizeManifest ·
+// workers 와 done 둘 다 요구)가 구현자를 싣지 못하고 다음 마감 재검수가 T6 「구현자 기록 없음」 COMPLETION STOP 으로 또 섰다.
+describe('restoreDevProvenance — 감시자 구현자 기록 복원은 workers 와 done 을 함께 채운다', () => {
+  const who = { provider: 'claude', model: 'opus' }
+  const AT = '2026-10-11T02:00:00.000Z'
+  it('(1) 둘 다 없음 → 둘 다 같은 시각으로 적힌다', () => {
+    const st = { done: {}, workers: {} }
+    const r = restoreDevProvenance(st, '2-31-x', who, AT)
+    assert.equal(r.key, '2-31-x::dev')
+    assert.deepEqual(r.added, ['workers', 'done'])
+    assert.equal(st.workers['2-31-x::dev'].model, 'opus')
+    assert.equal(st.workers['2-31-x::dev'].provider, 'claude')
+    assert.equal(st.workers['2-31-x::dev'].at, AT)
+    assert.equal(st.workers['2-31-x::dev'].provenance, 'watchdog-restore')
+    assert.equal(st.done['2-31-x::dev'], AT)
+    // state.json 에 칸 자체가 없어도 만든다
+    const bare = {}
+    assert.deepEqual(restoreDevProvenance(bare, '2-31-x', who, AT).added, ['workers', 'done'])
+    assert.equal(bare.done['2-31-x::dev'], AT)
+  })
+  it('(2) workers 만 있음 → done 만 보탠다(기존 구현자 기록은 그대로)', () => {
+    const prev = { provider: 'codex', model: 'codex:gpt-5.6-sol', at: '2026-10-10T09:00:00.000Z' }
+    const st = { done: { '2-31-x::qa': 'q' }, workers: { '2-31-x::dev': { ...prev } } }
+    const r = restoreDevProvenance(st, '2-31-x', who, AT)
+    assert.deepEqual(r.added, ['done'])
+    assert.deepEqual(st.workers['2-31-x::dev'], prev)
+    assert.equal(st.done['2-31-x::dev'], AT)
+    assert.equal(st.done['2-31-x::qa'], 'q')
+    assert.equal(r.worker.model, 'codex:gpt-5.6-sol')
+  })
+  it('(3) 둘 다 있음 → 변경 0', () => {
+    const st = { done: { '2-31-x::dev': '2026-10-10T09:05:00.000Z' }, workers: { '2-31-x::dev': { provider: 'claude', model: 'fable', at: '2026-10-10T09:00:00.000Z' } } }
+    const before = JSON.stringify(st)
+    const r = restoreDevProvenance(st, '2-31-x', who, AT)
+    assert.deepEqual(r.added, [])
+    assert.equal(JSON.stringify(st), before)
+  })
+  it('배선: 감시자 플레이북이 이 함수를 쓰고 반환 문구에 workers+done 을 적는다', () => {
+    const wd = readFileSync(join(HERE, 'watchdog.mjs'), 'utf8')
+    assert.match(wd, /import \{ restoreDevProvenance, stopBlocked, stopWindowId \} from '\.\/runner-rules\.mjs'/)
+    assert.match(wd, /restoreDevProvenance\(st, story, who, now\(\)\.toISOString\(\)\)/)
+    assert.match(wd, /state\.json workers\+done\[\$\{K\}\]/)
+    // 수리 결과 문구가 「미해소」로 오인되지 않는다(감시자 unresolved 판정 어휘)
+    assert.doesNotMatch('state.json workers+done[2-31-x::dev] 확인 — 새로 적은 칸 done · 구현자 claude/opus', /미해결|사람 몫|실패|unfixed|skipped/)
+  })
 })
