@@ -941,7 +941,7 @@ async function applyOrchestrator(q, outPath) {
   // 모델별 한도(예: Fable 주간 100%)는 그 모델만 리셋 시각까지 제외되고 opus·sonnet 은 계속 간다. 조회 실패는 무시(종전 동작).
   if (CFG.usageProbe !== false && !process.env.AUTO_PLAN_RUNNER_STUB) {
     const probed = await probeUsage({ stateDir: STATE_DIR })
-    if (probed.usage) console.log(`${usageLine(probed.usage)}${probed.blocks.length ? ` → 라우팅 제외 ${probed.blocks.map((b) => b.model).join(',')}` : ''}`)
+    if (probed.usage) console.log(`${usageLine(probed.usage)}${probed.blocks.length ? ` → 라우팅 제외 ${probed.blocks.map((b) => b.model).join(',')}` : ''}${probed.clears?.length ? ` → 지난 한도 해제 ${probed.clears.join(',')}` : ''}`)
     else console.log(usageLine(null))
   }
   const ladder = (process.env.AUTO_PLAN_RUNNER_STUB ? [ORCH.model] : ORCH.ladder)

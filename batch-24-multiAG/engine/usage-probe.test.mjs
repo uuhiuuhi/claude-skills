@@ -1,14 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   normalizeUsage, usageBlocks, applyUsageToHealth, reclassifySpend, fetchClaudeUsage, usageLine,
-  writeUsageSnapshot, readUsageSnapshot, probeUsage, readOauthToken, CLAUDE_MODELS,
+  writeUsageSnapshot, readUsageSnapshot, probeUsage, readOauthToken, CLAUDE_MODELS, usageClears, applyUsageClears,
 } from './runtime/usage-probe.mjs';
-import { readModelHealth } from './runtime/model-health.mjs';
+import { readModelHealth, recordModelEvent } from './runtime/model-health.mjs';
 import { StageRouter } from './runtime/stage-router.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -165,4 +165,126 @@ test('배선: run-night 는 슬롯 시작에 probeUsage 를 부르고, 파이프
   assert.match(pipeline, /result === 'spend' && !dryRun \? reclassifySpend\(readUsageSnapshot\(modelStateDir\), selected\.model\)/);
   assert.match(pipeline, /router\.record\(selected\.model, 'limit', \{ role: stage, story, retryAt: spendAsLimit\.retryAt/);
   assert.match(pipeline, /if \(result === 'limit' \|\| spendAsLimit\) \{/, '재분류된 spend 도 limit 강등 정책을 탄다');
+});
+
+// ── 지난 한도 해제(clear) — 2026-10-11 실사고: 운영 계정이 주간 100% 에 닿아 fable·opus·sonnet 에 limit(retryAt 10-14)이 적혔고,
+//    계정을 바꿔 다음 측정이 주간 19% 로 내려왔는데도 limit 이 retryAt 까지 라우터를 막아 success 가 영영 적히지 않았다(닭·달걀).
+const T0 = Date.parse('2026-10-11T00:00:00Z');
+const RESET_1014 = '2026-10-14T00:00:00Z';
+/** 주간 전체 100% — 전 모델 limit(retryAt 10-14). */
+const FULL = () => ({
+  limits: [
+    { kind: 'session', percent: 40, resets_at: '2026-10-11T03:00:00Z' },
+    { kind: 'weekly_all', percent: 100, resets_at: RESET_1014 },
+    { kind: 'weekly_scoped', percent: 100, resets_at: RESET_1014, scope: { model: { display_name: 'Fable' } } },
+  ],
+});
+/** 계정 교체 뒤 — 세션 5 · 주간 19 · Fable 모델별 12. */
+const LOW = () => ({
+  limits: [
+    { kind: 'session', percent: 5, resets_at: '2026-10-11T05:00:00Z' },
+    { kind: 'weekly_all', percent: 19, resets_at: '2026-10-17T00:00:00Z' },
+    { kind: 'weekly_scoped', percent: 12, resets_at: '2026-10-17T00:00:00Z', scope: { model: { display_name: 'Fable' } } },
+  ],
+});
+const fetchOf = (payload) => async () => ({ status: 200, json: async () => payload });
+const healthFiles = (stateDir) => readdirSync(join(stateDir, 'model-health')).filter((n) => n.endsWith('.json'))
+  .map((n) => JSON.parse(readFileSync(join(stateDir, 'model-health', n), 'utf8')));
+
+test('usageClears: usageBlocks 의 반대 조건만 — 세션·주간 실측 100% 아래 + 그 모델의 모델별 한도도 아래 · 값이 없으면 빈 목록', () => {
+  assert.deepEqual(usageClears(normalizeUsage(LOW(), T0)), [...CLAUDE_MODELS]);
+  assert.deepEqual(usageClears(normalizeUsage(FULL(), T0)), []);
+  assert.deepEqual(usageClears(normalizeUsage(PAYLOAD(), NOW)), ['opus', 'sonnet'], 'fable 모델별 100% 는 풀지 않는다');
+  assert.deepEqual(usageClears(normalizeUsage({}, T0)), [], '세션·주간 값이 없으면(측정 실패) 풀지 않는다');
+  assert.deepEqual(usageClears(null), []);
+});
+
+test('clear (1): limit 뒤 낮은 측정 → clear 적힘 → blocked false · 기존 limit 파일은 그대로', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'usage-clear-1-'));
+  const first = await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf(FULL()), now: T0 });
+  assert.deepEqual(first.blocks.map((b) => b.model).sort(), [...CLAUDE_MODELS].sort());
+  assert.deepEqual(first.clears, []);
+  assert.equal(readModelHealth(stateDir, T0 + 60_000).blocked('opus'), true);
+  const limitsBefore = healthFiles(stateDir);
+  const second = await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf(LOW()), now: T0 + 30 * 60_000 });
+  assert.deepEqual(second.blocks, []);
+  assert.deepEqual(second.clears.sort(), [...CLAUDE_MODELS].sort());
+  const health = readModelHealth(stateDir, T0 + 31 * 60_000);
+  for (const m of CLAUDE_MODELS) assert.equal(health.blocked(m), false, `${m} 이 풀려야 한다`);
+  const all = healthFiles(stateDir);
+  for (const old of limitsBefore) assert.deepEqual(all.find((e) => e.id === old.id), old, '기존 사건은 지우거나 고치지 않는다');
+  const clears = all.filter((e) => e.kind === 'clear');
+  assert.equal(clears.length, 3);
+  for (const c of clears) {
+    assert.equal(c.role, 'usage-probe');
+    assert.equal(c.retryAt, null);
+    assert.match(c.detail, /주간 전체 19%.*기준\(100%\) 아래.*해제/);
+    assert.doesNotMatch(c.detail, /sk-ant|Bearer/);
+  }
+});
+
+test('clear (2): limit 뒤 측정 실패(조회 실패·값 없음) → clear 안 적힘 → blocked 유지', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'usage-clear-2-'));
+  await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf(FULL()), now: T0 });
+  const failed = await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: async () => { throw new Error('offline'); }, now: T0 + 60_000 });
+  assert.deepEqual(failed, { usage: null, blocks: [] });
+  const empty = await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf({ limits: [{ kind: 'weekly_all', percent: 19 }] }), now: T0 + 120_000 });
+  assert.deepEqual(empty.clears, [], '세션 값이 없으면(null) 측정 실패로 본다');
+  assert.equal(healthFiles(stateDir).filter((e) => e.kind === 'clear').length, 0);
+  for (const m of CLAUDE_MODELS) assert.equal(readModelHealth(stateDir, T0 + 180_000).blocked(m), true);
+});
+
+test('clear (3): 모델 scope 만 푼다 — 프로바이더 전체 auth 사건은 그대로 막는다(success 특례와 구분)', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'usage-clear-3-'));
+  await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf(FULL()), now: T0 });
+  recordModelEvent(stateDir, { model: 'opus', kind: 'auth', now: T0 + 1000, retryAt: T0 + 3 * 3600_000 });
+  const r = await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf(LOW()), now: T0 + 60_000 });
+  assert.deepEqual(r.clears.sort(), [...CLAUDE_MODELS].sort());
+  const health = readModelHealth(stateDir, T0 + 61_000);
+  assert.equal(health.events.find((e) => e.scope === 'claude')?.kind, 'auth', '프로바이더 auth 는 지워지지 않는다');
+  for (const m of CLAUDE_MODELS) assert.equal(health.blocked(m), true, `${m} 은 auth 로 계속 막힌다`);
+  assert.equal(health.blocked('codex:gpt-6-astra'), false);
+  // 직접 기록한 clear 도 같은 규칙 — 프로바이더 spend 를 풀지 않는다
+  const dir2 = mkdtempSync(join(tmpdir(), 'usage-clear-3b-'));
+  recordModelEvent(dir2, { model: 'fable', kind: 'spend', now: 1000 });
+  recordModelEvent(dir2, { model: 'fable', kind: 'clear', now: 1200, role: 'usage-probe' });
+  assert.equal(readModelHealth(dir2, 1300).blocked('fable'), true);
+});
+
+test('clear (4): 같은 낮은 측정이 반복돼도 clear 는 모델마다 1건 — 최신이 이미 clear/success 면 적지 않는다', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'usage-clear-4-'));
+  await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf(FULL()), now: T0 });
+  for (let i = 1; i <= 4; i++) await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf(LOW()), now: T0 + i * 30 * 60_000 });
+  const clears = healthFiles(stateDir).filter((e) => e.kind === 'clear');
+  assert.deepEqual(clears.map((e) => e.model).sort(), [...CLAUDE_MODELS].sort());
+  // limit 이 없던 상태에서의 낮은 측정도 아무것도 적지 않는다
+  const fresh = mkdtempSync(join(tmpdir(), 'usage-clear-4b-'));
+  const r = await probeUsage({ stateDir: fresh, token: FAKE_TOKEN, fetchImpl: fetchOf(LOW()), now: T0 });
+  assert.deepEqual(r.clears, []);
+  assert.equal(existsSync(join(fresh, 'model-health')), false);
+  // success 가 최신이어도 적지 않는다
+  const succ = mkdtempSync(join(tmpdir(), 'usage-clear-4c-'));
+  recordModelEvent(succ, { model: 'fable', kind: 'limit', now: T0, retryAt: Date.parse(RESET_1014) });
+  recordModelEvent(succ, { model: 'fable', kind: 'success', now: T0 + 2000, startedAt: T0 + 1000 });
+  assert.deepEqual(applyUsageClears(succ, normalizeUsage(LOW(), T0 + 3000), { now: T0 + 3000 }), []);
+});
+
+test('clear (5): clear 뒤 다시 100% → limit 이 다시 막는다', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'usage-clear-5-'));
+  await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf(FULL()), now: T0 });
+  await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf(LOW()), now: T0 + 30 * 60_000 });
+  assert.equal(readModelHealth(stateDir, T0 + 31 * 60_000).blocked('fable'), false);
+  const again = await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf(FULL()), now: T0 + 60 * 60_000 });
+  assert.deepEqual(again.clears, []);
+  const health = readModelHealth(stateDir, T0 + 61 * 60_000);
+  for (const m of CLAUDE_MODELS) assert.equal(health.blocked(m), true, `${m} 이 다시 막혀야 한다`);
+  // 다시 내려오면 다시 1건씩 풀린다
+  const back = await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf(LOW()), now: T0 + 90 * 60_000 });
+  assert.deepEqual(back.clears.sort(), [...CLAUDE_MODELS].sort());
+  assert.equal(readModelHealth(stateDir, T0 + 91 * 60_000).blocked('opus'), false);
+});
+
+test('배선: run-night 의 [USAGE] 줄은 지난 한도 해제를 함께 적는다', () => {
+  const runNight = readFileSync(join(HERE, 'run-night.mjs'), 'utf8');
+  assert.match(runNight, /probed\.clears\?\.length \? ` → 지난 한도 해제 \$\{probed\.clears\.join\(','\)\}`/);
 });

@@ -12,7 +12,8 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { recordModelEvent } from './model-health.mjs';
+import { readModelHealth, recordModelEvent } from './model-health.mjs';
+import { canonicalModel } from './model-policy.mjs';
 
 export const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 export const CLAUDE_MODELS = Object.freeze(['fable', 'opus', 'sonnet']);
@@ -93,6 +94,33 @@ export function applyUsageToHealth(stateDir, usage, { now = Date.now(), models =
     recordModelEvent(stateDir, { model: b.model, kind: 'limit', now, retryAt: b.retryAt, role: 'usage-probe', detail: `usage API: ${b.reason} · 리셋 ${kst(b.retryAt)}` }));
 }
 
+/** usageBlocks 의 **반대 조건** — 세션·주간 전체가 둘 다 실측돼 100% 아래이고, 그 모델의 모델별 한도(있으면)도 전부
+ *  실측돼 100% 아래인 모델 목록. 값이 하나라도 없으면(null) 측정 실패로 보고 넣지 않는다. */
+export function usageClears(usage, { models = CLAUDE_MODELS } = {}) {
+  if (!usage) return [];
+  const under = (x) => Number.isFinite(x?.pct) && x.pct < 100;
+  if (!under(usage.fiveHour) || !under(usage.sevenDay)) return [];
+  return models.filter((m) => (usage.scoped ?? []).filter((s) => s.model === m).every(under));
+}
+
+/** 계정 교체 등으로 한도가 기준 아래로 내려왔는데 model-health 에 아직 유효한 `limit`(retryAt > now)이 최신이면
+ *  그 모델 scope 에 `clear` 를 적는다(2026-10-11 실사고 — 예전 limit 이 retryAt 까지 모델을 막아 success 가 영영 안 적힘).
+ *  기존 사건은 고치지 않고 추가만 한다 · 최신이 이미 clear/success(또는 limit 이 아님)면 적지 않는다(반복 측정에 쌓이지 않게).
+ *  provider 전체 auth·spend·transient 는 건드리지 않는다(실제 호출 성공이 아니므로). 기록한 clear 사건을 돌려준다. */
+export function applyUsageClears(stateDir, usage, { now = Date.now(), models = CLAUDE_MODELS } = {}) {
+  const clears = usageClears(usage, { models });
+  if (!stateDir || !clears.length) return [];
+  const latest = new Map(readModelHealth(stateDir, now).events.map((e) => [e.scope, e]));
+  const pct = (x) => `${x.pct}%`;
+  return clears.flatMap((model) => {
+    const prev = latest.get(canonicalModel(model));
+    if (!prev || prev.kind !== 'limit' || !(prev.retryAt > now)) return [];
+    const scoped = (usage.scoped ?? []).filter((s) => s.model === model).map((s) => ` · ${model} 주간 모델별 ${pct(s)}`).join('');
+    return [recordModelEvent(stateDir, { model, kind: 'clear', now, role: 'usage-probe',
+      detail: `usage API: 세션 ${pct(usage.fiveHour)} · 주간 전체 ${pct(usage.sevenDay)}${scoped} — 기준(100%) 아래 · 직전 limit(리셋 ${kst(prev.retryAt)}) 해제` })];
+  }).filter(Boolean);
+}
+
 export function writeUsageSnapshot(stateDir, usage) {
   if (!stateDir || !usage) return null;
   mkdirSync(stateDir, { recursive: true });
@@ -138,5 +166,6 @@ export async function probeUsage({ stateDir, enabled = true, now = Date.now(), .
   if (!usage) return { usage: null, blocks: [] };
   writeUsageSnapshot(stateDir, usage);
   const events = applyUsageToHealth(stateDir, usage, { now });
-  return { usage, blocks: events.map((e) => ({ model: e.model, retryAt: e.retryAt })) };
+  const cleared = applyUsageClears(stateDir, usage, { now });
+  return { usage, blocks: events.map((e) => ({ model: e.model, retryAt: e.retryAt })), clears: cleared.map((e) => e.model) };
 }
