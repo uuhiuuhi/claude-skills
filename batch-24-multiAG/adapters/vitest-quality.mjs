@@ -494,7 +494,8 @@ export async function runAdapter({ root = process.cwd(), mode = 'affected', env 
     reporters: ['verbose', reporter],
     forceRerunTriggers: [],
     // Do not mutate source config thresholds or clean arbitrary directories.
-    coverage: affected ? { enabled: true, provider: 'v8', reporter: ['lcov'], reportsDirectory: dirname(lcov), clean: false, cleanOnRerun: false, include: changed.filter(file => JS.test(file) && !TEST.test(file)), exclude: [], thresholds: { autoUpdate: false } } : { enabled: false },
+    // 변경 파일 경로는 글자 그대로의 이름이다 — Next.js 라우트 그룹 `(shell)` · 동적 구간 `[id]` 를 글로브로 읽지 않게 이스케이프(2026-10-11 22-4 커버리지 0 실측).
+    coverage: affected ? { enabled: true, provider: 'v8', reporter: ['lcov'], reportsDirectory: dirname(lcov), clean: false, cleanOnRerun: false, include: changed.filter(file => JS.test(file) && !TEST.test(file)).map(file => file.replace(/[()[\]{}*?!+@|]/g, '\\$&')), exclude: [], thresholds: { autoUpdate: false } } : { enabled: false },
   };
   const createVitest = injectedCreateVitest ?? (await import(pathToFileURL(createRequire(resolve(root, 'package.json')).resolve('vitest/node')).href)).createVitest;
   let ctx;

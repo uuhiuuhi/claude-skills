@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve, relative, dirname, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
 import { splitDiffByFile, TEST_FILE_RE, testIntegrityFindings, securityTriggers, maskJavaScript } from './quality-rules.mjs';
 import { newTestsFromDiff, testKindsVerdict } from './completion-rules.mjs';
 import { integrationGateInvocation } from '../runner-rules.mjs';
@@ -193,7 +194,7 @@ export function executedTestVerdict(diff, output = '') {
     const executable = maskJavaScript(text).code;
     return [...text.matchAll(/\b(?:it|test)\s*\(\s*(['"`])([^'"`]+)\1/g)].filter(m => /^(?:it|test)\s*\(/.test(executable.slice(m.index))).map(m => m[2]);
   });
-  const passed = String(output).split(/\r?\n/).filter(l => /^\s*(?:ok\s+\d+\s*-?\s*|[✔✓√]\s*)/.test(l) && !/#\s*(?:SKIP|TODO)\b/i.test(l));
+  const passed = stripVTControlCharacters(String(output)).split(/\r?\n/).filter(l => /^\s*(?:ok\s+\d+\s*-?\s*|[✔✓√]\s*)/.test(l) && !/#\s*(?:SKIP|TODO)\b/i.test(l));
   const missing = tests.filter(name => !passed.some(line => line.includes(name)));
   return { result: tests.length && !missing.length ? 'pass' : 'not-verified', expected: tests, missing };
 }

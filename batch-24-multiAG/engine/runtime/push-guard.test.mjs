@@ -163,6 +163,17 @@ describe('[push-guard] 시크릿 판정 — 환경변수 참조는 값이 아니
       assert.equal(secretHits(plus(l)).length, 1, l)
     }
   })
+  it('숫자가 하나도 없는 자리표시 값은 값이 아니다 — 테스트 더미(2026-10-11 보존 실패 · 러너 정지 실측)', () => {
+    // 실측 줄: 테스트 파일의 `process.env.<이름> = "service-role-key"` 가 로그 diff 에 복사돼 잔여물 보존을 막았다.
+    const dummy = ['service', 'role', 'key'].join('-') // 16자 · 숫자 0
+    for (const l of ['  process.env.' + N + ' = "' + dummy + '";', N + '=' + 'x'.repeat(40), N + ": 'your-" + dummy + "-here'", 'OPENAI_API_KEY=placeholder-value-goes-here']) {
+      assert.deepEqual(secretHits(plus(l)), [], l)
+    }
+    // 숫자가 하나라도 섞이면 다시 잡는다(실제 키·토큰은 사실상 항상 숫자를 포함한다)
+    for (const l of [N + '=' + dummy + '7', "CLOUDFLARE_API_TOKEN='" + 'q'.repeat(39) + "4'", '  process.env.' + N + ' = "' + V + '";']) {
+      assert.equal(secretHits(plus(l)).length, 1, l)
+    }
+  })
   it('엔진(auto-story-pipeline.mjs)의 이름 패턴과 어긋나지 않는다', () => {
     const engine = readFileSync(join(here, 'auto-story-pipeline.mjs'), 'utf8')
     const named = SECRET_RES.find((re) => re.source.startsWith('(CLOUDFLARE_API_TOKEN'))

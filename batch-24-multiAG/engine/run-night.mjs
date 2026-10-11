@@ -48,7 +48,7 @@ import { parallelHazardsCompat } from './conflicts.mjs'
 import { appendJsonl, metricsHistoryPath, parseCodexUsage, parseEngineLog, renderMetricsTable, summarizeTimeline, writeJsonAtomic } from './metrics.mjs'
 import { makeClaudePlanRunner, requestPlan } from './orchestrate.mjs'
 import { buildDag, parseDependsOn } from './plan-dag.mjs'
-import { REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, LOG_PREFIX, shouldArchiveEvidence, evidenceLogKeep, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refreshStall, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { REVIEW_PENDING_EXIT, isReviewPendingExit, isStoryLevelStop, worseExit, LOG_PREFIX, shouldArchiveEvidence, evidenceLogKeep, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refreshStall, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = fileURLToPath(resolveAsf('auto-story-pipeline.mjs'))
 // mockup 단계가 든 배치는 목업 폴더(config mockupGate.mockupsDir · 기본 mockups)를 스토리 커밋에 함께 싣는다 —
@@ -2001,6 +2001,7 @@ if (!autoPlan) {
 }
 
 let lastWorst = null
+let softStopStreak = 0 // 스토리 단위 STOP(exit 1)으로 끝난 라운드의 연속 횟수 — 연속 실행 상한 재료
 for (let round = 1; ; round++) {
   touchLock() // 심박 — 라운드 경계
   writeChainInfo() // 체인 게이트 재료 — 편성 전에 최신 실측
@@ -2020,7 +2021,7 @@ for (let round = 1; ; round++) {
   const didRealWork = roundDidRealWork(roundCommitFileLists(baseSha))
   const contArgs = {
     autoPlan, dryRun, worstCode: r.worstCode, ranCount: r.ranCount,
-    startDate: START_DATE, nowDate: today(),
+    startDate: START_DATE, nowDate: today(), softStopStreak,
   }
   const cont = shouldContinueLoop({ ...contArgs, roundDidRealWork: didRealWork })
   if (!cont) {
@@ -2035,7 +2036,8 @@ for (let round = 1; ; round++) {
     }
     break
   }
-  console.log(`\n──── 라운드 ${round} 완주 — 남은 일이 있는지 다시 편성한다(연속 실행) ────`)
+  softStopStreak = isStoryLevelStop(r.worstCode) ? softStopStreak + 1 : 0
+  console.log(`\n──── 라운드 ${round} ${isStoryLevelStop(r.worstCode) ? `스토리 단위 STOP(exit 1 · 연속 ${softStopStreak}회)` : '완주'} — 남은 일이 있는지 다시 편성한다(연속 실행) ────`)
 }
 
 logPreserved(preserveRunReport({ logDir: LOG_DIR, label: `${START_DATE} 슬롯 종료`, dryRun }))

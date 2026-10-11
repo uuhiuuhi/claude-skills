@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { limitNoWorkKeys, shouldArchiveEvidence, evidenceLogKeep, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn, restoreDevProvenance } from './runner-rules.mjs'
+import { limitNoWorkKeys, SOFT_STOP_CONTINUE_MAX, isStoryLevelStop, shouldArchiveEvidence, evidenceLogKeep, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn, restoreDevProvenance } from './runner-rules.mjs'
 
 const RUN_NIGHT_URL = new URL('./run-night.mjs', import.meta.url)
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -39,7 +39,7 @@ describe('[OPS-2] 러너 판정 규칙', () => {
     assert.equal(shouldContinueLoop(base), true)
     assert.equal(shouldContinueLoop({ ...base, nowDate: '2026-08-28' }), false) // 자정 가드(02:49 사고 재발 방지)
     assert.equal(shouldContinueLoop({ ...base, worstCode: 5 }), false) // STOP 은 원인 확인 먼저 — 즉시 재시도 금지
-    assert.equal(shouldContinueLoop({ ...base, worstCode: 1 }), false)
+    assert.equal(shouldContinueLoop({ ...base, worstCode: 6 }), false)
     assert.equal(shouldContinueLoop({ ...base, ranCount: 0 }), false)
     assert.equal(shouldContinueLoop({ ...base, dryRun: true }), false)
     assert.equal(shouldContinueLoop({ ...base, autoPlan: false }), false)
@@ -130,10 +130,34 @@ describe('[OPS-2] 러너 판정 규칙', () => {
     // 모르면 멈춘다 — 헛돌면 밤새 커밋 오염·알림 폭주, 잘못 멈춰도 다음 슬롯이 이어받는다
     assert.equal(shouldContinueLoop({ ...base, roundDidRealWork: undefined }), false)
     // 기존 종료 조건은 실작업 true 여도 그대로 (STOP · 자정 · 편성 0 · dry-run)
-    assert.equal(shouldContinueLoop({ ...base, roundDidRealWork: true, worstCode: 1 }), false)
+    assert.equal(shouldContinueLoop({ ...base, roundDidRealWork: true, worstCode: 6 }), false)
+    assert.equal(shouldContinueLoop({ ...base, roundDidRealWork: true, worstCode: 4 }), false)
     assert.equal(shouldContinueLoop({ ...base, roundDidRealWork: true, nowDate: '2026-08-30' }), false)
     assert.equal(shouldContinueLoop({ ...base, roundDidRealWork: true, ranCount: 0 }), false)
     assert.equal(shouldContinueLoop({ ...base, roundDidRealWork: true, dryRun: true }), false)
+  })
+
+  it('[연속 실행] 스토리 단위 STOP(exit 1)은 실작업이 있고 연속 상한 안일 때만 이어서 편성한다 (2026-10-11 라운드마다 30분 휴면 실측)', () => {
+    const base = { autoPlan: true, dryRun: false, worstCode: 1, ranCount: 1, startDate: '2026-10-11', nowDate: '2026-10-11', roundDidRealWork: true }
+    assert.equal(SOFT_STOP_CONTINUE_MAX, 2)
+    assert.equal(isStoryLevelStop(1), true); assert.equal(isStoryLevelStop('1'), true); assert.equal(isStoryLevelStop(8), false); assert.equal(isStoryLevelStop(null), false)
+    // ① 기본(연속 0회) · 1회 → 계속 / 상한(2회) → 종료(다음 정시 슬롯으로 감속)
+    assert.equal(shouldContinueLoop(base), true)
+    assert.equal(shouldContinueLoop({ ...base, softStopStreak: 1 }), true)
+    assert.equal(shouldContinueLoop({ ...base, softStopStreak: 2 }), false)
+    assert.equal(shouldContinueLoop({ ...base, softStopStreak: 9 }), false)
+    // ② 실작업 0(보존 실패·로그뿐)이면 종료 — 무한 회수 루프(10-03~10-06 116라운드) 방어선 유지
+    assert.equal(shouldContinueLoop({ ...base, roundDidRealWork: false }), false)
+    assert.equal(shouldContinueLoop({ ...base, roundDidRealWork: undefined }), false)
+    // ③ 연속 횟수를 못 읽으면 멈춘다(모르면 멈추는 쪽)
+    assert.equal(shouldContinueLoop({ ...base, softStopStreak: 'x' }), false)
+    // ④ 다른 STOP 코드는 예외 대상이 아니다 — 인증(3) · NO-OP(4) · 한도(5) · 저장 가드(6) · 7
+    for (const code of [2, 3, 4, 5, 6, 7]) assert.equal(shouldContinueLoop({ ...base, worstCode: code }), false, String(code))
+    // ⑤ 자정 · 편성 0 · dry-run · 수동 실행은 그대로 종료
+    assert.equal(shouldContinueLoop({ ...base, nowDate: '2026-10-12' }), false)
+    assert.equal(shouldContinueLoop({ ...base, ranCount: 0 }), false)
+    assert.equal(shouldContinueLoop({ ...base, dryRun: true }), false)
+    assert.equal(shouldContinueLoop({ ...base, autoPlan: false }), false)
   })
 
   it('[OPS-7] 실작업 판정 — 로그 폴더 밖 파일 1건이라도 있으면 true · 로그뿐/커밋 0 은 false', () => {

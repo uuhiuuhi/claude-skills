@@ -58,9 +58,18 @@ export function roundDidRealWork(commitFileLists) {
  *  공회전 가드: `roundDidRealWork` 가 true 가 **아니면**(false·미전달 포함) 종료한다. 모르는 채로
  *  계속 도는 쪽이 손해가 크다 — 헛돌면 커밋 오염·알림 폭주가 밤새 쌓이지만, 잘못 멈춰도
  *  다음 정시 슬롯이 새 프로세스로 이어받는다. */
-export function shouldContinueLoop({ autoPlan, dryRun, worstCode, ranCount, startDate, nowDate, roundDidRealWork: didRealWork }) {
+/** 스토리 단위 STOP(exit 1) 뒤에도 같은 프로세스가 이어서 편성하는 연속 횟수 상한. 상한에 닿으면 끝내고 다음 정시 슬롯에 넘긴다(자연 감속). */
+export const SOFT_STOP_CONTINUE_MAX = 2
+/** exit 1 = 스토리 단위 STOP(qa RED · 완주 게이트 · 리뷰 높음 지적) — 원인이 그 스토리 안에 있고 잔여물은 보존됐다. 다음 편성이 회수(replan→dev)·재검수를 연다. */
+export const isStoryLevelStop = (code) => Number(code) === 1
+export function shouldContinueLoop({ autoPlan, dryRun, worstCode, ranCount, startDate, nowDate, roundDidRealWork: didRealWork, softStopStreak = 0 }) {
   if (!autoPlan || dryRun) return false
-  if (worstCode != null) return false // STOP 은 원인 확인이 먼저 — 헛도는 재시도 금지
+  // STOP 은 원인 확인이 먼저 — 헛도는 재시도 금지. 예외(2026-10-11 · 리뷰→회수→재검수가 라운드마다 30분씩 쉬던 실측):
+  // 스토리 단위 STOP(exit 1)은 실작업 커밋이 있었고 연속 상한 안일 때만 이어서 편성한다. 그 밖의 코드(3·4·5·6·7…)는 그대로 종료.
+  if (worstCode != null) {
+    const streak = Number.isFinite(Number(softStopStreak)) ? Number(softStopStreak) : SOFT_STOP_CONTINUE_MAX
+    if (!(isStoryLevelStop(worstCode) && didRealWork === true && streak < SOFT_STOP_CONTINUE_MAX)) return false
+  }
   if (ranCount === 0) return false // 편성 0 = 오늘 몫 소진
   if (didRealWork !== true) return false // 공회전 = 종결
   return startDate === nowDate
