@@ -53,6 +53,12 @@ export function modelCandidates({ role = 'dev', risk = 0, difficulty = 5, prefer
   return preferProvider === 'codex' ? [...codex, ...claude] : [...claude, ...codex];
 }
 
+/** 👤 2026-10-11 「추천안 2」: 회수(recovery) dev 의 품질 하한을 설정으로 sonnet(tier 1)까지 내린다 — 신규 dev·review 는 그대로.
+ *  `modelPolicy.recoveryDevFloor: 1` 일 때만 참. 한도(limitRelief) 와 같은 길(후보에 sonnet 추가 · 하한 1)을 쓴다. */
+export function policyRelief({ stage = '', batchKind = '', policy = null } = {}) {
+  return stage === 'dev' && batchKind === 'recovery' && Number(policy?.recoveryDevFloor) === 1;
+}
+
 export function selectModel({ role = 'dev', risk = 0, difficulty = 5, preferred = '', avoid = '', providers = {}, blocked = () => false, preferProvider = 'claude', crossProvider = true, exclude = [], candidates = null, limitRelief = false, codexDev = null } = {}) {
   const initial = canonicalModel(preferred);
   const previous = canonicalModel(avoid);

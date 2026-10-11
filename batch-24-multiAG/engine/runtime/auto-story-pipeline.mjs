@@ -88,7 +88,7 @@ import { safeGitPush } from "./push-guard.mjs";
 import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes, reviewPendingOnly, recoveryPendingOnly } from "./completion-rules.mjs";
 import { StageRouter, preferredDevProvider } from './stage-router.mjs';
 import { readUsageSnapshot, reclassifySpend } from './usage-probe.mjs';
-import { MODEL_CATALOG, failureKind, providerOf, limitDowngradeMode, codexDevPolicy, codexDevAllowed, codexPairCross } from './model-policy.mjs';
+import { policyRelief, MODEL_CATALOG, failureKind, providerOf, limitDowngradeMode, codexDevPolicy, codexDevAllowed, codexPairCross } from './model-policy.mjs';
 import { storyRisk, storyDifficulty } from '../assign.mjs';
 import { readEvidenceFor } from './providers/codex.mjs';
 import { deepRedact } from './providers/redact.mjs';
@@ -1515,7 +1515,8 @@ function runRoutedStage(stage, story, variant) {
   const router = new StageRouter({ stateDir: modelStateDir, providers, exhausted: routingConfig.exhaustedModels ?? [],
     claudeLadder: process.env.AUTO_MODEL_LADDER ? MODEL_LADDER : null, codexDev: routingConfig.modelPolicy?.codexDev ?? null });
   const attempted = [];
-  let limitRelief = false; // 회수 dev 가 한도를 만나면 true — choose 의 품질 하한이 sonnet 까지 내려간다
+  // 👤 2026-10-11 「추천안 2」: modelPolicy.recoveryDevFloor=1 이면 회수 dev 는 처음부터 하한 sonnet(한도 완화와 같은 길) — 신규 dev·review 는 불변.
+  let limitRelief = policyRelief({ stage, batchKind, policy: routingConfig.modelPolicy }); // 회수 dev 가 한도를 만나면 true — choose 의 품질 하한이 sonnet 까지 내려간다
   const avoid = stage === 'review' ? (knownDevModel(story) || (stages.includes('dev') ? models.dev : '')) : '';
   if (stage === 'review' && !avoid && !dryRun) {
     note(`⏸ [${story}] review: 실제 구현자 모델 기록이 없어 교차 제공자 리뷰를 증명할 수 없다`);
