@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { computeReviewScope, dropFileSections, entryMatches, foreignScopeBrief, parseFileListLoose, parseSprintRows, pathHasStoryKey, safeReviewScope } from './review-scope.mjs'
+import { computeReviewScope, dropFileSections, entryMatches, foreignScopeBrief, parseFileListLoose, parseSprintRows, pathHasStoryKey, safeReviewScope, isRunnerToolingPath, isSharedDocPath } from './review-scope.mjs'
 import { routeForeignFindings, applyReviewTail } from './review-tail.mjs'
 import { appendForeignDeferred, countOpenFindings } from './story-writes.mjs'
 import { codexReviewPrompt, renderReviewFindings } from './providers/codex.mjs'
@@ -212,4 +212,20 @@ it('computeReviewScope — 한글 키 체계에서 다른 활성 스토리 소�
     ['src/features/contracts/ContractsPage.tsx', '4-20-계약에서-시작하는'],
     ['_bmad-output/implementation-artifacts/4-20-계약에서-시작하는.md', '4-20-계약에서-시작하는'],
   ])
+})
+
+describe('[review-scope] 러너 엔진 사본 · 공용 기록 문서는 스토리 리뷰의 필수 범위가 아니다 (2026-10-06 열람 근거 미달 실사고)', () => {
+  it('러너 엔진 사본 — tools/auto/** 는 범위 밖 · 프로젝트 소유 quality.config.json 과 앱 코드는 범위 안', () => {
+    for (const f of ['tools/auto/run-night.mjs', 'tools/auto/runtime/quality-gates.mjs', 'tools\\auto\\plan-queue.mjs', 'tools/auto/auto.config.json']) assert.equal(isRunnerToolingPath(f), true, f)
+    for (const f of ['tools/auto/quality.config.json', 'tools/automation/x.mjs', 'apps/web/tools/auto/x.ts', 'src/tools/auto.ts', '', null, undefined]) assert.equal(isRunnerToolingPath(f), false, String(f))
+  })
+  it('공용 기록 문서 — _bmad-output/** · 루트 CLAUDE.md · AGENTS.md 는 필수 열람에서 뺀다 · 자기 스토리 파일과 코드는 남긴다', () => {
+    const own = '_bmad-output/implementation-artifacts/4-21-schedule.md'
+    for (const f of ['_bmad-output/implementation-artifacts/sprint-status.yaml', '_bmad-output/implementation-artifacts/DECISIONS-INBOX.md', '_bmad-output\\implementation-artifacts\\deferred-work.md', 'CLAUDE.md', 'AGENTS.md']) assert.equal(isSharedDocPath(f, own), true, f)
+    assert.equal(isSharedDocPath(own, own), false)
+    assert.equal(isSharedDocPath(own.replaceAll('/', '\\'), own), false)
+    for (const f of ['src/pages/SchedulePage.tsx', 'docs/CLAUDE.md', 'apps/web/AGENTS.md', '', null]) assert.equal(isSharedDocPath(f, own), false, String(f))
+    // 자기 스토리 파일을 모르면(빈 값) _bmad-output 아래는 전부 공용으로 본다
+    assert.equal(isSharedDocPath(own), true)
+  })
 })

@@ -227,6 +227,33 @@ describe('[OPS-1] 편성 규칙 8종', () => {
     assert.ok(ip.queue._편성.excluded[0].why.includes('헛돈다'))
   })
 
+  it('규칙 10 보강 — 회수 대상이어도 엔진 원장이 「리뷰 대기」면 마감 재검수로 편성한다(문서의 미체크 Task 로 dev 를 되풀이하지 않는다 · 2026-10-06 116라운드 실사고)', () => {
+    const key = '2-1-a'
+    const sprint = '  2-1-a: in-progress\n'
+    const stories = { [key]: story({ tasks: '- [ ] **Task 9** staging 실측(워커가 닫지 못하는 칸)' }) }
+    const withLedger = (ledger) => {
+      const fx = fixture({ sprint, stories })
+      const logs = join(fx.root, '_bmad-output', 'implementation-artifacts', 'auto-pipeline-logs')
+      mkdirSync(logs, { recursive: true })
+      if (ledger) writeFileSync(join(logs, 'state.json'), JSON.stringify(ledger), 'utf8')
+      return plan({ ...fx, max: 12, today: '2026-08-26' }).queue.batches[0]
+    }
+    const dev = '2026-10-06T01:00:00.000Z', qa = '2026-10-06T01:05:00.000Z'
+    const ready = { [key]: { result: { qaExit: 0, policy: { verdict: 'ready' } } } }
+    // 대조 — 원장이 없으면 종전대로 회수(dev)
+    assert.deepEqual(withLedger(null).stages, ['dev'])
+    // dev·qa 완료 + qa ready + 그 뒤 리뷰 없음 = 리뷰 대기 → 마감 재검수(review 만)
+    assert.deepEqual(withLedger({ done: { [`${key}::dev`]: dev, [`${key}::qa`]: qa }, quality: ready }).stages, ['review'])
+    // qa 가 ready 가 아니면 회수 그대로
+    assert.deepEqual(withLedger({ done: { [`${key}::dev`]: dev, [`${key}::qa`]: qa }, quality: { [key]: { result: { qaExit: 1, policy: { verdict: 'not-ready' } } } } }).stages, ['dev'])
+    // qa 기록이 없으면 회수 그대로
+    assert.deepEqual(withLedger({ done: { [`${key}::dev`]: dev }, quality: ready }).stages, ['dev'])
+    // 그 dev 뒤에 리뷰가 이미 돌았으면(지적을 남긴 뒤의 회수) 회수 그대로
+    assert.deepEqual(withLedger({ done: { [`${key}::dev`]: dev, [`${key}::qa`]: qa, [`${key}::review`]: '2026-10-06T02:00:00.000Z' }, quality: ready }).stages, ['dev'])
+    // 그 리뷰가 열람 근거 미달 등으로 무효(not-run)면 리뷰로 세지 않는다 → 다시 마감 재검수
+    assert.deepEqual(withLedger({ done: { [`${key}::dev`]: dev, [`${key}::qa`]: qa, [`${key}::review`]: '2026-10-06T02:00:00.000Z' }, quality: ready, reviews: { [key]: { result: { result: 'not-run(missing read evidence)' } } } }).stages, ['review'])
+  })
+
   it('규칙 8 — 신규는 create,dev,review · 회수는 dev+force', () => {
     const { queue } = run({
       sprint: '  2-1-a: in-progress\n  2-2-b: backlog\n',

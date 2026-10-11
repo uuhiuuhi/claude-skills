@@ -143,6 +143,23 @@ export function safeReviewScope(args, warn = () => {}) {
   }
 }
 
+/** 러너 엔진 사본(tools/auto/** · 런타임 핀이 지키는 도구)인가 — 스토리 코드가 아니므로 리뷰 범위에서 뺀다.
+ *  2026-10-06 Inspectir 실사고: baseline..HEAD 범위에 사람이 넣은 엔진 변경이 섞여 Claude 리뷰가 「무관한 엔진 파일을 안 읽었다」로
+ *  열람 근거 미달(24-11 11/14 · 24-8 4/36) → 완료 차단. 프로젝트 소유 quality.config.json 은 예외(runtime-pin PROJECT_OWNED 와 같은 잣대). */
+export function isRunnerToolingPath(file) {
+  const p = String(file ?? '').replace(/\\/g, '/')
+  return p.startsWith('tools/auto/') && p !== 'tools/auto/quality.config.json'
+}
+
+/** 공용 기록 문서인가 — 필수 「파일별 열람」 목록에서만 뺀다(변경 내용은 필수 diff 파일 안에 그대로 있다).
+ *  _bmad-output/** (자기 스토리 파일 제외) · 루트 CLAUDE.md · AGENTS.md.
+ *  2026-10-06 Inspectir 24-11: Fable 이 코드·스토리·diff 는 다 읽고 이 문서들(650KB 원장 포함)만 건너뛰어 열람 근거 6/11 미달 → 완료 차단. */
+export function isSharedDocPath(file, ownStoryFile = '') {
+  const norm = (v) => String(v ?? '').split(String.fromCharCode(92)).join('/')
+  const p = norm(file)
+  if (p && p === norm(ownStoryFile)) return false
+  return p.startsWith('_bmad-output/') || p === 'CLAUDE.md' || p === 'AGENTS.md'
+}
 /** unified diff 에서 drop(path) 가 참인 파일 절을 본문째 들어내고 표식 한 줄만 남긴다(명령줄 길이와 무관 — pathspec 대신 본문 단계). */
 export function dropFileSections(diff, drop, label = (p) => `[리뷰 범위 밖 — 다른 활성 스토리 소유: ${p}]`) {
   const text = String(diff ?? '')

@@ -116,6 +116,22 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   if (!gateCfg.marker) gateNotes.push('목업 게이트 미구성 — cfg.mockupGate.marker 가 비어 규칙 6 을 적용하지 않았다(새 화면 스토리도 통과)')
 
   const ART = join(root, '_bmad-output', 'implementation-artifacts')
+  // ‼️ 2026-10-06 실사고(Inspectir 24-11·24-12·24-13 · 3일 116라운드): 회수 dev 가 exit 8(리뷰 대기 — dev·qa 성공 · 교차 검토만 남음)로
+  // 끝났는데 Codex 워커(네트워크 없음)가 스토리 문서의 staging 실측·리뷰 Task 를 체크하지 못해 편성이 매번 「회수(dev)」로 되돌렸다.
+  // 문서 체크박스 대신 **엔진 원장(state.json)** 을 본다 — dev·qa 완료 + qa ready + 그 dev 이후 review 없음 = 리뷰 대기 → 마감 재검수.
+  // 리뷰가 지적을 남기면 review 기록이 dev 보다 새로워져 종전 규칙(회수)으로 돌아가고, 그 왕복은 리뷰·replan 상한이 끊는다.
+  const engineLedger = readJson(join(ART, 'auto-pipeline-logs', 'state.json'))
+  const awaitingReview = (key) => {
+    const done = engineLedger?.done ?? {}
+    const devAt = Date.parse(done[`${key}::dev`] ?? '')
+    if (!Number.isFinite(devAt) || !done[`${key}::qa`]) return false
+    const q = engineLedger?.quality?.[key]?.result // 엔진 원장 모양: { qaExit, policy: { verdict } } (pipeline state.quality)
+    if (q?.qaExit !== 0 || q?.policy?.verdict !== 'ready') return false
+    const reviewAt = Date.parse(done[`${key}::review`] ?? '')
+    // 열람 근거 미달 등으로 무효(not-run)가 된 리뷰는 리뷰로 세지 않는다 — 다시 마감 재검수(2026-10-06 24-11)
+    if (/^not-run/.test(String(engineLedger?.reviews?.[key]?.result?.result ?? ''))) return true
+    return !(Number.isFinite(reviewAt) && reviewAt >= devAt)
+  }
   const sprintText = readIf(join(ART, 'sprint-status.yaml'))
   const epicsText = readIf(join(root, '_bmad-output', 'planning-artifacts', 'epics.md')) ?? ''
   const inboxText = readIf(join(ART, 'DECISIONS-INBOX.md')) ?? ''
@@ -231,7 +247,7 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     const recovery = r.status === 'review' || r.status === 'in-progress'
     const notes = []
     let kind, stages
-    if (r.status === 'review' && s.unfinishedTasks === 0 && s.openPatches === 0 && !s.openDecision) { kind = 'closeout'; stages = ['review'] }
+    if (((r.status === 'review' && s.unfinishedTasks === 0) || (recovery && awaitingReview(r.key))) && s.openPatches === 0 && !s.openDecision) { kind = 'closeout'; stages = ['review'] }
     else {
       kind = recovery ? 'recovery' : 'new'
       stages = kind === 'recovery' ? ['dev'] : ['create', 'dev', 'review']
@@ -309,7 +325,9 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     // 순서가 중요하다: 상한 검사가 앞서면 규칙 9 가 마감 재검수를 선점해, 정상 파이프라인
     // (신규→회수→마감 재검수)의 무인 done 경로가 영구 봉쇄된다. 상한은 kind 별로 다르다.
     let kind
-    if (recovery && s.unfinishedTasks === 0 && s.openPatches === 0) {
+    if (recovery && s.openPatches === 0 && awaitingReview(r.key)) {
+      kind = 'closeout' // 엔진 원장상 리뷰 대기 — 문서의 미체크 Task 와 무관(2026-10-06 무한 회수 사고)
+    } else if (recovery && s.unfinishedTasks === 0 && s.openPatches === 0) {
       // 규칙 10: review 상태 + 고칠 것 0 = **마감 재검수 후보** — 재검수 1회가 통과하면 done,
       // 새 findings 가 나오면 회수 재고가 된다. 종전에는 제외만 해서 미마무리가 영구 적체됐다.
       // in-progress 인데 0/0 인 기형 상태만 종전대로 제외(사람 확인 대상).

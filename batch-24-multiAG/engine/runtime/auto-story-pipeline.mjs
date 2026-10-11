@@ -95,7 +95,7 @@ import { deepRedact } from './providers/redact.mjs';
 import { parseFileList, REVIEW_PENDING_EXIT } from '../runner-rules.mjs';
 import { countReviewRounds } from '../story-ledger.mjs';
 import { applyReviewTail, applyReviewTailBlock, routeForeignFindings } from './review-tail.mjs';
-import { safeReviewScope, dropFileSections, foreignScopeBrief, ownerOfPath, summarizeExcluded } from './review-scope.mjs';
+import { safeReviewScope, dropFileSections, foreignScopeBrief, ownerOfPath, summarizeExcluded, isRunnerToolingPath, isSharedDocPath } from './review-scope.mjs';
 import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendForeignDeferred, appendDecisionsInbox, appendCompletionNotes, countOpenFindings } from "./story-writes.mjs";
 import { detectGates, parseQaChain, classifyQaFailure, repairDecision, buildVerificationManifest, escalationReport } from "./quality-rules.mjs";
 
@@ -945,6 +945,13 @@ function prepareReviewDiff(story) {
   let { diff, files } = r;
   const { targetRef, excludedByOwner, owners } = r;
   files = files.filter((f) => !f.includes("auto-pipeline-logs/"));
+  // 러너 엔진 사본(tools/auto/**)은 스토리 코드가 아니다 — 범위·diff 에서 빼고 표식만 남긴다(2026-10-06 열람 근거 미달 실사고).
+  const tooling = files.filter(isRunnerToolingPath);
+  if (tooling.length) {
+    files = files.filter((f) => !isRunnerToolingPath(f));
+    diff = dropFileSections(diff, isRunnerToolingPath, (p) => `[리뷰 범위 밖 — 러너 엔진 사본(핀 보호 · 스토리 무관): ${p}]`);
+    note(`[${story}] review: 러너 엔진 사본 ${tooling.length}건 범위 제외(${tooling.join(", ")})`);
+  }
   diff = redactSecrets(stripSensitiveFileSections(diff));
   const MAX = 400_000;
   if (diff.length > MAX) diff = diff.slice(0, MAX) + `\n\n[… diff ${diff.length} bytes 중 ${MAX} 까지만 실음 — 나머지 파일은 직접 열어 확인하라: ${files.join(", ")}]\n`;
@@ -1157,7 +1164,7 @@ function prepareWorker(stage, story, variant) {
   if (role === "review") {
     const d = reviewDiff;
     claudeInputs = { storyFile: storyRel, diffFile: rel(d.diffFile), changedFiles: d.files, excludedByOwner: d.excludedByOwner, owners: d.owners };
-    prompt += "\n리뷰 전 아래 스토리·diff·변경 파일을 실제 Read 도구로 읽고, 열린 지적과 완료 상태를 스토리에 기록하라.\nREVIEW_INPUTS_JSON:" + JSON.stringify([...new Set([storyRel, rel(d.diffFile), ...d.files])]);
+    prompt += "\n리뷰 전 아래 스토리·diff·변경 파일을 실제 Read 도구로 읽고, 열린 지적과 완료 상태를 스토리에 기록하라.\nREVIEW_INPUTS_JSON:" + JSON.stringify([...new Set([storyRel, rel(d.diffFile), ...d.files.filter((f) => !isSharedDocPath(f, storyRel))])]);
   }
   return {
     provider: "claude", spec, role, prompt, cmd: built, display: built.display, targetRef: "", guardCommit, transient: claudeInputs ? [resolve(claudeInputs.diffFile)] : [], reviewInputs: claudeInputs,
@@ -1339,7 +1346,7 @@ function runClaude(stage, story, variant = null) {
       if (existsSync(sprintStatusFile)) { const s = setSprintStatus(readFileSync(sprintStatusFile, 'utf8'), basename(sfTail, '.md'), 'done', today()); if (s.changed) writeFileSync(sprintStatusFile, s.text); }
       note(`[${story}][CLAUDE][REVIEW] 다른 스토리 소관 이관 뒤 열린 findings 0 ⇒ done(완주 게이트가 최종 판정)`);
     }
-    const required = [...new Set([w.reviewInputs.storyFile, w.reviewInputs.diffFile, ...w.reviewInputs.changedFiles])];
+    const required = [...new Set([w.reviewInputs.storyFile, w.reviewInputs.diffFile, ...w.reviewInputs.changedFiles.filter((f) => !isSharedDocPath(f, w.reviewInputs.storyFile))])]; // 공용 기록 문서는 diff 로 확인(2026-10-06)
     const normalizeRead = path => resolve(path).replace(/\\/g, '/').toLowerCase();
     const readEvidence = required.filter(path => (res.events?.filePaths ?? []).some(read => normalizeRead(read) === normalizeRead(path)));
     const text = readFileSync(findStoryFile(story), 'utf8');
