@@ -196,6 +196,12 @@ const coveringPassed = (passed, { file, test }) => {
   return false;
 };
 
+/** Skip kinds that cannot run for structural reasons unrelated to the source under landing (arming flag off, fixture
+ * environment absent, duplicated by a covering probe in the same run, not verifiable at this layer). Only these may be
+ * tolerated in a transitively affected module, and only with mechanically checked evidence that holds in this run. */
+export const STRUCTURAL_SKIP_KINDS = new Set(['armed-write-probe', 'fixture-env', 'duplicate-of-anon-baseline', 'not-verifiable-at-layer']);
+const hasMechanicalEvidence = ev => !!ev && typeof ev === 'object' && ['coveredBy', 'envMissing', 'envNotArmed'].some(k => ev[k] !== undefined);
+
 /** Decide one skipped test against the policy. Returns { verdict: 'approved' | 'blocking', reason, entry }. */
 export function evaluateSkip({ file, name, note, state }, policy, { env = {}, passed = new Set(), affected = null } = {}) {
   const entry = policy?.entries?.find(e => normalize(e.file) === file && e.test === name) ?? null;
@@ -205,7 +211,7 @@ export function evaluateSkip({ file, name, note, state }, policy, { env = {}, pa
   if (entry.category !== 'optional-not-applicable') return block(`${entry.category}: ${entry.rationale}`);
   if (affected === null) return block('optional-not-applicable but change scope unknown (BATCH_BASE/BATCH_CHANGED_FILES missing) — optional tolerance applies only to landing runs');
   if (affected.all) return block(`optional-not-applicable but the landing change cannot be mapped to integration modules (${affected.reasons.join('; ')}) — optional tolerance denied`);
-  let editedElsewhere = false;
+  let editedElsewhere = false, structural = false;
   if (affected.modules.has(file)) {
     // 2026-10-10: a story that only APPENDS tests to a shared integration module (tests/db/authed.test.ts, 5k lines) must not be
     // denied by that module's pre-existing approved skips. The module counts as affected only through the direct edit (no
@@ -213,16 +219,30 @@ export function evaluateSkip({ file, name, note, state }, policy, { env = {}, pa
     // A transitively affected module (changed source it exercises) or a skipped test whose block was edited still blocks
     // (2026-09-28 4.16: the story fixed exactly the test that was skipped — the gate was right).
     const directOnly = affected.direct instanceof Set && affected.direct.has(file) && !(affected.transitive instanceof Set && affected.transitive.has(file));
-    const touched = directOnly && typeof affected.touched === 'function' ? affected.touched(file, name) : true;
-    if (touched !== false) return block(`optional-not-applicable but its module is affected by the change under landing${directOnly ? ' (the skipped test itself lies in the edited lines)' : ''}`);
-    editedElsewhere = true;
+    // 2026-10-12 구조적 건너뛰기 완화: 스토리 2-48 이 src/features/tickets/logic.ts 계열만 고쳤는데 그 모듈을 import 하는
+    // 공용 실DB 검사 모듈(tests/db/authed.test.ts)이 「전이적으로 영향받은 모듈」이 되어, 승인표에 이미 등재된 선택적 건너뛰기
+    // 8건(armed-write-probe 1 · fixture-env 2 · duplicate-of-anon-baseline 4 · not-verifiable-at-layer 1)이 전부 block →
+    // 착지 되돌림. 이 종류들은 바뀐 소스와 무관하게 구조적으로 돌 수 없다(무장 env 없음 · 픽스처 env 없음 · 같은 실행의
+    // anon-baseline 프로브가 대신 실증 · 그 층에서 실증 불가). 그대로 두면 티켓 공용 모듈을 건드리는 모든 스토리가 영원히
+    // 착지하지 못한다. 그래서 「전이적으로만」 영향받은 모듈(바로 고친 모듈이 아님 · transitive 집합이 확인됨)에서 kind 가
+    // 구조적 종류이고 기계 검사 증거(coveredBy|envMissing|envNotArmed)가 있으면 아래 증거 검사로 넘긴다 — 증거가 같은
+    // 실행에서 성립할 때만 approved. 계속 block: stale-static-skip·fixture-missing(정적 가드가 대신 본다는 종류 — 바뀐 소스가
+    // 그 가드의 전제를 깰 수 있다)·그 밖의 kind · 증거 불성립 · 바로 고친 모듈(4.16 · 고친 블록 여부는 위 directOnly 규칙)·
+    // affected.all · 범위 미상(direct/transitive 정보 없음).
+    const transitiveOnly = !(affected.direct instanceof Set && affected.direct.has(file)) && affected.transitive instanceof Set && affected.transitive.has(file);
+    if (transitiveOnly && STRUCTURAL_SKIP_KINDS.has(entry.kind) && hasMechanicalEvidence(entry.evidence)) structural = true;
+    else {
+      const touched = directOnly && typeof affected.touched === 'function' ? affected.touched(file, name) : true;
+      if (touched !== false) return block(`optional-not-applicable but its module is affected by the change under landing${directOnly ? ' (the skipped test itself lies in the edited lines)' : ''}`);
+      editedElsewhere = true;
+    }
   }
   if (entry.note !== undefined && !(typeof note === 'string' && note.includes(entry.note))) return block(`skip note does not match the reviewed note (${entry.note})`);
   const ev = entry.evidence ?? {};
   if (ev.coveredBy !== undefined && !coveringPassed(passed, ev.coveredBy)) return block(`covering test did not pass in this run: ${ev.coveredBy.file} > ${ev.coveredBy.test}`);
   if (ev.envMissing !== undefined) { const present = ev.envMissing.filter(key => env[key]?.trim()); if (present.length) return block(`environment provides ${present.join(', ')} — the test should run`); }
   if (ev.envNotArmed !== undefined && armed(env[ev.envNotArmed])) return block(`${ev.envNotArmed} is armed — the probe should run`);
-  return { verdict: 'approved', reason: `${entry.kind}: ${entry.rationale}${editedElsewhere ? ' (module edited directly; this skipped test lies outside the diff)' : ''}`, entry };
+  return { verdict: 'approved', reason: `${entry.kind}: ${entry.rationale}${editedElsewhere ? ' (module edited directly; this skipped test lies outside the diff)' : ''}${structural ? ` (module affected but structural skip (${entry.kind}) — evidence held)` : ''}`, entry };
 }
 
 /** Unified-diff hunks of one file against `base` as new-file line ranges `[start, end]` (1-based, inclusive). A pure deletion

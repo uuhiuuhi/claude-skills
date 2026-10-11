@@ -134,3 +134,10 @@ itself, tool configuration, data fixtures such as `.csv`/`.jsonl`/`.json`) denie
 integration impact cannot be established. Only documents and images by extension (`.md`, `.txt`, `.rst`, `.png`, `.svg`,
 `.pdf`, …) are ignored — a data file is data wherever it lives (`docs/…/rows.csv` still denies). The policy never deletes, excludes or rewrites a test; the full list stays in
 the suite and approved skips are never counted as executed evidence.
+
+**구조적 건너뛰기 완화 (2026-10-12).** A module affected *only transitively* (no edit to the test module itself; a changed
+source it imports maps to it) still tolerates an approved optional skip whose `kind` is structural — `armed-write-probe`,
+`fixture-env`, `duplicate-of-anon-baseline`, `not-verifiable-at-layer` — when its mechanical evidence holds in the same run;
+the reason then reads `module affected but structural skip (<kind>) — evidence held`. Static-guard kinds (`stale-static-skip`,
+`fixture-missing`), failed evidence, a directly edited module (including 4.16: the skipped block itself edited), `all` and an
+unknown scope keep blocking. Origin: a story changing only shared ticket logic left a 5k-line integration module unlandable.
