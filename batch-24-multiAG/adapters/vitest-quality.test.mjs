@@ -91,6 +91,23 @@ test('affected selection maps each source through Vitest and deduplicates shared
   await assert.rejects(selectAffected(ctx, root, ['functions/index.ts'], { unsupportedSourcePrefixes: ['functions/'] }), /unsupported/);
 });
 
+test('a non-JavaScript executable (SQL migration) maps to the guard tests that name it, and stays unsupported when none does', async t => {
+  // 2026-10-11 24-9: every migration story stopped at «unsupported executable coverage» although a guard test asserted the
+  // migration's statements by path — the file was rejected before any test could run.
+  const root = fixture(t);
+  mkdirSync(join(root, 'scripts'));
+  const named = join(root, 'scripts/guard.test.mjs');
+  const other = join(root, 'scripts/other.test.mjs');
+  writeFileSync(named, 'test("047", () => read("docs/migrations/047_deny_write.sql"))');
+  writeFileSync(other, 'test("unrelated", () => 1)');
+  const specs = [{ project: { name: 'unit' }, moduleId: named }, { project: { name: 'unit' }, moduleId: other }];
+  const ctx = { config: { related: undefined }, async getRelevantTestSpecifications() { return this.config.related === undefined ? specs : []; } };
+  const result = await selectAffected(ctx, root, ['docs/migrations/047_deny_write.sql'], {});
+  assert.deepEqual(result.map(s => s.moduleId), [named]);
+  assert.equal(ctx.config.related, undefined);
+  await assert.rejects(selectAffected(ctx, root, ['docs/migrations/048_unnamed.sql'], {}), /unsupported executable coverage/);
+});
+
 test('missing coverage and missing integration environment stop before loading Vitest', async t => {
   const root = fixture(t, { unit: { include: ['tests/**'] }, integration: { include: ['tests/db/**'], requiredEnv: ['QA_PASSWORD'] } });
   const noLoad = async () => { assert.fail('must not load Vitest'); };

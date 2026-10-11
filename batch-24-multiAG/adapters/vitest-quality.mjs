@@ -432,19 +432,47 @@ export async function affectedModules(ctx, root, changed) {
   return { modules, all: reasons.length > 0, reasons, direct, transitive };
 }
 
+/** Test specifications of the configured scope whose text names a non-JavaScript file — the full repo-relative path, or the
+ *  basename without extension when it is distinctive (timestamped migrations `20260910100000_x`, `tools/migrate/x.py`,
+ *  `docs/migrations/047_x.sql`). Same needle rule as `referencingTests`, but the scope is Vitest's own (project
+ *  include/exclude) instead of a `tests/` walk: a project whose guard tests live elsewhere (`scripts/authz/*.test.mjs`)
+ *  has no `tests/` directory at all. */
+export async function referencingSpecs(ctx, file) {
+  const base = basename(file); const stem = base.replace(/\.[^.]+$/, '');
+  const needles = [normalize(file)]; if (/^\d{14}_/.test(stem) || /\.(?:py|sql)$/i.test(base)) needles.push(stem);
+  const previous = ctx.config.related;
+  ctx.config.related = undefined; // whole configured scope, not the dependency graph of one source
+  let specs;
+  try { specs = await ctx.getRelevantTestSpecifications(); } finally { ctx.config.related = previous; }
+  return specs.filter(spec => { let text; try { text = readFileSync(spec.moduleId, 'utf8'); } catch { return false; } return needles.some(n => text.includes(n)); });
+}
+
 export async function selectAffected(ctx, root, changed, config) {
-  const unsupported = changed.filter(file => CODE.test(file) && (!JS.test(file) || (config.unsupportedSourcePrefixes ?? []).some(prefix => file.startsWith(prefix))));
-  if (unsupported.length) throw new Error(`unsupported executable coverage: ${unsupported.join(', ')}`);
+  const prefixes = config.unsupportedSourcePrefixes ?? [];
   const relevant = changed.filter(file => CODE.test(file));
+  // A non-JavaScript executable (SQL migration, migration script) has no JavaScript coverage: the engine's changedCoverage
+  // already leaves it out and its own gates (security/authorization) verify it. Here it selects the project's guard tests
+  // that name it — the same mapping the landing path applies (affectedModules → referencingTests). A file no test names
+  // stays unsupported (fail closed). 2026-10-11 24-9: every migration story stopped at this gate (4+ repair rounds) although
+  // lib.test.mjs asserted the migration's statements and scope — the file was rejected before any test could run.
+  const mapped = new Map(), unsupported = [];
+  for (const file of relevant) {
+    if (JS.test(file)) { if (prefixes.some(prefix => file.startsWith(prefix))) unsupported.push(file); continue; }
+    const specs = await referencingSpecs(ctx, file);
+    if (specs.length) mapped.set(file, specs); else unsupported.push(file);
+  }
+  if (unsupported.length) throw new Error(`unsupported executable coverage: ${unsupported.join(', ')}`);
   if (!relevant.length) throw new Error('no changed JavaScript source or tests to map');
   const selected = new Map();
+  const add = specs => { for (const spec of specs) selected.set(`${spec.project.name ?? ''}:\0${spec.moduleId}`, spec); };
   const previous = ctx.config.related;
   try {
     for (const file of relevant) {
+      if (mapped.has(file)) { add(mapped.get(file)); continue; }
       ctx.config.related = [normalize(resolve(root, file))];
       const specs = await ctx.getRelevantTestSpecifications();
       if (!specs.length) throw new Error(`unmapped changed file: ${file}`);
-      for (const spec of specs) selected.set(`${spec.project.name ?? ''}:\0${spec.moduleId}`, spec);
+      add(specs);
     }
   } finally { ctx.config.related = previous; }
   if (!selected.size) throw new Error('zero affected tests');
@@ -520,7 +548,11 @@ export async function runAdapter({ root = process.cwd(), mode = 'affected', env 
     } else await ctx.start();
     if (evidenceError) throw evidenceError;
     if (!evidence) throw new Error('missing Vitest execution evidence');
-    if (lcov && (!existsSync(lcov) || !/^(?:SF:|TN:)/m.test(readFileSync(lcov, 'utf8')))) throw new Error('fresh LCOV missing');
+    // A change without a JavaScript implementation file (an SQL migration plus the guard tests that name it, or tests only)
+    // instruments nothing, so its fresh report is legitimately empty — the engine's changedCoverage then has no JS lines to
+    // judge (percent null → pass). Any change that does instrument a file must still produce records.
+    const instrumented = affected && changed.some(file => JS.test(file) && !TEST.test(file));
+    if (lcov && (!existsSync(lcov) || (instrumented && !/^(?:SF:|TN:)/m.test(readFileSync(lcov, 'utf8'))))) throw new Error('fresh LCOV missing');
     return { mode, ...evidence, ...(lcov ? { lcov: normalize(relative(root, lcov)) } : {}) };
   } finally { await ctx?.close(); }
 }
