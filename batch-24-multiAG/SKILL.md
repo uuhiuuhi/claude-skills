@@ -59,6 +59,26 @@ node --test tools/auto/model-routing.test.mjs
 
 예약 등록과 복구 절차는 [AUTOFINISH.md](AUTOFINISH.md), 모델별 장애 범위와 증거 기준은 [references/MODEL-ROUTING.md](references/MODEL-ROUTING.md)를 참고한다.
 
+## 계정 풀(자동 전환)
+
+Claude 계정이 둘 이상이면 계정별 CLI 로그인 정보를 상태 폴더(`<stateDir>/accounts/<라벨>.json`)에 보관해 두고, 러너가 **라운드 경계**에서 사용량 기준으로 바꿔 끼운다(기본 꺼짐). 데스크톱 앱과 CLI 는 로그인 저장소가 따로라 앱에서 계정을 바꿔도 러너는 그대로다 — 이 기능은 CLI 쪽(`~/.claude/.credentials.json` 의 `claudeAiOauth`)만 바꾼다. `mcpOAuth` 등 다른 키는 보존하고, 바꾸기 전 백업 1개(`.credentials.json.bak-<시각>`)를 남긴다.
+
+사람 절차(한 번):
+
+1. 계정 A 로 `claude auth login` → `node tools/auto/runtime/account-pool.mjs save <라벨A>`
+2. `claude auth login` 으로 계정 B → `node tools/auto/runtime/account-pool.mjs save <라벨B>`
+3. `tools/auto/auto.config.json` 에 `"accounts": { "enabled": true, "switchAt": 95, "models": ["fable","opus"], "cooldownMin": 30 }` → 러너 재설치(`node ~/.claude/skills/batch-24-multiAG/install.mjs --force`) + 런타임 핀 재기록(라운드 경계에서)
+
+확인·수동 조작: `account-pool.mjs status`(계정별 세션·주간·모델별 % 와 자동 전환 판정 · 토큰은 꼬리 6자만) · `switch <라벨>` · `save-back`. 상태 폴더는 `--state-dir` → `AUTO_BATCH_STATE_DIR` → `auto.config.json` 의 `stateDir` 순으로 정한다.
+
+전환 조건: 현재 계정의 주간 전체 ≥ `switchAt` **또는** `models` 의 모델별이 전부 ≥ `switchAt`(쓸 만한 Claude 모델이 없다) **또는**(`onSession` 기본 true) 세션(5시간) ≥ `switchAt` 이고, 다른 계정 중 주간 전체·세션·그 모델별이 모두 기준 아래인 가장 여유 있는 계정이 있을 때. 직전 전환 뒤 `cooldownMin` 분 안에는 바꾸지 않는다. 쉬는 계정은 접근 토큰이 만료돼 사용량을 못 읽는 일이 잦다 — 갱신 토큰이 살아 있고 최근 「찼다」로 떠난 계정이 아니면 그 계정으로 넘어가고(`blindWhenExpired` 기본 true), 첫 `claude -p` 가 토큰을 갱신한다. 전환 로그는 `[ACCOUNT] 전환 <from> → <to> (사유)` 한 줄이다.
+
+주의:
+- **쓴 뒤 저장** — CLI 는 토큰을 스스로 갱신해 파일을 다시 쓴다. 러너는 Claude 실행기가 끝날 때마다 그 값을 풀에 되돌려 놓는다(`save-back`). 지금 로그인 정보가 어느 풀 계정인지 확인되지 않으면(풀에 없는 계정으로 로그인함) **전환하지 않는다** — 그대로 덮으면 그 계정 토큰을 잃는다. 그때는 `save <라벨>` 이 필요하다.
+- 같은 PC 의 대화형 `claude` 창도 같은 파일을 쓴다. 대화형 창이 옛 계정 토큰을 갱신해 덮으면 러너는 다음 `save-back` 에서 현재 표식을 그 계정으로 정정하고, 다음 라운드에 다시 판정한다.
+- 갱신 토큰까지 만료되면(`status` 에 「재로그인 필요」) 그 계정으로 `claude auth login` → `save <라벨>` 을 다시 한다. `claude auth logout` 은 쓰지 않는다(저장해 둔 토큰이 서버에서 무효가 될 수 있다).
+- 두 계정을 번갈아 쓰는 것은 각 계정 한도 안에서만이다 — 한도를 합치거나 늘리는 기능이 아니다.
+
 ## 돌고 있는 러너 다루기 — 운영 도구
 
 배치는 Claude 밖(윈도우 예약작업)에서 돈다. 대화 창에서 러너를 지켜보거나 끼어들 때는 [ops/README.md](ops/README.md)의 도구를 쓴다.

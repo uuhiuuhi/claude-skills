@@ -37,6 +37,7 @@ import { resolveAsf } from './asf-resolve.mjs'
 import { readModelHealth, recordModelEvent } from './runtime/model-health.mjs'
 import { failureKind } from './runtime/model-policy.mjs'
 import { probeUsage, usageLine } from './runtime/usage-probe.mjs'
+import { autoSwitch as accountAutoSwitch, saveBack as accountSaveBack } from './runtime/account-pool.mjs'
 import { loadConfig } from './plan-queue.mjs'
 import { safeGitPush } from './push-guard.mjs'
 import { preserveRunReport, preserveStopLeftovers, refreshWorktree } from './worktree-refresh.mjs'
@@ -131,6 +132,21 @@ const batchKindOf = (batch) => batch?.kind && ['new', 'recovery', 'closeout'].in
 // ── 다중 프로바이더(2026-09-02) — 설정이 없으면 configured=false 로 종전 동작(Claude 전용 · 엔진 명령줄 무변경) ──
 const PCFG = providerConfig(CFG)
 for (const w of PCFG.warnings) console.log(`⚠ ${w}`)
+// ── Claude 계정 풀(선택 · 기본 꺼짐 · 👤 2026-10-16) — 사람이 계정마다 `account-pool save <라벨>` 해 둔 뒤 accounts.enabled 를 켠다.
+// 라운드 경계(워커 0)에서만 바꿔 끼운다: 실행 중인 `claude -p` 가 옛 계정 토큰을 갱신해 파일을 덮는 경합을 피한다.
+const ACCOUNTS = CFG.accounts?.enabled === true && !dryRun && !process.env.AUTO_PLAN_RUNNER_STUB ? CFG.accounts : null
+/** 라운드 경계 — 현재 계정이 기준(switchAt)에 닿았고 여유 계정이 있으면 전환하고, 전환했으면 사용량을 다시 재
+ *  model-health 의 옛 계정 한도를 푼다(오케스트레이터 캐시 적중 라운드는 probeUsage 를 건너뛰므로 여기서 직접 잰다). */
+async function accountBoundary() {
+  if (!ACCOUNTS) return
+  const sw = await accountAutoSwitch({ stateDir: STATE_DIR, cfg: ACCOUNTS })
+  if (!sw.switched) { if (sw.reason) console.log(`[ACCOUNT] 전환 안 함 — ${sw.reason}`); return }
+  if (CFG.usageProbe === false) return
+  const probed = await probeUsage({ stateDir: STATE_DIR })
+  console.log(probed.usage ? `${usageLine(probed.usage)}${probed.clears?.length ? ` → 지난 한도 해제 ${probed.clears.join(',')}` : ''}` : usageLine(null))
+}
+/** 쓴 뒤 저장 — Claude 실행기가 끝날 때마다 CLI 가 갱신했을 토큰을 풀에 되돌려 놓는다. 실패는 경고만(밤을 세우지 않는다). */
+const accountSaveBackQuiet = () => (ACCOUNTS ? accountSaveBack({ stateDir: STATE_DIR }).then((r) => { if (!r.ok) console.log(`⚠ [ACCOUNT] 쓴 뒤 저장 실패 — ${r.reason}`) }, (e) => console.log(`⚠ [ACCOUNT] 쓴 뒤 저장 오류 — ${String(e?.message ?? e).slice(0, 200)}`)) : Promise.resolve())
 const QA_CMD = typeof CFG.qa === 'string' && CFG.qa.trim() ? CFG.qa : 'npm run qa' // 통합 게이트 명령(엔진 qa 게이트와 같은 정의)
 // ── Fable 오케스트레이터(선택 · 기본 꺼짐 = 종전 동작) ──
 // 켜면 규칙 편성(plan-queue)이 낸 큐를 지휘 모델에게 **재편성**시킨다. 후보 집합은 규칙이 정한
@@ -968,6 +984,7 @@ async function applyOrchestrator(q, outPath) {
     if (res.source === 'fable' || !shouldLadderOn(res.source)) break
     if (i + 1 < ladder.length) console.log(`[ORCHESTRATOR] ${model} 실행기 사고(${res.source}) → 사다리 다음 칸 ${ladder[i + 1]} 로 계획을 다시 묻는다`)
   }
+  await accountSaveBackQuiet()
   if (res?.source === 'deterministic-fallback(runner-reject)' && !res.plan) {
     PLAN_SOURCE = res.source
     PLAN_CACHE_NOTE = 'cache miss'
@@ -1523,6 +1540,7 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
 
   // landing — 원래 배치 순서 그대로 직렬(같은 브랜치 커밋 경합 방지). 실패 스토리는 건너뛰되
   // 나머지는 마저 반영한다(성공분을 버리지 않는다), 끝에 배치 STOP 으로 보고.
+  await accountSaveBackQuiet() // 쓴 뒤 저장 — 워커들이 갱신했을 토큰을 풀에 되돌려 놓는다(계정 풀 켜짐일 때만)
   let worst = 0
   // landing 전 — 배치 트리에 **추적 로그의 미커밋 변경**이 있으면 cherry-pick 이 「local changes would be overwritten」로
   // 적용 자체를 거부한다(충돌 파일 0 → landingResolution([]) = null → 「자동 해소 불가 충돌」로 오보 · 2026-09-04 18:44 실사고:
@@ -1789,6 +1807,7 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     const started = new Date().toISOString()
     assertOperationalRuntime()
     const run = spawnSync(process.execPath, args, { stdio: 'inherit', cwd: process.cwd() })
+    await accountSaveBackQuiet()
     let code = run.status ?? 1
     let seqIntegration = 'pass'
     // ── 순차 경로의 통합 게이트 · push · 배치 매니페스트 (N1 · 병렬과 같은 함수) ──
@@ -1994,6 +2013,7 @@ const headSha = () => {
 
 // ⑥ 실행 — 수동은 단일 실행, 슬롯 모드는 큐가 마를 때까지 연속.
 if (!autoPlan) {
+  await accountBoundary()
   const r = await runQueue(manualQueuePath, null, 1)
   logPreserved(preserveRunReport({ logDir: LOG_DIR, label: `${START_DATE} 수동 실행`, dryRun }))
   console.log(`\n==== 야간 배치 종료 — ${SUMMARY} ====`)
@@ -2009,6 +2029,7 @@ for (let round = 1; ; round++) {
   assertOperationalRuntime()
   if (ds.note) console.log(`· ${ds.note}`)
   if (!ds.ok) break // 코드 충돌 — 이 라운드 휴면(다음 슬롯이 재판정 · 같은 지문 2회면 오늘 동기 중단)
+  await accountBoundary() // 편성 전 — 편성기·오케스트레이터가 바뀐 계정의 model-health 를 본다
   const sel = await selectQueue()
   if (!sel) break // 오늘 몫 소진(편성 0) — 다음 정시 슬롯이 새로 판단한다
   const baseSha = headSha() // 라운드 전 HEAD — 끝나고 새 커밋이 만진 스토리를 본다(진전 원장)

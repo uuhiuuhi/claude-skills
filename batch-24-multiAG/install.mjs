@@ -189,6 +189,8 @@ if (!existsSync(cfgPath)) {
       '  무진전은 replan(접근 변경)으로 풀고 maxReplansPerStory 회를 넘기면 그 스토리만 「자율 한계」로 사람 질문에 올린다.',
       '  epicScope all = epicOrder 뒤에 나머지 에픽을 번호순으로 잇는다(listed = 종전처럼 자른다) · mockups ai-draft = 새 화면은 AI 목업 초안 후 진행(approved-only = 사람 승인 대기).',
       '  dailyCap 0/없음 = 무제한(모드 무관) · 남은 사람 몫은 <상태 폴더>/human-gates.json 에 남고 「내가 할 일 뭐야」가 읽는다.',
+      '── 계정 풀(2026-10-16 · 기본 꺼짐) ──',
+      'accounts: 계정마다 `claude auth login` → `node tools/auto/runtime/account-pool.mjs save <라벨>` 로 2개 이상 저장한 뒤 enabled true. 라운드 경계에서 현재 계정의 주간 전체 또는 models 모델별 전부가 switchAt(%) 이상(onSession 이면 세션도)이고 여유 계정이 있으면 ~/.claude/.credentials.json 의 claudeAiOauth 만 바꿔 끼운다(mcpOAuth 보존 · cooldownMin 분 안 재전환 없음). 상태 확인 = account-pool.mjs status.',
     ],
     project,
     epicOrder: [],
@@ -213,6 +215,7 @@ if (!existsSync(cfgPath)) {
     integrationGate: { enabled: true },
     orchestrator: { enabled: true, model: 'fable', timeoutMin: 5, cacheHours: 12 },
     autonomy: { mode: 'guarded', maxReplansPerStory: 2, epicScope: 'all', mockups: 'ai-draft' },
+    accounts: { enabled: false, switchAt: 95, models: ['fable', 'opus'], cooldownMin: 30 },
   }, null, 2) + '\n', 'utf8')
   console.log('✔ tools/auto/auto.config.json (epicOrder 를 채워야 자동 편성이 돈다)')
 } else notes.push('· auto.config.json 이미 있음 — 유지')
