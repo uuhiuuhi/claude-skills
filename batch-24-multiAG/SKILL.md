@@ -59,6 +59,8 @@ node --test tools/auto/model-routing.test.mjs
 
 예약 등록과 복구 절차는 [AUTOFINISH.md](AUTOFINISH.md), 모델별 장애 범위와 증거 기준은 [references/MODEL-ROUTING.md](references/MODEL-ROUTING.md)를 참고한다.
 
+다른 PC 에 처음 설치하는 순서(준비물 · 복사본 · 계정 풀 · 예약 작업 · 체크리스트)는 [INSTALL-NEW-PC.md](INSTALL-NEW-PC.md).
+
 ## 계정 풀(자동 전환)
 
 Claude 계정이 둘 이상이면 계정별 CLI 로그인 정보를 상태 폴더(`<stateDir>/accounts/<라벨>.json`)에 보관해 두고, 러너가 **라운드 경계**에서 사용량 기준으로 바꿔 끼운다(기본 꺼짐). 데스크톱 앱과 CLI 는 로그인 저장소가 따로라 앱에서 계정을 바꿔도 러너는 그대로다 — 이 기능은 CLI 쪽(`~/.claude/.credentials.json` 의 `claudeAiOauth`)만 바꾼다. `mcpOAuth` 등 다른 키는 보존하고, 바꾸기 전 백업 1개(`.credentials.json.bak-<시각>`)를 남긴다.
