@@ -201,6 +201,9 @@ const coveringPassed = (passed, { file, test }) => {
  * tolerated in a transitively affected module, and only with mechanically checked evidence that holds in this run. */
 export const STRUCTURAL_SKIP_KINDS = new Set(['armed-write-probe', 'fixture-env', 'duplicate-of-anon-baseline', 'not-verifiable-at-layer']);
 const hasMechanicalEvidence = ev => !!ev && typeof ev === 'object' && ['coveredBy', 'envMissing', 'envNotArmed'].some(k => ev[k] !== undefined);
+/** Static-guard kind that a NEW test module (absent at the base) may still tolerate — only via `coveredBy`, which must pass in
+ * the same run. See the 2026-10-16 note in evaluateSkip. */
+export const NEW_FILE_COVERED_STATIC_KINDS = new Set(['fixture-absent-covered-by-static']);
 
 /** Decide one skipped test against the policy. Returns { verdict: 'approved' | 'blocking', reason, entry }. */
 export function evaluateSkip({ file, name, note, state }, policy, { env = {}, passed = new Set(), affected = null } = {}) {
@@ -211,7 +214,7 @@ export function evaluateSkip({ file, name, note, state }, policy, { env = {}, pa
   if (entry.category !== 'optional-not-applicable') return block(`${entry.category}: ${entry.rationale}`);
   if (affected === null) return block('optional-not-applicable but change scope unknown (BATCH_BASE/BATCH_CHANGED_FILES missing) — optional tolerance applies only to landing runs');
   if (affected.all) return block(`optional-not-applicable but the landing change cannot be mapped to integration modules (${affected.reasons.join('; ')}) — optional tolerance denied`);
-  let editedElsewhere = false, structural = false;
+  let editedElsewhere = false, structural = false, newBase = false;
   if (affected.modules.has(file)) {
     // 2026-10-10: a story that only APPENDS tests to a shared integration module (tests/db/authed.test.ts, 5k lines) must not be
     // denied by that module's pre-existing approved skips. The module counts as affected only through the direct edit (no
@@ -230,7 +233,21 @@ export function evaluateSkip({ file, name, note, state }, policy, { env = {}, pa
     // 그 가드의 전제를 깰 수 있다)·그 밖의 kind · 증거 불성립 · 바로 고친 모듈(4.16 · 고친 블록 여부는 위 directOnly 규칙)·
     // affected.all · 범위 미상(direct/transitive 정보 없음).
     const transitiveOnly = !(affected.direct instanceof Set && affected.direct.has(file)) && affected.transitive instanceof Set && affected.transitive.has(file);
-    if (transitiveOnly && STRUCTURAL_SKIP_KINDS.has(entry.kind) && hasMechanicalEvidence(entry.evidence)) structural = true;
+    // 2026-10-16 신규 파일 완화(3-14 실사고): 체인에서 새로 생긴 검사 파일은 base 기준 diff 에서 파일 전체가 「바뀐 줄」이라
+    // 모든 건너뛰기가 「고친 블록 안」이 되어, 승인표에 등재된 구조적 건너뛰기까지 전부 block 됐다(릴리스 열차 T2 main 기준
+    // 전체 diff 에서만 발생). 4.16 규칙의 뜻은 「고친 바로 그 검사가 건너뛰어졌다」이고, base 에 없던 파일에는 고치기 전의
+    // 검사가 없으므로 해당하지 않는다. 그래서 신규 파일(affected.newFiles · git cat-file 실측)은 「고친 블록 안」 판정을 빼고
+    // 전이 영향 모듈과 같은 구조적 완화 경로를 탄다 — 구조적 kind + 같은 실행에서 성립한 기계 증거일 때만 approved.
+    // fixture-absent-covered-by-static(「정적 가드가 대신 본다」)도 신규 파일에 한해 coveredBy 가 있을 때 허용한다(보수적 판단):
+    // 종전 우려 「바뀐 소스가 그 가드의 전제를 깰 수 있다」는 정적 가드가 바뀐 소스 위에서 같은 실행에 통과했는지로 기계 확인되고
+    // (아래 coveredBy 검사 · 미통과면 block), 신규 파일은 그 스토리가 처음 만든 검사라 「고쳐서 꺼진 검사」가 될 수 없다.
+    // coveredBy 없는 증거(envMissing 등)만 있으면 허용하지 않는다. 기존 파일을 바로 고친 경우(4.16)·그 밖의 kind·
+    // newFiles 미상(null)은 종전대로 block.
+    const newFile = affected.newFiles instanceof Set && affected.newFiles.has(file);
+    const structuralKind = STRUCTURAL_SKIP_KINDS.has(entry.kind) && hasMechanicalEvidence(entry.evidence);
+    const newFileStatic = newFile && NEW_FILE_COVERED_STATIC_KINDS.has(entry.kind) && !!entry.evidence && entry.evidence.coveredBy !== undefined;
+    if (transitiveOnly && structuralKind) structural = true;
+    else if (newFile && (structuralKind || newFileStatic)) structural = newBase = true;
     else {
       const touched = directOnly && typeof affected.touched === 'function' ? affected.touched(file, name) : true;
       if (touched !== false) return block(`optional-not-applicable but its module is affected by the change under landing${directOnly ? ' (the skipped test itself lies in the edited lines)' : ''}`);
@@ -242,7 +259,7 @@ export function evaluateSkip({ file, name, note, state }, policy, { env = {}, pa
   if (ev.coveredBy !== undefined && !coveringPassed(passed, ev.coveredBy)) return block(`covering test did not pass in this run: ${ev.coveredBy.file} > ${ev.coveredBy.test}`);
   if (ev.envMissing !== undefined) { const present = ev.envMissing.filter(key => env[key]?.trim()); if (present.length) return block(`environment provides ${present.join(', ')} — the test should run`); }
   if (ev.envNotArmed !== undefined && armed(env[ev.envNotArmed])) return block(`${ev.envNotArmed} is armed — the probe should run`);
-  return { verdict: 'approved', reason: `${entry.kind}: ${entry.rationale}${editedElsewhere ? ' (module edited directly; this skipped test lies outside the diff)' : ''}${structural ? ` (module affected but structural skip (${entry.kind}) — evidence held)` : ''}`, entry };
+  return { verdict: 'approved', reason: `${entry.kind}: ${entry.rationale}${editedElsewhere ? ' (module edited directly; this skipped test lies outside the diff)' : ''}${newBase ? ' (new file vs base — structural skip with mechanical evidence)' : structural ? ` (module affected but structural skip (${entry.kind}) — evidence held)` : ''}`, entry };
 }
 
 /** Unified-diff hunks of one file against `base` as new-file line ranges `[start, end]` (1-based, inclusive). A pure deletion
@@ -282,6 +299,21 @@ export function testTouched(content, hunks, name) {
     if (overlaps(start + 1, end + 1)) return true;
   }
   return false;
+}
+
+/** Files among `files` that do not exist at `base` (created by the change under landing — committed or still untracked), via one
+ * `git cat-file --batch-check`. Paths are resolved relative to `root` (`<base>:./<file>`). null when unknown (git failed, base
+ * has no tree, or the output cannot be matched) — callers then grant no new-file relaxation (fail closed). */
+export function newFilesVsBase(root, base, files) {
+  const list = [...files].map(normalize);
+  const input = [`${base}^{tree}`, ...list.map(file => `${base}:./${file}`)].join('\n') + '\n';
+  const git = spawnSync('git', ['cat-file', '--batch-check'], { cwd: root, input, encoding: 'utf8', windowsHide: true });
+  if (git.status !== 0) return null;
+  const lines = git.stdout.split(/\r?\n/).filter(Boolean);
+  if (lines.length !== list.length + 1 || / missing$/.test(lines[0])) return null;
+  const added = new Set();
+  list.forEach((file, i) => { if (/ missing$/.test(lines[i + 1])) added.add(file); });
+  return added;
 }
 
 /** `touched(file, name)` for evaluateSkip — one git diff per file, memoized. */
@@ -533,6 +565,7 @@ export async function runAdapter({ root = process.cwd(), mode = 'affected', env 
       const mapping = await createVitest('test', { root, watch: false, run: true, passWithNoTests: true, include: [...new Set([...(config.unit?.include ?? []), ...scope.include])], exclude: ['**/node_modules/**'], reporters: [], coverage: { enabled: false } });
       try { skipPolicy.affected = await affectedModules(mapping, root, parseChanged(root, env)); } finally { await mapping.close(); }
       skipPolicy.affected.touched = touchedByDiff(root, env.BATCH_BASE);
+      skipPolicy.affected.newFiles = newFilesVsBase(root, env.BATCH_BASE, skipPolicy.affected.modules);
       const specs = await ctx.getRelevantTestSpecifications();
       if (!specs.length) throw new Error('zero integration test specifications');
       await ctx.standalone();

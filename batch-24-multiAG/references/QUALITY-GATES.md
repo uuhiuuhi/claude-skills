@@ -141,3 +141,12 @@ source it imports maps to it) still tolerates an approved optional skip whose `k
 the reason then reads `module affected but structural skip (<kind>) — evidence held`. Static-guard kinds (`stale-static-skip`,
 `fixture-missing`), failed evidence, a directly edited module (including 4.16: the skipped block itself edited), `all` and an
 unknown scope keep blocking. Origin: a story changing only shared ticket logic left a 5k-line integration module unlandable.
+
+**신규 파일 구조적 건너뛰기 완화 (2026-10-16).** A test module that does not exist at `BATCH_BASE` (`affected.newFiles`, one
+`git cat-file --batch-check`; committed or untracked) is exempt from the "skipped block lies in the edited lines" rule — the
+whole file is the diff, yet there is no earlier version of the test that the change could have switched off. It takes the
+same relaxation as a transitively affected module: a structural kind with mechanical evidence holding in the same run, plus
+`fixture-absent-covered-by-static` only through `coveredBy` (the static guard must pass in that run, against the changed
+source). The reason reads `(new file vs base — structural skip with mechanical evidence)`. Other kinds, failed evidence, an
+unknown `newFiles` (null), `all`, and an existing module edited directly (4.16) keep blocking. Origin: Story 3-14 / release
+train T2 — tests created in the chain were unlandable against `origin/main`.

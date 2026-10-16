@@ -152,6 +152,10 @@ API에만 관련 integration, 인증·권한·DB·RLS에만 authorization/securi
 같은 커밋·지문·diff·검사 구현·설정의 성공 결과만 재사용한다. 같은 명령은 한 번 실행해 공유한다.
 중앙 실행 시간이 기존보다 30% 이상 늘면 원인을 분석하고 검사 선택·캐시·병렬화를 조정한다.
 
+신규 파일 구조적 건너뛰기 완화(2026-10-16 · 3-14 실사고): base 에 없던 검사 파일(`git cat-file` 실측)은 diff 전체가 「바뀐 줄」이라도 「고친 블록 안」 판정을 빼고 전이 영향 모듈과 같은 완화를 탄다.
+승인표의 구조적 kind(armed-write-probe·fixture-env·duplicate-of-anon-baseline·not-verifiable-at-layer)와 `fixture-absent-covered-by-static`(coveredBy 가 같은 실행에서 통과할 때만)이 대상이다.
+기존 파일을 바로 고쳐 건너뛴 블록이 diff 안이면 종전대로 막는다(4.16). 정본 = QUALITY-GATES.md 「Reviewed integration skip policy」.
+
 ## 통합·복구
 
 [마이그레이션](references/MIGRATION.md)을 따른다. `engine/`과 그 안의 `runtime/`이 유일한 소스다.
