@@ -1,0 +1,85 @@
+---
+name: last-check
+description: 라스트점검 — 계획한 스토리가 전부 끝난 프로젝트의 마지막 점검을 7단계로 돈다(완료 증거 → 정적 보안 → 동적 권한 실측 → 스테이징 사용자 QA → 주제형 적대 검토 → 운영 정리 → 문서·회고). BMad 최종 점검 스킬과 gstack(/gstack-cso · /gstack-qa-only)을 기능이 겹치지 않게 한 줄로 묶는다. 보고만 하고 고치지 않는다. 「라스트점검」 「마지막 점검」 「최종 점검 돌려줘」 「프로젝트 끝났으니 점검」에 쓴다.
+---
+
+# 라스트점검 (last-check) — 끝났다고 말하기 전에 도는 7단계
+
+> 한 줄: **「다 됐다」의 증거를 모으고, 보안·권한·운영의 구멍을 사람 결정 목록으로 바꾼다.** 이 스킬은 아무것도 고치지 않는다 — 찾은 것은 스토리(원장)로 등재하고, 되돌릴 수 없는 일은 전부 사람 결정으로 올린다.
+
+## 0. 전제와 규칙
+
+- **입장 조건**(하나라도 아니면 멈추고 그 사실만 보고): ① 상태표의 스토리가 전부 `done`(`cancelled`·보류 확정은 제외) ② 개발선이 있으면 마지막 릴리스 열차가 운영에 나간 뒤 ③ 무인 러너 정지(lock 없음) ④ 작업 트리 깨끗 · origin 과 같음.
+- **보고만 한다**: 코드 수정 · 커밋 · 푸시 · 배포 · 운영 DB 쓰기 · 외부 발송 · 계정 생성 금지. gstack 의 고치는 스킬(`/gstack-qa` · `/gstack-ship` · `/gstack-land-and-deploy` · `/gstack-review` 자동 수정)은 쓰지 않는다 — 보고 전용 `/gstack-qa-only` 와 정적 `/gstack-cso` 만.
+- **외부 스킬 안전**: gstack 의 텔레메트리·온보딩 동의는 **거절**한다. 결과물(findings)은 저장소 안 보고서에만 적고 외부로 보내지 않는다. gstack 이 사람에게 묻는 선택은 「보고만 · 고치지 않음」으로 답한다.
+- **심각도와 이월**: 보안·권한 / 개인정보 / 데이터 손실·복구 / 결제·청구 / 외부 발송·배포 안전장치 = 5범주는 심각도와 무관하게 「나중에」로 넘기지 않는다(스토리 등재 · 사람 결정).
+- **프로젝트 프로필**: 저장소 루트의 `.claude/last-check.profile.md` 를 먼저 읽는다(검사 명령 · 스테이징 주소 · QA 계정 환경변수 이름 · 핵심 흐름 · 운영 DB 식별자 · 5범주 경로). 없으면 아래 「프로필 예시」 꼴로 먼저 만들어 사람에게 보이고 시작한다.
+- **보고 말투**: 비개발자가 읽는다 — 쉬운 말 · 결론 먼저 · 사람이 결정할 것만 따로 모은다.
+
+## 1. 단계표 — 무엇을 어떤 도구로, 무엇은 안 하는지
+
+| # | 단계 | 도구(정본) | 이 단계가 보는 것 | 이 단계가 **안 보는 것**(겹침 방지) | 통과 기준 |
+|---|---|---|---|---|---|
+| 0 | 입장 판정 | 상태표 집계 · `git status` · 러너 lock | 위 전제 4개 | — | 4/4 |
+| 1 | 완료 증거표 | 프로젝트 자체 「자율 마무리 진단」(BaroOS = `tools/auto/readiness.mjs` · T1~T8 스토리 기준 · P1~P8 프로젝트 기준) 을 **최신 판으로 재실행** | 검사 통과 · 테스트 존재 · 교차 검토 기록 · 문서=코드 · 남은 일 0 · 미확인 0 | 보안·사용성(아래 단계 몫) | P1~P8 전부 통과 또는 막는 항목이 전부 사람 확정 미룸 |
+| 2 | 정적 보안(코드·의존성·비밀값) | ① `npm audit --omit=dev`(또는 프로필의 의존성 점검 명령) ② 비밀값 스캔(프로필 패턴 + 엔진 시크릿 스캔) ③ **`/gstack-cso --offline`**(OWASP Top 10 · STRIDE · 코드 경계 · 오탐 거르기 · 정적만) | 코드와 설정 안의 취약점 · 취약 패키지 · 저장소 안 비밀값 | 실제 DB·서버에 요청해 보는 것(3단계) · 화면 조작(4단계) | 높음·치명 0 · 중간은 전부 스토리 등재 · 비밀값 0 |
+| 3 | 동적 권한 실측(실제 DB·서버) | 프로필의 권한 검사 3종(BaroOS = `npm run test:security` · `test:authorization` · `test:api`) + **운영 DB 권한표 SQL**(anon 권한 0 · 모든 표 RLS 켜짐 · SECURITY DEFINER 함수 목록·실행 권한) + **외부 발송 게이트 실측**(승인 없이 나가는 경로 0) + **마스킹 경계 전수**(외부로 나가는 PDF·메일·SNS 초안 샘플에 고객 식별정보 0) | 「실제로 막히나」 | 코드 읽기(2단계) · 사용자 흐름(4단계) | 3종 통과 · anon 0 · RLS 100% · 발송 게이트 실측 통과 · 마스킹 위반 0 |
+| 4 | 사용자 흐름 QA(스테이징) | ① **`/gstack-qa-only`**(Standard 등급 · 스테이징 주소 · QA 계정 · **보고만** · 회귀 테스트 자동 생성물은 저장소에 넣지 않음) ② `bmad-qa-generate-e2e-tests` 로 프로필의 **핵심 흐름 N개**(예: 접수→배정→완료→보고서→청구) 회귀 테스트 **1회 생성**(저장소에 남기는 자산) | 사람이 쓰는 길에서 깨지는 것 · 핵심 흐름의 자동 회귀 | 역할별 걸음 확인 전수(이미 `role-test-together` 로 한 것 · 반복 안 함) · 스토리별 화면 확인(러너·이식 때 한 것) | 치명·높음 버그 0(있으면 스토리 등재) · 핵심 흐름 테스트 초록 |
+| 5 | 주제형 적대 검토(2건만) | ① `bmad-review-adversarial-general` — 주제 「권한·마스킹 경계」 ② `bmad-review-edge-case-hunter` — 주제 「외부 발송·결제·청구·백업 경계 조건」 | 설계 차원의 구멍 | 스토리별 코드 리뷰(러너가 매 스토리 수행 · 반복 안 함) · 보안 정적 분석(2단계) | 높음 0 · 나머지 스토리 등재 |
+| 6 | 운영 정리 | 점검표: ① 운영 DB 의 QA·시험 계정·시험 데이터 목록(삭제는 👤 건별) ② **백업 복구 리허설 1회**(운영 백업 → 개발 프로젝트에 실제 복원 · 행 수 대조) ③ 예약 작업·알림 봇·비밀값 만료일 ④ 접근 계정 목록(저장소·DB·배포·도메인) ⑤ 롤백 카드 최신화 | 운영이 혼자 돌 준비 | 코드·화면(앞 단계) | 목록 완성 · 복구 리허설 성공 · 👤 결정 목록 |
+| 7 | 문서·회고 | ① `bmad-document-project`(지금 코드 기준 문서 재생성) ② 설명서 최종판(프로필의 설명서 명령) ③ 결정 기록(인박스 「사후 확인」) 전수 닫기 ④ `bmad-retrospective`(에픽별 → 종합 1장) | 인수인계·교훈 | 주간 회고(`/gstack-retro` 는 쓰지 않음 · 겹침) | 문서 생성 · 열린 사후 확인 0 · 회고 1장 |
+
+겹침 원칙: **같은 질문을 두 도구가 보지 않는다.** 정적(코드) = gstack cso · 동적(실제 권한) = 프로젝트 검사 + SQL 실측 · 사용자 흐름 = gstack qa-only · 회귀 자산 = BMad e2e 생성 · 설계 구멍 = BMad 적대 검토(주제 2건) · 완료 증거 = 프로젝트 자체 진단.
+
+## 2. 진행 순서(한 번에 · 단계마다 결과를 적고 다음으로)
+
+1. 프로필 읽기 → 입장 판정(0) → 보고서 폴더 만들기 `_bmad-output/implementation-artifacts/LAST-CHECK-<YYYY-MM-DD>/REPORT.md`(없으면 `docs/LAST-CHECK-<날짜>/`).
+2. 1 → 2 → 3 → 4 → 5 → 6 → 7 순서. 한 단계가 **치명(운영 장애·정보 노출)** 을 찾으면 멈추고 그것부터 보고한다. 그 밖의 실패는 적고 계속.
+3. 찾은 것은 전부 **스토리 등재 초안**으로 바꾼다(제목 · 근거 · 심각도 · 5범주 여부 · 추천안). 고치지 않는다.
+4. 보고서 끝에 **「👤 사람 결정 목록」**(삭제·계정·비용·외부 발송·범위 판단만) 과 **「등재할 스토리 목록」** 을 둔다.
+5. 보고서 커밋은 문서 전용으로 1개(프로젝트 규칙이 문서 즉시 커밋이면 그대로 · 아니면 사람에게).
+
+## 3. 보고서 꼴(REPORT.md)
+
+```
+# 라스트점검 보고 — <프로젝트> <날짜> · 기준 커밋 <해시> · 운영 배포본 <버전>
+결론: 통과 n/7 · 치명 0 · 👤 결정 m건 · 등재할 스토리 k건
+| # | 단계 | 도구 | 결과 | 근거(파일·수치) | 남은 것 |
+...
+## 찾은 것(심각도순 · 5범주 표시)
+## 👤 사람 결정 목록
+## 등재할 스토리 목록(초안)
+## 이번에 보지 못한 것(미측정)
+```
+
+## 4. 프로필 예시 — `.claude/last-check.profile.md`
+
+```markdown
+# last-check 프로필 — <프로젝트>
+- 상태표: _bmad-output/implementation-artifacts/sprint-status.yaml (제외 상태: cancelled · ⏸ 보류 확정)
+- 자율 마무리 진단: node tools/auto/readiness.mjs (또는 npm run status:build 의 ⑦)
+- 의존성 점검: npm audit --omit=dev
+- 비밀값 패턴: (sk|pk|eyJ|service_role|SUPABASE_SERVICE|CF_API_TOKEN|RESEND_API_KEY)
+- 권한 검사 3종: npm run test:security · npm run test:authorization · npm run test:api
+- 운영 DB: Supabase ref <ref> · 읽기 명령 <명령> · 권한표 SQL <파일>
+- 스테이징 주소: https://<staging> · QA 계정 환경변수: QA_TEST_* QA_TEAM_LEAD_* QA_OFFICE_* QA_SALES_* QA_EXECUTIVE_* QA_ADMIN_*
+- 핵심 흐름(회귀 테스트 생성 대상): 1) … 2) … 3) …
+- 외부 발송 경로: <함수·표> · 승인 게이트: <어디서 막히나>
+- 마스킹 경계: <외부로 나가는 산출물 목록>
+- 5범주 경로: supabase/ · *.sql · auth · session · roles · billing · notify · outbox · deploy
+- 설명서 명령: npm run manual:build
+- 백업: <백업 위치> · 복원 대상(개발 프로젝트): <ref>
+```
+
+## 5. 쓰지 않는 것과 이유
+
+- `/gstack-qa`(고치고 커밋) · `/gstack-ship` · `/gstack-land-and-deploy` · `/gstack-review` 자동 수정 — 라스트점검은 보고만.
+- `/gstack-retro` — 주간 회고용 · BMad 에픽 회고와 겹침.
+- `bmad-code-review` · `bmad-check-implementation-readiness` — 스토리 단위·기획 전 도구 · 러너가 이미 매 스토리 수행.
+- 역할별 걸음 확인 전수 — `role-test-together` 로 이미 한 것은 결과 링크만.
+
+## 6. 설치
+
+- 이 폴더를 `~/.claude/skills/last-check/` 로 복사(삭제 없이 덮어쓰기).
+- gstack: `git clone --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack && cd ~/.claude/skills/gstack && ./setup --prefix --no-browser`(접두사 `/gstack-` · 브라우저는 첫 사용 때 설치 · Bun 필요). 업데이트는 `git pull` 뒤 `./setup` 재실행.
+- BMad 스킬은 프로젝트 `.claude/skills/bmad-*` 에 있어야 한다(retrospective · review-adversarial-general · review-edge-case-hunter · qa-generate-e2e-tests · document-project).
