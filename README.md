@@ -8,7 +8,7 @@ Claude Code · Codex 스킬 백업이자 BMad 프로젝트의 현황판과 스�
 | [`batch-24-multiAG`](batch-24-multiAG/) | **현행 배치 정본(2026-09-06~)**. 수동 create→dev→review, 예약 실행, 공유 lock·모델 상태, 큐·병렬 워커, landing·QA·복구. 아래 `auto-story-finish`·`night-batch-ops` 를 대체한다. |
 | [`dev-status`](dev-status/) | BMad v6 프로젝트의 **읽기 전용** 개발 현황판. `epics.md`·`sprint-status.yaml`·스토리 md·배치 로그를 규칙만으로 판정해 진행률·단계 배지·파일 겹침·불일치·다음 할 일을 로컬 HTML 한 장으로 낸다. 외부 의존성 0, LLM 호출 0. |
 | [`screen-check`](screen-check/) | 구현이 끝난 스토리를 **실제 화면에서** 확인 — 격리 worktree + 별도 포트 dev 서버 + Playwright(playwright-core·Edge) 로 QA 계정 로그인·성공/거부 경로·모바일까지 밟고 **평가 항목 10개 × 10점 채점표**를 보고서 마지막에 낸다. 24배치(batch-24-multiAG)와 별개 스킬 · 로컬이 아닌 주소(운영·미리보기)에서는 **보기 전용 방식**만 허용한다(저장 요청을 브라우저 단계에서 차단). |
-| [`last-check`](last-check/) | **라스트점검** — 계획한 스토리가 전부 끝난 프로젝트의 마지막 점검 7단계(완료 증거 → 정적 보안 `/gstack-cso` → 동적 권한 실측 → 스테이징 QA `/gstack-qa-only` → 주제형 적대 검토(BMad) → 운영 정리 → 문서·회고(BMad)). BMad 최종 점검 스킬과 gstack 을 기능 겹침 없이 묶음 · 보고만 하고 고치지 않음 · 프로젝트 프로필 `.claude/last-check.profile.md` 로 맞춤. |
+| [`last-check`](last-check/) | **라스트점검** — 계획한 스토리가 전부 끝난 프로젝트의 마지막 점검 7단계(완료 증거 → 정적 보안 `/gstack-cso` → 동적 외부 경계 실측 → 스테이징 QA `/gstack-qa-only` → 주제형 적대 검토(BMad) → 운영 정리 → 문서·회고(BMad)). BMad 최종 점검 스킬과 gstack 을 기능 겹침 없이 묶음 · 보고만 하고 고치지 않음 · 프로젝트 프로필 `.claude/last-check.profile.md` 로 맞춤. |
 | [`daily-brief`](daily-brief/) | 하루 시작 브리핑 — 지난 라운드 결과 → 현황판 신선도 → 사람이 정할 것 → 다음 작업 추천 → 「운영 반영분을 같이 확인하시겠습니까」. 재료가 없으면 「판정 불가」라고 쓴다. |
 | [`my-todo`](my-todo/) | 「내가 할 일 뭐야?」 — 러너가 스스로 풀 수 없어 남긴 사람 몫을 추천안과 함께 한 장으로 내고, 답을 받으면 그 자리에서 반영한다. |
 | [`runner-start`](runner-start/) | 24시간 러너를 지금 바로 깨우고 첫 편성을 실측해 보고한다. |
