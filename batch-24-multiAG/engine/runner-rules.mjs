@@ -240,6 +240,17 @@ export function lockAction({ exists, parseOk, pidAlive, hbAgeMs }) {
   return (hbAgeMs ?? Infinity) > LOCK_HB_STALE_MS ? 'takeover' : 'skip-unknown'
 }
 
+/** 감시자 「lock-dead」 기본 심박 기한 — 주인 pid 가 죽은 것을 확인한 뒤의 보조 조건이라 짧아도 된다. */
+export const WD_LOCK_DEAD_HB_MS = 30 * 60 * 1000
+
+/** 감시자 「죽은 lock」 판정 — lock 파일은 남았는데 주인 pid 가 죽었고(ESRCH) 심박도 기한을 넘겼다.
+ *  2026-10-18 14:2x 실사고: 데스크톱 앱 재시작과 함께 러너 node(pid 29380)가 사라지고 lock 만 남아, 감시자는
+ *  lock 이 있다는 이유로 「ok」를 내고 lock-stale(일지 3시간 정지)까지 기다렸다 — 틈 적용 대기기는 lock 부재를 기다리며 예약을 끈 채 교착.
+ *  pid 판정 불능('unknown' = EPERM 등)·JSON 손상은 죽었다고 보지 않는다(살아 있는 러너를 밀어내지 않는다 — lockAction 과 같은 원칙). */
+export function lockDead({ exists, parseOk, pidAlive, hbAgeMs } = {}, { hbStaleMs = WD_LOCK_DEAD_HB_MS } = {}) {
+  return Boolean(exists && parseOk && pidAlive === false && (hbAgeMs ?? Infinity) > hbStaleMs)
+}
+
 /** STOP 차단기 v2 — 구판은 창(12시간) 단위 통짜 차단이라 초저녁 실패 2회가 밤 전체(최장 11시간)를
  *  휴면시켰다. 차단 단위를 「원인 서명」(exit 코드 + 멈춘 배치 라벨)으로 좁힌다: 같은 서명 2회만
  *  차단하고 다른 원인은 계속 돈다. 창 누적 4회는 폭주 백스톱으로 남긴다.

@@ -649,7 +649,7 @@ describe('restoreDevProvenance — 감시자 구현자 기록 복원은 workers 
   })
   it('배선: 감시자 플레이북이 이 함수를 쓰고 반환 문구에 workers+done 을 적는다', () => {
     const wd = readFileSync(join(HERE, 'watchdog.mjs'), 'utf8')
-    assert.match(wd, /import \{ restoreDevProvenance, stopBlocked, stopWindowId \} from '\.\/runner-rules\.mjs'/)
+    assert.match(wd, /import \{ [^}]*\brestoreDevProvenance\b[^}]* \} from '\.\/runner-rules\.mjs'/)
     assert.match(wd, /restoreDevProvenance\(st, story, who, now\(\)\.toISOString\(\)\)/)
     assert.match(wd, /state\.json workers\+done\[\$\{K\}\]/)
     // 수리 결과 문구가 「미해소」로 오인되지 않는다(감시자 unresolved 판정 어휘)

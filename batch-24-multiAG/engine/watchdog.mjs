@@ -8,7 +8,8 @@
 //
 // 무엇을 하나(슬롯 사이 · 30분마다 · 예약작업 `<project>-watchdog`):
 //   ① 진단 — exit-info.json(엔진 STOP 부기) + night-last-run.md + slots.log 로 「같은 스토리·같은 이유 반복」 ·
-//      「러너 침묵(75분 이상 라운드 없음)」 · 「lock 정체(3시간 이상 로그 정지)」 를 가른다.
+//      「러너 침묵(75분 이상 라운드 없음)」 · 「lock 정체(3시간 이상 로그 정지)」 · 「죽은 lock(주인 pid 사망 + 심박 30분 넘음)」 을 가른다.
+//      죽은 lock 은 엔진과 같은 「STOP 잔여물 보존」 커밋(비밀값 검사 포함) → lock 을 archive 로 옮김 → 러너 재기동(2026-10-18 실사고).
 //   ② 알려진 원인은 플레이북으로 **바로 고친다**(구현자 기록 부재 → state.json 복원 · 런타임 핀 불일치 →
 //      핀 재기록 · codex CLI 판 부족 → 재설치 · 429/한도 → 대기).
 //   ③ 모르는 원인은 Claude 진단 세션(headless `claude -p` · opus · 편집 허용 = 상태·설정 파일만)을 불러
@@ -23,12 +24,13 @@
 //
 // 하지 않는 것: 앱 코드 수정 · main 머지 · 배포 · 운영 DB · 외부 발송(텔레그램 봇 = 내부 채널). 운영 방식 5항 그대로.
 // 사용: node tools/ops/watchdog.mjs [--dry-run] [--once] [--no-claude] [--force-restart]
-import { existsSync, readFileSync, writeFileSync, appendFileSync, statSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, appendFileSync, statSync, readdirSync, rmSync, mkdirSync, renameSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { restoreDevProvenance, stopBlocked, stopWindowId } from './runner-rules.mjs'
+import { lockDead, restoreDevProvenance, stopBlocked, stopWindowId } from './runner-rules.mjs'
+import { parsePorcelainZ, preserveStopLeftovers } from './worktree-refresh.mjs'
 
 const args = process.argv.slice(2)
 const has = (k) => args.includes(k)
@@ -62,6 +64,8 @@ const WD_STATE = join(STATE_DIR, 'watchdog-state.json')
 const SILENT_MIN = Number(process.env.WD_SILENT_MIN ?? 75)      // 이 시간 이상 새 라운드가 없으면 「침묵」
 const SHELL_STUCK_MIN = Number(process.env.WD_SHELL_STUCK_MIN ?? 20) // 예약작업은 Running 인데 lock 없이 이 시간 동안 일지가 그대로면 「껍데기 정지」(2026-09-24 06:35 실사고)
 const LOCK_STALE_MIN = Number(process.env.WD_LOCK_STALE_MIN ?? 180)
+const LOCK_DEAD_HB_MIN = Number(process.env.WD_LOCK_DEAD_HB_MIN ?? 30)   // 주인 pid 가 죽었고 심박이 이보다 낡았으면 「죽은 lock」
+const LOCK_DEAD_QUIET_MIN = Number(process.env.WD_LOCK_DEAD_QUIET_MIN ?? 10) // 잔여물이 이 시간 안에 바뀌었으면 아직 누가 쓰는 중(고아 워커) — 다음 회차로 미룬다
 const REPEAT_FIX_AT = 2                                           // 같은 이유 2회 반복 → 수리
 const REPEAT_GATE_AT = 3                                          // 수리 뒤에도 3회 → 그 스토리만 편성 제외
 const RETRY_AFTER_MIN = Number(process.env.WD_RETRY_AFTER_MIN ?? 180) // 미해소(진단 unfixed/skipped) 뒤 같은 서명 재시도 간격 — 30분마다 25분짜리 진단 세션을 다시 부르지 않게
@@ -99,7 +103,24 @@ const wd = readJson(WD_STATE, { repeats: {}, fixed: {}, gated: {}, lastRoundAt: 
 const exitInfoRaw = readJson(join(LOGS, 'exit-info.json'))
 // exit 8(리뷰 대기·회수 대기)은 정지가 아니라 다음 편성의 몫 — 반복으로 세면 정상 왕복(마감 재검수↔회수)에 진단 세션을 부른다(2026-09-10 회수 대기 도입과 함께).
 const exitInfo = exitInfoRaw && Number(exitInfoRaw.code) === 8 ? null : exitInfoRaw
-const lock = existsSync(join(STATE_DIR, 'runner.lock'))
+const LOCK_PATH = join(STATE_DIR, 'runner.lock')
+/** run-night readLockInfo 와 같은 판정 — ESRCH 만 사망 · EPERM 등은 판정 불능('unknown'). */
+function readLockInfo() {
+  if (!existsSync(LOCK_PATH)) return { exists: false }
+  const parsed = readJson(LOCK_PATH)
+  const pid = Number(parsed?.pid)
+  if (!parsed || !Number.isInteger(pid) || pid <= 0) return { exists: true, parseOk: false, hbAgeMs: Infinity }
+  let pidAlive
+  try { process.kill(pid, 0); pidAlive = true } catch (e) { pidAlive = e?.code === 'ESRCH' ? false : 'unknown' }
+  const hb = Date.parse(parsed.hb ?? parsed.at ?? '') || 0
+  return { exists: true, parseOk: true, pidAlive, hbAgeMs: hb ? Date.now() - hb : Infinity, parsed }
+}
+const lockInfo = readLockInfo()
+const lock = lockInfo.exists
+const lockIsDead = lockDead(lockInfo, { hbStaleMs: LOCK_DEAD_HB_MIN * 60000 })
+const lockDesc = !lock ? '' : lockInfo.parseOk
+  ? `(pid ${lockInfo.parsed.pid} ${lockInfo.pidAlive === true ? '생존' : lockInfo.pidAlive === false ? '없음' : '판정불능'} · 심박 ${Number.isFinite(lockInfo.hbAgeMs) ? (lockInfo.hbAgeMs / 60000).toFixed(0) + '분 전' : '없음'})`
+  : '(읽기 실패)'
 const slots = tail(join(STATE_DIR, 'slots.log'), 4000) // 09-11 05:50 오탐: 14시간 라운드에서 헤더가 600줄 밖으로 밀려 정상 STOP 을 pre-engine 으로 오인
 const lastRoundIdx = slots.map((l, i) => [i, l]).filter(([, l]) => /^# 야간 배치 .* 라운드 \d+/.test(l)).pop()
 const lastStopLine = slots.filter((l) => /\*\*중단\(exit \d+\)\*\*/.test(l)).pop() ?? ''
@@ -131,7 +152,7 @@ const tick = (breakerWin || preEngineStop) ? (taskInfo.split('|')[0] ?? '') : (e
 if (signature) { wd.repeats[signature] = (wd.repeats[signature] ?? 0) + (wd.lastTick === tick ? 0 : 1); wd.lastTick = tick }
 const repeats = signature ? wd.repeats[signature] : 0
 
-log(`진단 — task=${taskState || '?'}(${taskInfo || '-'}) lock=${lock} slots.log ${slotsMtimeMin.toFixed(0)}분 전 · STOP=${signature || '없음'}${stopAgeMin !== null ? ` (${stopAgeMin.toFixed(0)}분 전 · 반복 ${repeats}회)` : ''}`)
+log(`진단 — task=${taskState || '?'}(${taskInfo || '-'}) lock=${lock}${lockDesc} slots.log ${slotsMtimeMin.toFixed(0)}분 전 · STOP=${signature || '없음'}${stopAgeMin !== null ? ` (${stopAgeMin.toFixed(0)}분 전 · 반복 ${repeats}회)` : ''}`)
 
 // 한도(날씨) 서명 — 엔진 exit 5 의 라우팅 차단(no eligible model · shared cooldown)·429·한도는 대기가 답이다(러너도 차단기에서 뺀다).
 // 09-12 00:20 실사고: 주간 한도 중 9-4 create 「no eligible model; shared cooldown applies」 반복 2회를 「플레이북 밖」으로 판정해 헛 Claude 진단(exit 1) + 오경보.
@@ -142,7 +163,8 @@ const triedRecently = (sig) => { const t = wd.fixed[sig]; return Boolean(t && !t
 // 러너가 일을 한 건도 못 받고 30분마다 잠만 자는 상태를 따로 잡는다.
 const downSyncDormant = !lock && slots.slice(-400).filter((l) => /하향 동기 코드 충돌/.test(l)).length >= 2
 let verdict = 'ok'
-if (lock && slotsMtimeMin > LOCK_STALE_MIN) verdict = 'lock-stale'
+if (lockIsDead) verdict = 'lock-dead' // 주인이 죽은 lock 은 「러너 살아 있음」이 아니다 — 아래 lock 기반 판정보다 먼저 본다(2026-10-18 실사고)
+else if (lock && slotsMtimeMin > LOCK_STALE_MIN) verdict = 'lock-stale'
 // 2026-09-24 06:28~07:04 실사고: 밤 배치 node 가 종료 시 libuv 단언으로 죽고 슬롯 껍데기(powershell)가 안 끝나 예약작업이 Running 으로 남았다 —
 // MultipleInstances=IgnoreNew 라 06:35 트리거가 무시(0x800710E0)됐고 종전 판정은 taskState==='Ready' 만 침묵으로 봐 「정상」이었다.
 else if (!lock && slotsMtimeMin > SHELL_STUCK_MIN && taskState === 'Running') verdict = 'shell-stuck'
@@ -353,6 +375,50 @@ function resetBreaker(winId, why) {
   if (!DRY) writeFileSync(p, JSON.stringify(st, null, 2) + '\n', 'utf8')
   return `창 ${winId} 차단기 리셋(${why})`
 }
+/** 죽은 lock 정리 — ① 잔여물이 최근에 바뀌었으면(고아 워커가 아직 쓰는 중) 손대지 않고 다음 회차 ② 엔진과 같은 「STOP 잔여물 보존」
+ *  커밋(금지 경로·비밀값 검사 · 엔진 사본 되돌림 · worktree-refresh.preserveStopLeftovers 그대로) ③ 직전에 lock 을 다시 읽어 같은 주인·여전히 사망일 때만
+ *  archive 로 옮긴다(그 사이 새 슬롯이 lock 을 잡았으면 무접촉) ④ 트리가 깨끗할 때만 재기동을 권한다(더러우면 새로고침이 거부한다 — 사람 몫). */
+function recoverDeadLock() {
+  const dead = lockInfo.parsed
+  // 같은 주인이 여전히 죽어 있는가 — 잔여물 보존 직전·lock 이동 직전에 다시 본다(그 사이 새 슬롯이 lock 을 잡았으면 무접촉 · astra 검토 10-18)
+  const sameDead = () => { const a = readLockInfo(); return a.exists && a.parsed?.token === dead.token && a.pidAlive === false }
+  // git 상태 조회 실패는 「깨끗함」이 아니다 — null 이면 아무것도 하지 않는다
+  const dirty = () => { const r = rgit(['status', '--porcelain=v1', '-z', '--untracked-files=all']); return r.status === 0 ? parsePorcelainZ(r.stdout ?? '').filter((p) => p && p !== '.auto-batch-worktree') : null }
+  const left = dirty()
+  if (!left) return { restart: false, unresolved: true, text: '러너 클론 git status 실패 — 손대지 않음(사람 몫)' }
+  const freshest = left.reduce((m, p) => { try { return Math.max(m, statSync(join(RUNNER, p)).mtimeMs) } catch { return m } }, 0)
+  if (freshest && (Date.now() - freshest) < LOCK_DEAD_QUIET_MIN * 60000) {
+    return { restart: false, unresolved: true, text: `잔여물 ${left.length}건 중 ${((Date.now() - freshest) / 60000).toFixed(0)}분 전에 바뀐 파일이 있음 — 아직 누가 쓰는 중(고아 워커?) · 손대지 않고 다음 회차` }
+  }
+  if (DRY) return { restart: false, unresolved: false, text: `(리허설) 잔여물 ${left.length}건 보존 커밋 → lock(pid ${dead.pid}) archive 이동 → 러너 재기동` }
+  const parts = []
+  let clean = !left.length
+  if (left.length) {
+    if (!sameDead()) return { restart: false, unresolved: false, text: 'lock 이 그새 바뀜(새 러너가 잡음 또는 사라짐) — 잔여물·lock 무접촉' }
+    const kept = preserveStopLeftovers({ cwd: RUNNER, label: `감시자 — 죽은 lock(pid ${dead.pid})`, exitCode: null })
+    if (kept.committed) parts.push(`잔여물 보존 커밋 ${kept.committed.slice(0, 8)}(${kept.entries}건${kept.engineReverted ? ` · 엔진 사본 ${kept.engineReverted}건 되돌림` : ''})`)
+    else parts.push(`잔여물 보존 ${kept.failed ? `실패 — ${kept.failed}` : `건너뜀 — ${kept.skipped}`}`)
+    clean = dirty()?.length === 0
+  }
+  if (!sameDead()) {
+    parts.push('lock 이 그새 바뀜(새 러너가 잡음 또는 사라짐) — lock 무접촉')
+    return { restart: false, unresolved: false, text: parts.join(' · ') }
+  }
+  const dst = join(STATE_DIR, 'archive', `runner.lock.dead-${now().toISOString().replace(/[:.]/g, '-')}-pid${dead.pid}.json`)
+  try { mkdirSync(dirname(dst), { recursive: true }); renameSync(LOCK_PATH, dst) } catch (e) {
+    parts.push(`lock 이동 실패 — ${e?.message ?? e}`)
+    return { restart: false, unresolved: true, text: parts.join(' · ') }
+  }
+  // 옮긴 파일이 그 죽은 lock 인지 확인 — 재확인과 이동 사이에 새 러너가 교체했으면 제자리로 돌려놓는다(자리가 비어 있을 때만)
+  if (readJson(dst)?.token !== dead.token) {
+    try { if (!existsSync(LOCK_PATH)) renameSync(dst, LOCK_PATH) } catch { /* 새 러너가 이미 새 lock 을 만들었다 */ }
+    parts.push('옮긴 lock 이 다른 주인 것 — 제자리로 돌려놓음')
+    return { restart: false, unresolved: false, text: parts.join(' · ') }
+  }
+  parts.push(`죽은 lock → ${basename(dst)}`)
+  if (!clean) parts.push('러너 클론에 미커밋 잔여물이 남음 — 재기동 생략(새로고침이 거부한다 · 사람 몫)')
+  return { restart: clean, unresolved: !clean, text: parts.join(' · ') }
+}
 function startRunner(why) {
   if (has('--dry-run')) { log(`(리허설) 러너 기동 — ${why}`); return }
   if (existsSync(join(STATE_DIR, 'runner.lock'))) { log(`러너 기동 생략 — lock 존재(진행 중) · ${why}`); return }
@@ -449,6 +515,18 @@ if (verdict === 'repeat' || has('--force-restart')) {
 } else if (verdict === 'silent') {
   notify(`러너 침묵 ${slotsMtimeMin.toFixed(0)}분(예약작업 ${taskState} · ${taskInfo}) — 즉시 기동합니다.`)
   startRunner('침묵')
+} else if (verdict === 'lock-dead') {
+  const r = recoverDeadLock()
+  log(`죽은 lock — ${r.text}`)
+  notify(`러너 프로세스(pid ${lockInfo.parsed.pid})는 없는데 lock 만 남아 있었습니다(심박 ${(lockInfo.hbAgeMs / 60000).toFixed(0)}분 전) — ${r.text}${r.restart ? ' · 러너 재기동.' : ''}`)
+  if (r.restart) {
+    // 예약 상태는 지금 다시 읽는다. 꺼져 있으면(틈 적용 대기기가 끈 상태) 그쪽이 다시 켠다 — 감시자가 켜면 틈 작업과 겹친다.
+    // 실행 중(Running)이면 끄지 않는다 — 막 시작한 정상 슬롯일 수 있다(astra 검토 10-18). lock 없이 계속 멈춰 있으면 다음 회차 shell-stuck 이 끝내고 다시 켠다.
+    const st = ps(`(Get-ScheduledTask -TaskName ${RUNNER_TASK}).State`).stdout?.trim()
+    if (st === 'Disabled') log('러너 기동 생략 — 예약작업이 꺼져 있음(틈 적용 중일 수 있음 · 그쪽이 다시 켠다)')
+    else if (st === 'Running') log('러너 기동 생략 — 예약작업이 실행 중(새 슬롯이거나 남은 껍데기 · 껍데기면 다음 회차 shell-stuck 이 처리)')
+    else startRunner('죽은 lock 정리 뒤')
+  }
 } else if (verdict === 'lock-stale') {
   notify(`runner.lock 이 ${slotsMtimeMin.toFixed(0)}분째 로그 없이 남아 있습니다 — 정체 의심. Claude 진단 세션을 부릅니다.`)
   const res = claudeDiagnose(`lock-stale ${slotsMtimeMin.toFixed(0)}분 · ${signature}`)
