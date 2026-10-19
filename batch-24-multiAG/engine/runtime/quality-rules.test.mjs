@@ -2,7 +2,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  REPAIR_DEFAULTS, buildVerificationManifest, classifyQaFailure, deletedTestJustified, detectGates, escalateRepairIntroduced,
+  REPAIR_DEFAULTS, buildVerificationManifest, classifyQaFailure, compactQualityLedger, deletedTestJustified, detectGates, escalateRepairIntroduced,
   escalationReport, parseQaChain, performanceTriggers, qaSubchecks, repairDecision, securityTriggers, splitDiffByFile, testIntegrityFindings,
 } from './quality-rules.mjs'
 
@@ -275,3 +275,23 @@ describe('[quality] Node native coverage bypass', () => {
     assert.deepEqual(scan('const docs = "node:coverage disable";'),[]);
   });
 });
+
+describe('[quality] 엔진 원장 quality 압축 — 지금 지문만 상세 보존 · 나머지는 편성 판정 2칸만', () => {
+  const big = (fp, qaExit, verdict) => ({ fingerprint: fp, result: { qaExit, policy: { verdict, gates: { unit: 'x'.repeat(1000) } }, security: { raw: 'y'.repeat(1000) } } })
+  it('지문이 다른 항목은 qaExit·policy.verdict 만 남기고 지문을 버린다(재사용 비교에 걸리지 않음)', () => {
+    const out = compactQualityLedger({ a: big('old', 0, 'ready'), b: big('now', 1, 'blocked') }, 'now')
+    assert.deepEqual(out.a, { compacted: true, result: { qaExit: 0, policy: { verdict: 'ready' } } })
+    assert.equal(out.b.fingerprint, 'now')
+    assert.equal(out.b.result.security.raw.length, 1000)
+  })
+  it('이미 압축된 항목은 그대로 · 멱등 · 입력을 바꾸지 않는다', () => {
+    const input = { a: big('old', 0, 'ready') }
+    const once = compactQualityLedger(input, 'now')
+    assert.deepEqual(compactQualityLedger(once, 'other'), once)
+    assert.equal(input.a.fingerprint, 'old')
+  })
+  it('policy 가 없던 항목도 깨지지 않는다 · 빈 입력은 빈 객체', () => {
+    assert.deepEqual(compactQualityLedger({ a: { fingerprint: 'o', result: { qaExit: 2 } } }, 'n').a, { compacted: true, result: { qaExit: 2 } })
+    assert.deepEqual(compactQualityLedger(undefined, 'n'), {})
+  })
+})

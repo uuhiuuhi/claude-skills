@@ -97,7 +97,7 @@ import { countReviewRounds } from '../story-ledger.mjs';
 import { applyReviewTail, applyReviewTailBlock, routeForeignFindings } from './review-tail.mjs';
 import { safeReviewScope, dropFileSections, foreignScopeBrief, ownerOfPath, summarizeExcluded, isRunnerToolingPath, isSharedDocPath } from './review-scope.mjs';
 import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendForeignDeferred, appendDecisionsInbox, appendCompletionNotes, countOpenFindings } from "./story-writes.mjs";
-import { detectGates, parseQaChain, classifyQaFailure, repairDecision, buildVerificationManifest, escalationReport } from "./quality-rules.mjs";
+import { detectGates, parseQaChain, classifyQaFailure, repairDecision, buildVerificationManifest, escalationReport, compactQualityLedger } from "./quality-rules.mjs";
 
 import { fingerprint as qualityFingerprint, qualityRunOutcome, qualityFailureKind } from './quality-gates.mjs';
 import { readRecord } from './schema-migration.mjs';
@@ -304,11 +304,13 @@ function markDone(story, stage) {
     }
   }
   if (stage === 'qa' && !dryRun) {
-    state.quality ??= {};
+    const fp = codeFingerprint();
+    // 지금 지문이 아닌 항목은 편성 판정 2칸만 남긴다 — 상세가 영구히 쌓이면 state.json 이 깃허브 100MB 한도를 넘어 체인 push 가 막힌다(2026-10-19)
+    state.quality = compactQualityLedger(state.quality, fp);
     const current = qualityLog[story] ?? {};
     const { diff = '', ...summary } = current;
     state.quality[story] = {
-      fingerprint: codeFingerprint(),
+      fingerprint: fp,
       result: deepRedact({ ...summary, testEvidence: newTestsFromDiff(diff) }),
     };
   }
