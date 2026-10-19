@@ -12,6 +12,7 @@ Claude Code · Codex 스킬 백업이자 BMad 프로젝트의 현황판과 스�
 | [`daily-brief`](daily-brief/) | 하루 시작 브리핑 — 지난 라운드 결과 → 현황판 신선도 → 사람이 정할 것 → 다음 작업 추천 → 「운영 반영분을 같이 확인하시겠습니까」. 재료가 없으면 「판정 불가」라고 쓴다. |
 | [`my-todo`](my-todo/) | 「내가 할 일 뭐야?」 — 러너가 스스로 풀 수 없어 남긴 사람 몫을 추천안과 함께 한 장으로 내고, 답을 받으면 그 자리에서 반영한다. |
 | [`runner-start`](runner-start/) | 24시간 러너를 지금 바로 깨우고 첫 편성을 실측해 보고한다. |
+| [`mattpocock-architecture`](mattpocock-architecture/) | 코드 구조 개선 — `/improve-codebase-architecture` 가 자주 바뀐 곳의 「얕은 모듈 → 깊은 모듈」 후보를 HTML 보고서로 내고 고른 후보를 질문으로 파고든다. 보조 스킬 3개(`codebase-design`·`domain-modeling`·`grilling`)와 함께 설치 · mattpocock/skills 원본(MIT). |
 | [`role-test-together`](role-test-together/) | 사용자와 역할별 기능 테스트를 점검표 한 행씩 선택지로 같이 진행하고, 문제 줄을 후속 스토리로 한 번에 등재한다. 스킬 폴더에는 틀만 있고 실제 점검표·결과는 프로젝트 안에 둔다. |
 
 ## 통합 이유와 구조
