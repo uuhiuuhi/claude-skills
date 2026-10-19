@@ -29,7 +29,7 @@ import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { lockDead, restoreDevProvenance, stopBlocked, stopWindowId } from './runner-rules.mjs'
+import { lockDead, restoreDevProvenance, stopBlocked, stopWindowId, telegramCurlRequest, telegramSent } from './runner-rules.mjs'
 import { parsePorcelainZ, preserveStopLeftovers } from './worktree-refresh.mjs'
 
 const args = process.argv.slice(2)
@@ -361,8 +361,10 @@ function notify(text) {
     const chatId = chat.chat_id ?? chat.chatId ?? chat.id
     if (!token || !chatId || DRY) { log(`알림(미발송${DRY ? ' · 리허설' : ''}): ${text.slice(0, 160)}`); return }
     const body = JSON.stringify({ chat_id: chatId, text: `🐶 감시자 · ${text}`.slice(0, 3800), disable_notification: false })
-    const r = spawnSync('curl', ['-s', '-m', '20', '-X', 'POST', `https://api.telegram.org/bot${token}/sendMessage`, '-H', 'Content-Type: application/json', '-d', body], { encoding: 'utf8' })
-    log(`알림 발송 ${r.status === 0 ? 'ok' : 'fail'}: ${text.slice(0, 120)}`)
+    const req = telegramCurlRequest(`https://api.telegram.org/bot${token}/sendMessage`, body)
+    const r = spawnSync('curl', req.args, { input: req.input, encoding: 'utf8' })
+    const sent = telegramSent(r.stdout)
+    log(`알림 발송 ${sent ? 'ok' : `fail(exit ${r.status} · ${String(r.stdout ?? '').replace(/\s+/g, ' ').slice(0, 120)})`}: ${text.slice(0, 120)}`)
   } catch (e) { log(`알림 실패: ${e.message}`) }
 }
 /** 창 차단기 리셋(/resume 동등 · telegram-rules.resetWindowStops 와 같은 모양) — 걸려 있을 때만 쓴다. */

@@ -728,3 +728,15 @@ export function orchestratorLadder(model, ladder = null) {
 export function shouldLadderOn(source) {
   return /^deterministic-fallback\((runner-timeout|runner-error|runner-nonzero)/.test(String(source ?? ''))
 }
+
+// ── 감시자 텔레그램 발송 (2026-10-19 실측) ── Windows 에서 한글 JSON 을 curl 인자(`-d body`)로 넘기면 인자가 시스템 코드페이지로
+// 바뀌어 텔레그램이 「400 strings must be encoded in UTF-8」로 거절한다. curl 종료 코드는 0 이라 감시자는 「발송 ok」로 적었다.
+// 본문은 stdin(`--data-binary @-`)으로 UTF-8 바이트를 그대로 넘기고, 성공은 응답의 "ok":true 로만 판정한다.
+/** curl 인자와 stdin 입력 — 본문은 인자에 싣지 않는다. */
+export function telegramCurlRequest(url, body) {
+  return { args: ['-s', '-m', '20', '-X', 'POST', url, '-H', 'Content-Type: application/json; charset=utf-8', '--data-binary', '@-'], input: Buffer.from(String(body), 'utf8') }
+}
+/** 텔레그램 응답 본문이 성공인가 — 종료 코드가 아니라 "ok":true 로 본다. */
+export function telegramSent(stdout) {
+  try { return JSON.parse(String(stdout ?? '')).ok === true } catch { return false }
+}
