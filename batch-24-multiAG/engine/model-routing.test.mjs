@@ -267,3 +267,34 @@ test('codexDev maxRisk -1 은 새 Codex 구현을 0건으로 만들고 교차 �
   assert.equal(codexDevPolicy({ enabled: true, maxRisk: -5, models: ['codex:gpt-5.6-sol'] }).maxRisk, -1);
   assert.equal(codexDevPolicy({ enabled: true, maxRisk: 99, models: ['codex:gpt-5.6-sol'] }).maxRisk, 10);
 });
+
+test('reviewMinTier (👤 2026-10-21 「위험도 높은 스토리 검토도 sol로」): 기본 = astra 유지 · 2 = sol 먼저 · sol 막히면 astra · 위험도 4 미만은 불변', () => {
+  const base = { role: 'review', risk: 8, difficulty: 8, avoid: 'opus', providers };
+  // 기본(키 없음·범위 밖 값) — 종전과 같이 astra 만
+  assert.deepEqual(modelCandidates({ role: 'review', risk: 8, difficulty: 8 }), ['codex:gpt-6-astra']);
+  assert.equal(selectModel(base).model, 'codex:gpt-6-astra');
+  assert.equal(selectModel({ ...base, preferred: 'codex:gpt-5.6-sol' }).model, 'codex:gpt-6-astra');
+  assert.equal(selectModel({ ...base, preferred: 'codex:gpt-5.6-sol', reviewMinTier: 9 }).model, 'codex:gpt-6-astra');
+  // 2 — sol 먼저, 선호 sol 그대로, sol 이 막히면 astra
+  assert.deepEqual(modelCandidates({ role: 'review', risk: 8, difficulty: 8, reviewMinTier: 2 }), ['codex:gpt-5.6-sol', 'codex:gpt-6-astra']);
+  assert.equal(selectModel({ ...base, reviewMinTier: 2 }).model, 'codex:gpt-5.6-sol');
+  assert.equal(selectModel({ ...base, reviewMinTier: 2, preferred: 'codex:gpt-5.6-sol' }).model, 'codex:gpt-5.6-sol');
+  assert.equal(selectModel({ ...base, reviewMinTier: 2, blocked: (m) => m === 'codex:gpt-5.6-sol' }).model, 'codex:gpt-6-astra');
+  // 위험도 4 미만은 설정과 무관하게 같다
+  for (const difficulty of [2, 8]) {
+    const lowRisk = { role: 'review', risk: 2, difficulty };
+    assert.deepEqual(modelCandidates({ ...lowRisk, reviewMinTier: 2 }), modelCandidates(lowRisk));
+    assert.equal(selectModel({ ...lowRisk, avoid: 'opus', providers, reviewMinTier: 2 })?.model, selectModel({ ...lowRisk, avoid: 'opus', providers })?.model);
+  }
+  // 교차검증 불변 — 구현이 sol 이면 sol 검토 금지
+  const codexDev = { enabled: true, maxRisk: 10, models: ['codex:gpt-5.6-sol'] };
+  assert.equal(selectModel({ ...base, avoid: 'codex:gpt-5.6-sol', codexDev, reviewMinTier: 2, preferred: 'codex:gpt-5.6-sol' }).model, 'codex:gpt-6-astra');
+  // 러너(StageRouter)·배정기(정책 경로)도 같은 설정을 따른다
+  const stateDir = mkdtempSync(join(tmpdir(), 'routing-review-tier-'));
+  assert.equal(new StageRouter({ stateDir, providers }).choose({ role: 'review', risk: 8, difficulty: 8, avoid: 'opus' }).model, 'codex:gpt-6-astra');
+  assert.equal(new StageRouter({ stateDir, providers, reviewMinTier: 2 }).choose({ role: 'review', risk: 8, difficulty: 8, avoid: 'opus' }).model, 'codex:gpt-5.6-sol');
+  const [a] = assignWorkers({ stories: [{ key: 'x' }], providers, config: { modelPolicy: { enabled: true, reviewMinTier: 2 } } });
+  assert.equal(a.review, 'codex:gpt-5.6-sol');
+  const [b] = assignWorkers({ stories: [{ key: 'x' }], providers, config: { modelPolicy: { enabled: true } } });
+  assert.equal(b.review, 'codex:gpt-6-astra');
+});

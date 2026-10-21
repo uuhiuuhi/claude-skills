@@ -275,7 +275,7 @@ export function assignPolicyWorkers({ stories = [], roles = ['dev', 'review'], p
       preferred: codexDevOk ? cd.models[0] : risk >= HIGH_RISK_MIN ? 'fable' : '', preferProvider: codexDevOk ? 'codex' : preferredDevProvider(story), blocked: (m) => blocked(m, 'dev') })
       : null
     // Review-only work is rechecked against persisted actual implementation provenance by the engine.
-    const review = wantReview ? selectModel({ role: 'review', risk, difficulty, providers, codexDev: cd,
+    const review = wantReview ? selectModel({ role: 'review', risk, difficulty, providers, codexDev: cd, reviewMinTier: config.modelPolicy?.reviewMinTier, // 👤 2026-10-21
       avoid: roles.includes('dev') ? dev?.model : '', preferProvider: dev?.provider === 'codex' ? 'claude' : 'codex', blocked: (m) => blocked(m, 'review') })
       : null
     return { story, dev: dev?.model ?? '', review: review?.model ?? '',

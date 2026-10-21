@@ -1522,7 +1522,8 @@ function runRoutedStage(stage, story, variant) {
   }]));
   if (noCodex || (!dryRun && providers.codex.available && !codexCwdInfo().ok)) providers.codex.available = false;
   const router = new StageRouter({ stateDir: modelStateDir, providers, exhausted: routingConfig.exhaustedModels ?? [],
-    claudeLadder: process.env.AUTO_MODEL_LADDER ? MODEL_LADDER : null, codexDev: routingConfig.modelPolicy?.codexDev ?? null });
+    claudeLadder: process.env.AUTO_MODEL_LADDER ? MODEL_LADDER : null, codexDev: routingConfig.modelPolicy?.codexDev ?? null,
+    reviewMinTier: routingConfig.modelPolicy?.reviewMinTier }); // 👤 2026-10-21 reviewMinTier
   const attempted = [];
   // 👤 2026-10-11 「추천안 2」: modelPolicy.recoveryDevFloor=1 이면 회수 dev 는 처음부터 하한 sonnet(한도 완화와 같은 길) — 신규 dev·review 는 불변.
   let limitRelief = policyRelief({ stage, batchKind, policy: routingConfig.modelPolicy }); // 회수 dev 가 한도를 만나면 true — choose 의 품질 하한이 sonnet 까지 내려간다
