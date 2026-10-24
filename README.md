@@ -14,6 +14,7 @@ Claude Code · Codex 스킬 백업이자 BMad 프로젝트의 현황판과 스�
 | [`runner-start`](runner-start/) | 24시간 러너를 지금 바로 깨우고 첫 편성을 실측해 보고한다. |
 | [`mattpocock-architecture`](mattpocock-architecture/) | 코드 구조 개선 — `/improve-codebase-architecture` 가 자주 바뀐 곳의 「얕은 모듈 → 깊은 모듈」 후보를 HTML 보고서로 내고 고른 후보를 질문으로 파고든다. 보조 스킬 3개(`codebase-design`·`domain-modeling`·`grilling`)와 함께 설치 · mattpocock/skills 원본(MIT). |
 | [`role-test-together`](role-test-together/) | 사용자와 역할별 기능 테스트를 점검표 한 행씩 선택지로 같이 진행하고, 문제 줄을 후속 스토리로 한 번에 등재한다. 스킬 폴더에는 틀만 있고 실제 점검표·결과는 프로젝트 안에 둔다. |
+| [`app-tutorial-video`](app-tutorial-video/) | 실행 중인 웹앱의 **실제 화면 조작 녹화 + 음성 해설 + 자막** 튜토리얼 영상(mp4) 제작 절차와 계약 — 탐색 → 리허설 → 녹화 → 음성 → 조립 5단계 · 안전 훅 순서(운영 거부 → 부품 사전검사 → 외부 발송 꺼짐 실측 → 녹화) · 장면 대본 JSON 계약 · 프로젝트 어댑터. v0.1 = 지침·계약 문서만(코드는 프로젝트 저장소). |
 
 ## 통합 이유와 구조
 
