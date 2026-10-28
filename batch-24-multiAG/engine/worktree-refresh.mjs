@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { inheritPlan } from './runner-rules.mjs'
+import { inheritPlan, isLogArtifactPath } from './runner-rules.mjs'
 import { isProjectOwned, toolingChanged } from './runtime-pin.mjs'
 import { isDeniedPath, secretHits } from './runtime/push-guard.mjs'
 
@@ -37,7 +37,9 @@ export function refreshWorktree({ cwd = process.cwd(), branch, date, dryRun = fa
   const clean = () => {
     // -z avoids treating quoted names, spaces, Korean paths, or rename pairs as disposable logs.
     const entries = git(['status', '--porcelain=v1', '-z', '--untracked-files=all']).stdout.split('\0').filter(Boolean)
-    const dirty = entries.filter((entry) => entry !== '?? .auto-batch-worktree')
+    // (2026-10-28) 로그 폴더의 **미추적** 산출 로그(장부 제외 · runner-rules.isLogArtifactPath)는 미완 작업이 아니다 — 무인 커밋이
+    // 더 이상 싣지 않으므로(러너 .git 10GB 실사고) 트리에 남는 것이 정상이고, 이걸 거부하면 모든 슬롯이 선다.
+    const dirty = entries.filter((entry) => entry !== '?? .auto-batch-worktree' && !(entry.startsWith('?? ') && isLogArtifactPath(entry.slice(3))))
     if (dirty.length) throw new Error(`worktree refresh: unfinished changes preserved in place (${dirty.length} entries); finish or review them before restarting`)
   }
   clean()
@@ -168,13 +170,26 @@ function preserveRunReportUnsafe({ cwd, logDir, label, branchPrefix, runGit }) {
   if (status.status !== 0) return { failed: `status: ${(status.stderr ?? '').trim()}` }
   const entries = (status.stdout ?? '').split('\0').filter(Boolean)
   if (!entries.length) return { skipped: 'clean' }
-  const add = git(['add', '-A', '--', rel])
-  if (add.status !== 0) return { failed: `add: ${(add.stderr ?? '').trim()}`, entries: entries.length }
+  // (2026-10-28 러너 .git 10GB 실사고) 새 산출 로그(장부 제외 · runner-rules.isLogArtifactPath)는 싣지 않는다 — 추적 파일의 변경(-u)과
+  // 장부 새 파일만 스테이징한다. 남은 미추적 로그는 refreshWorktree 의 clean() 이 무시한다.
+  const newLedgers = entries.filter((e) => e.startsWith('?? ') && !isLogArtifactPath(e.slice(3))).map((e) => e.slice(3))
+  const skippedLogs = entries.filter((e) => e.startsWith('?? ') && isLogArtifactPath(e.slice(3))).length
+  const staged = entries.length - skippedLogs
+  if (!staged) return { skipped: 'only-log-artifacts', skippedLogs }
+  // `add -u -- <rel>` 는 그 아래 추적 파일이 하나도 없으면 "did not match any file(s) known to git" 로 실패한다 — 추적 변경이 있을 때만
+  if (entries.some((e) => !e.startsWith('?? '))) {
+    const add = git(['add', '-u', '--', rel])
+    if (add.status !== 0) return { failed: `add: ${(add.stderr ?? '').trim()}`, entries: staged }
+  }
+  if (newLedgers.length) {
+    const addNew = git(['add', '--', ...newLedgers.map(literalPathspec)])
+    if (addNew.status !== 0) return { failed: `add: ${(addNew.stderr ?? '').trim()}`, entries: staged }
+  }
   const message = `chore(batch): 실행 보고·게이트 로그 보존${label ? ` (${label})` : ''}`
   const commit = git(['-c', 'core.editor=true', 'commit', '-q', '-m', message, '--', rel])
-  if (commit.status !== 0) return { failed: `commit: ${(commit.stderr ?? commit.stdout ?? '').trim()}`, entries: entries.length }
+  if (commit.status !== 0) return { failed: `commit: ${(commit.stderr ?? commit.stdout ?? '').trim()}`, entries: staged }
   const head = (git(['rev-parse', 'HEAD']).stdout ?? '').trim()
-  return { committed: head, entries: entries.length, message }
+  return { committed: head, entries: staged, message, ...(skippedLogs ? { skippedLogs } : {}) }
 }
 
 /**
@@ -210,8 +225,13 @@ function preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGi
   const entries = parsePorcelainZ(status.stdout ?? '').filter((p) => p && p !== '.auto-batch-worktree')
   if (!entries.length) return { skipped: 'clean' }
   const denied = entries.filter((p) => isDeniedPath(p.replaceAll('\\', '/')))
-  const paths = entries.filter((p) => !denied.includes(p))
-  if (!paths.length) return { skipped: 'only-denied-paths', denied }
+  // (2026-10-28 러너 .git 10GB 실사고) 로그 폴더의 **미추적** 산출 로그(장부 제외 · runner-rules.isLogArtifactPath)는 잔여물에 싣지 않는다 —
+  // 스토리 커밋·실행 보고 보존과 같은 규칙. 추적 중인 로그의 변경은 종전대로 싣는다. 남은 미추적 로그는 refreshWorktree 의 clean() 이 무시한다.
+  const logCandidates = entries.filter((p) => isLogArtifactPath(p))
+  const trackedLogs = new Set(logCandidates.length ? (git(['ls-files', '-z', '--', ...logCandidates.map(literalPathspec)]).stdout ?? '').split('\0').filter(Boolean) : [])
+  const skippedLogs = logCandidates.filter((p) => !trackedLogs.has(p.replaceAll('\\', '/')))
+  const paths = entries.filter((p) => !denied.includes(p) && !skippedLogs.includes(p))
+  if (!paths.length) return skippedLogs.length && !denied.length ? { skipped: 'only-log-artifacts', denied, skippedLogs: skippedLogs.length } : { skipped: 'only-denied-paths', denied }
   // 2026-09-08(같은 날 2회 실사고 · 18시간 + 2.5시간 정지): 스토리 워커가 엔진 사본(tools/auto/**)을 고치면 이 잔여물 커밋이 그 변경을
   // 브랜치 HEAD 에 실어 다음 슬롯부터 런타임 핀 불일치(exit 3)로 러너가 선다. 엔진 사본 변경은 잔여물에 싣지 않는다 — 추적 파일은 HEAD 로
   // 되돌리고 diff 를 로그 폴더에 patch 로 보존한다(아침에 정본 반영 여부는 사람이 판단). 미추적 파일은 그대로 둔다(핀 검사는 추적 파일만 본다).
@@ -264,7 +284,7 @@ function preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGi
   const commit = git(['-c', 'core.editor=true', 'commit', '-q', '-m', message, '--', ...specs])
   if (commit.status !== 0) { git(['reset', '-q', '--', ...specs]); return { failed: `commit: ${gitError(commit)}`, denied } }
   const head = (git(['rev-parse', 'HEAD']).stdout ?? '').trim()
-  return { committed: head, entries: kept.length, denied, message, engineReverted: engineTracked.length, enginePatch }
+  return { committed: head, entries: kept.length, denied, message, engineReverted: engineTracked.length, enginePatch, skippedLogs: skippedLogs.length }
 }
 
 /** 실패 보고용 git 오류 문장 — `warning:`·`hint:` 줄(LF/CRLF 경고 등)은 빼고 실제 오류만 남긴다. 판정 근거는 아니다(exit code 가 판정).
@@ -294,3 +314,17 @@ export function parsePorcelainZ(stdout) {
 
 /** git 에 되돌려 주는 pathspec 은 항상 리터럴이다 — glob(`*`·`[]`)·매직(`:(top)` 등)이 든 파일 이름이 선택 범위를 넓히지 못한다. */
 export const literalPathspec = (p) => `:(literal)${p}`
+
+/** 스테이징된 것 중 로그 폴더의 **새** 산출 로그(status A · 장부 제외 · runner-rules.isLogArtifactPath)를 unstage 한다 — 스토리 커밋
+ *  (auto-story-pipeline commitStory)·감시자 잔여물 보존이 `git add -A` 뒤에 부른다(2026-10-28 러너 .git 10GB 실사고). 수천 건일 수
+ *  있어 경로는 stdin(NUL 구분)으로 넘긴다(명령줄 상한). 반환 = `{ dropped: [...] }` · 실패 = `{ dropped: [], failed }`(스테이징은 그대로). */
+export function unstageNewLogArtifacts({ cwd = process.cwd(), runGit = spawnSync } = {}) {
+  const git = (args, opts = {}) => runGit('git', ['-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts })
+  const rows = (git(['diff', '--cached', '--name-status', '--no-renames', '-z']).stdout ?? '').split('\0')
+  const dropped = []
+  for (let i = 0; i + 1 < rows.length; i += 2) if (rows[i] === 'A' && isLogArtifactPath(rows[i + 1])) dropped.push(rows[i + 1])
+  if (!dropped.length) return { dropped }
+  const r = git(['reset', '-q', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: dropped.join('\0') })
+  if (r.status !== 0) return { dropped: [], failed: `reset: ${String(r.stderr ?? '').trim().split('\n')[0] || `exit ${r.status ?? r.error?.code}`}` }
+  return { dropped }
+}

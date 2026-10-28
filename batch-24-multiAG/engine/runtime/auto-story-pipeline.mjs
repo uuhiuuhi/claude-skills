@@ -93,6 +93,7 @@ import { storyRisk, storyDifficulty } from '../assign.mjs';
 import { readEvidenceFor } from './providers/codex.mjs';
 import { deepRedact } from './providers/redact.mjs';
 import { parseFileList, REVIEW_PENDING_EXIT } from '../runner-rules.mjs';
+import { unstageNewLogArtifacts } from '../worktree-refresh.mjs';
 import { countReviewRounds } from '../story-ledger.mjs';
 import { applyReviewTail, applyReviewTailBlock, routeForeignFindings } from './review-tail.mjs';
 import { safeReviewScope, dropFileSections, foreignScopeBrief, ownerOfPath, summarizeExcluded, isRunnerToolingPath, isSharedDocPath } from './review-scope.mjs';
@@ -641,7 +642,8 @@ function discardPartialWork(stage, story) {
   git(["clean", "-fdq", "-e", "_bmad-output/implementation-artifacts/auto-pipeline-logs"]);
   note(`   ↺ [${story}] 벤더 전환 — 이전 워커의 부분 산출물 폐기(HEAD 로 되돌림 · 이어받기 금지)`);
 }
-// 커밋 금지 경로(스테이징 후 검출 → 전체 unstage + STOP). auto-pipeline-logs/ 의 .log 는 정식 산출물이라 허용.
+// 커밋 금지 경로(스테이징 후 검출 → 전체 unstage + STOP). auto-pipeline-logs/ 의 **추적 중인** .log 변경은 정식 산출물이라 허용 —
+// 단 **새** 산출 로그는 commitStory 가 스테이징에서 뺀다(2026-10-28 러너 .git 10GB 실사고 · worktree-refresh.unstageNewLogArtifacts · 장부만 추적).
 const DENY_PATH_RE = /(^|\/)(\.env(\..*)?$|.*\.local\.[^/]+$|scratch-[^/]*$|.*\.(pem|key|p12|pfx)$|.*secrets?\.(json|ya?ml)$)/i;
 const DENY_LOG_RE = /\.log$/i;
 // 스테이징 diff 추가 줄의 시크릿 패턴(값이 실제로 붙은 형태만 — 이름·정규식 정의는 통과)
@@ -741,6 +743,11 @@ function commitStory(story, stagesDone) {
   if (paths.length === 0) { note(`ℹ [${story}] 커밋 화이트리스트 경로가 하나도 없음 — 커밋 생략.`); return null; }
   const add = git(["add", "-A", "--", ...paths]);
   if (add.code !== 0) note(`⚠ [${story}] git add 경고: ${add.err.trim().split("\n")[0]}`);
+  // (2026-10-28 러너 .git 10GB 실사고) 화이트리스트가 `_bmad-output` 전체를 담아 라운드마다 수 MB 의 새 .log/.json 이 스토리 커밋에 쓸려 왔다 —
+  // 새 산출 로그(장부 제외)는 뺀다. 실패하면 종전대로 실린다(저장소가 붓는 문제일 뿐 커밋의 안전 검사와는 무관 · 경고만).
+  const artifacts = unstageNewLogArtifacts({ cwd: process.cwd() });
+  if (artifacts.failed) note(`⚠ [${story}] 산출 로그 unstage 실패(종전대로 커밋에 실림): ${artifacts.failed}`);
+  else if (artifacts.dropped.length) note(`   ℹ [${story}] 산출 로그 ${artifacts.dropped.length}건은 커밋에서 제외(auto-pipeline-logs/ 새 파일 · 장부만 추적)`);
   const staged = git(["diff", "--cached", "--name-only"]).out.split("\n").map((l) => l.trim()).filter(Boolean);
   if (staged.length === 0) { note(`ℹ [${story}] 커밋할 변경 없음(스테이징 0).`); return null; }
   const denied = staged.filter((f) => DENY_PATH_RE.test(f) || (DENY_LOG_RE.test(f) && !f.includes("auto-pipeline-logs/")));

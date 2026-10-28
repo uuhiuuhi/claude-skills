@@ -30,7 +30,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { lockDead, restoreDevProvenance, stopBlocked, stopWindowId, telegramCurlRequest, telegramSent } from './runner-rules.mjs'
-import { parsePorcelainZ, preserveStopLeftovers } from './worktree-refresh.mjs'
+import { parsePorcelainZ, preserveStopLeftovers, unstageNewLogArtifacts } from './worktree-refresh.mjs'
 
 const args = process.argv.slice(2)
 const has = (k) => args.includes(k)
@@ -265,6 +265,7 @@ const PLAYBOOK = [
       if (!files.every((f) => f.startsWith('_bmad-output/'))) return claudeDiagnose(`dirty 러너 클론 — 소스 잔여물 ${files.slice(0, 5).join(', ')}`) === 'fixed' ? 'Claude 진단이 잔여물 정리' : '소스 잔여물 — 사람 몫'
       if (DRY) return `(리허설) 잔여물 ${files.length}건 보존 커밋`
       spawnSync('git', ['add', '-A', '_bmad-output'], { cwd: RUNNER, encoding: 'utf8' })
+      unstageNewLogArtifacts({ cwd: RUNNER }) // (2026-10-28) 새 산출 로그는 잔여물 커밋에도 싣지 않는다(장부만 · 남은 미추적 로그는 refresh 가 무시)
       const c = spawnSync('git', ['commit', '-q', '-m', `chore(watchdog): 러너 잔여물 보존(${files.length}건 · 로그·상태·산출물만) — 워크트리 새로고침 재개`], { cwd: RUNNER, encoding: 'utf8' })
       return `잔여물 ${files.length}건 보존 커밋 exit ${c.status}`
     },

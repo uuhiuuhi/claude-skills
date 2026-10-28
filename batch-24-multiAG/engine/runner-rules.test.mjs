@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { limitNoWorkKeys, SOFT_STOP_CONTINUE_MAX, isStoryLevelStop, shouldArchiveEvidence, evidenceLogKeep, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn, restoreDevProvenance } from './runner-rules.mjs'
+import { limitNoWorkKeys, SOFT_STOP_CONTINUE_MAX, isStoryLevelStop, shouldArchiveEvidence, evidenceLogKeep, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn, restoreDevProvenance, isLogArtifactPath, LOG_LEDGER_KEEP_RE } from './runner-rules.mjs'
 
 const RUN_NIGHT_URL = new URL('./run-night.mjs', import.meta.url)
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -654,5 +654,21 @@ describe('restoreDevProvenance — 감시자 구현자 기록 복원은 workers 
     assert.match(wd, /state\.json workers\+done\[\$\{K\}\]/)
     // 수리 결과 문구가 「미해소」로 오인되지 않는다(감시자 unresolved 판정 어휘)
     assert.doesNotMatch('state.json workers+done[2-31-x::dev] 확인 — 새로 적은 칸 done · 구현자 claude/opus', /미해결|사람 몫|실패|unfixed|skipped/)
+  })
+})
+
+describe('isLogArtifactPath — 로그 폴더의 새 산출 로그는 무인 커밋에 싣지 않는다(2026-10-28 러너 .git 10GB 실사고)', () => {
+  const L = '_bmad-output/implementation-artifacts/auto-pipeline-logs/'
+  it('산출 로그·워커 스크래치·하위 폴더는 산출물이다', () => {
+    for (const f of ['2-129-콘텐츠-후보-dev.log', '1-122-flip.log', '3-26-quality.json', '1-21-repair1-probe.mjs', 'x-diff.txt', 'quality-cache/abc.json', '13-19/round.log', 'engine-drift-2026.patch'])
+      assert.equal(isLogArtifactPath(L + f), true, f)
+  })
+  it('장부(검증 매니페스트·배치 매니페스트·계측·state·라운드 파일)는 산출물이 아니다 · 로그 폴더 밖은 항상 false', () => {
+    for (const f of ['2-129-콘텐츠-후보-verification.json', '7-5-verification.rollback-AUTO-3.json', 'batch-2026-10-28-123-manifest.json', 'metrics-AUTO-3.json', 'state.json', 'exit-info.json', 'run-summary.log', 'night-last-run.md', 'integration-gate.log', 'landing-quality.json'])
+      assert.equal(isLogArtifactPath(L + f), false, f)
+    assert.equal(isLogArtifactPath('src/a.log'), false)
+    assert.equal(isLogArtifactPath('_bmad-output/implementation-artifacts/2-1.md'), false)
+    assert.equal(isLogArtifactPath(L.replaceAll('/', '\\') + '2-1-dev.log'), true, '역슬래시 경로')
+    assert.ok(LOG_LEDGER_KEEP_RE.test('state.json'))
   })
 })

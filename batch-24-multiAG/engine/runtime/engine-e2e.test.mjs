@@ -550,6 +550,19 @@ describe('[engine-e2e][#6] `--commit` 은 auto/* 또는 detached 에서만', { t
     assert.match(git(fx.proj, ['rev-parse', '--abbrev-ref', 'HEAD']).stdout, /^auto\/2026-09-02/)
     assert.equal(commitsAhead(fx.proj).length, 1, '스토리 커밋 1건')
   })
+  it('(2026-10-28) 스토리 커밋에 새 산출 로그(dev.log 등)는 싣지 않고 장부(verification.json·state.json)만 싣는다 · 로그는 트리에 미추적으로 남는다', () => {
+    const fx = makeFixture()
+    const r = runEngine(fx, { args: ['--stages', 'dev,review', '--commit', '--branch', 'auto/2026-10-28'] })
+    assert.equal(r.status, 0, r.out.slice(-2000))
+    assert.match(r.out, /산출 로그 \d+건은 커밋에서 제외/)
+    const files = git(fx.proj, ['-c', 'core.quotePath=false', 'show', '--name-only', '--format=', 'HEAD']).stdout
+    assert.match(files, /auto-pipeline-logs\/2-1-a-verification\.json/, '검증 매니페스트가 커밋에 없다: ' + files)
+    assert.match(files, /auto-pipeline-logs\/state\.json/, 'state.json 이 커밋에 없다: ' + files)
+    assert.ok(!/-dev\.log|-review\.log|-quality\.json/.test(files), '산출 로그가 커밋에 실렸다: ' + files)
+    assert.ok(existsSync(join(fx.art, 'auto-pipeline-logs', '2-1-a-dev.log')), 'dev.log 는 트리에 남아야 한다')
+    const status = git(fx.proj, ['-c', 'core.quotePath=false', 'status', '--porcelain', '--untracked-files=all']).stdout
+    assert.match(status, /^\?\? .*auto-pipeline-logs\/2-1-a-dev\.log/m, '미추적으로 남아야 한다: ' + status)
+  })
   it('detached 워크트리(러너 landing 모드) → 종전대로 커밋된다', () => {
     const fx = makeFixture()
     const wt = join(fx.T, 'wt')

@@ -42,6 +42,12 @@ describe('[engine-guards] 하드코딩 가드레일 보존', () => {
     assert.ok(has('if (doPush && !/^auto\\//.test(branchName))'))
     assert.ok(has('if (branchName && !/^auto\\//.test(branchName))'))
     assert.ok(has('const DENY_PATH_RE ='))
+    // (2026-10-28 러너 .git 10GB 실사고) 새 산출 로그는 스토리 커밋에서 뺀다 — add 직후 · staged 집계 전
+    const commitFn = src.slice(src.indexOf('function commitStory(story, stagesDone)'))
+    const addAt = commitFn.indexOf('const add = git(["add", "-A", "--", ...paths]);')
+    const dropAt = commitFn.indexOf('const artifacts = unstageNewLogArtifacts({ cwd: process.cwd() });')
+    const stagedAt = commitFn.indexOf('const staged = git(["diff", "--cached", "--name-only"])')
+    assert.ok(addAt > 0 && dropAt > addAt && stagedAt > dropAt, '산출 로그 unstage 는 git add 뒤 · staged 집계 전이어야 한다')
     assert.ok(has('const SECRET_RES = ['))
     assert.ok(has('SECRET STOP — [${story}] 스테이징 diff 에 시크릿 패턴'))
   })

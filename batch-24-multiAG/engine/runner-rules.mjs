@@ -134,6 +134,21 @@ export function parallelPlan({ storyCount, stages, parallel }) {
  *  (실작업 판정·진전 판정·landing 자동 해소가 모두 이 경계 하나를 공유한다.) */
 export const LOG_PREFIX = '_bmad-output/implementation-artifacts/auto-pipeline-logs/'
 
+/** 로그 폴더 안에서 **git 을 거쳐 다른 트리로 건너가야 하는 장부**만 새 파일로 추적한다(2026-10-28 · 러너 .git 10GB 실사고 — 루트 .log
+ *  12,986개 7.4GB 가 스토리 커밋에 실렸다: 커밋 화이트리스트가 `_bmad-output` 전체를 담고 DENY_LOG_RE 가 이 폴더만 예외로 둔 탓).
+ *  나머지 산출 로그(<story>-dev.log·-review.log·-quality.json·qa 덤프·워커 스크래치·하위 폴더)는 **새 파일이면** 어떤 무인 커밋에도 싣지
+ *  않는다 — 이미 추적 중인 파일의 변경은 종전대로 실린다(추적 해제는 체인 커밋 하나가 수 GB 삭제 diff 가 되므로 하지 않는다).
+ *  장부 = <story>-verification*.json(병렬 landing 이 cherry-pick 뒤 배치 트리에서 읽는다 · run-night) · batch-*-manifest.json ·
+ *  metrics-*.json(현황판 batch-sources) · state.json(완료·구현자 기록 — 워크트리가 HEAD 에서 이어받는다) · 라운드 파일(run-summary.log ·
+ *  exit-info.json · night-last-run.md · integration-gate.log · landing-quality.json — 매 라운드 덮어쓰는 한 벌이라 쌓이지 않는다). */
+export const LOG_LEDGER_KEEP_RE = /^(state\.json|exit-info\.json|run-summary\.log|night-last-run\.md|integration-gate\.log|landing-quality\.json|[^/]+-verification(\.rollback-[^/]+)?\.json|batch-[^/]+-manifest\.json|metrics-[^/]+\.json)$/
+/** 로그 폴더의 산출 로그(장부가 아닌 것)인가 — 하위 폴더까지 본다. 로그 폴더 밖이면 false. */
+export function isLogArtifactPath(p) {
+  const u = String(p ?? '').replaceAll('\\', '/')
+  if (!u.includes('auto-pipeline-logs/')) return false
+  return !LOG_LEDGER_KEEP_RE.test(u.slice(u.lastIndexOf('/') + 1))
+}
+
 /** 공유 장부 파일 — 거의 모든 dev 가 함께 고치는 문서. File List 겹침 판정에서 제외한다
  *  (landing 의 cherry-pick 3-way 가 줄 단위로 합치고, 충돌 나면 그 스토리만 landing 실패 폴백). */
 export const SHARED_BOOKKEEPING = Object.freeze([
