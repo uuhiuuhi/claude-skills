@@ -1214,7 +1214,9 @@ describe('[e2e] review 전용 배치 병렬 — File List 겹침 무시 · 장�
     assert.doesNotMatch(r.summary, /병렬 폴백/, '겹친 File List 로 폴백하면 리뷰 병렬이 아니다')
     assert.doesNotMatch(r.summary, /완주: 2-1-a/)
     assert.doesNotMatch(r.summary, /완주: 2-2-b/)
-    assert.equal(commitsOnBranch(fx.proj).length, 0)
+    // (2026-10-29 11c2f96) STOP(exit 1) 워크트리의 잔여물은 순차 경로처럼 「STOP 잔여물 보존」 커밋으로 착지한다 — 스토리 landing(auto(…) 커밋)은 여전히 0.
+    const cs = commitsOnBranch(fx.proj)
+    assert.equal(cs.filter((l) => !/STOP 잔여물 보존/.test(l)).length, 0, cs.join(' | '))
   })
 
   it('검증되지 않은 두 스토리는 review 상태를 유지하고 코드도 만들지 않는다', () => {
@@ -1227,9 +1229,10 @@ describe('[e2e] review 전용 배치 병렬 — File List 겹침 무시 · 장�
     assert.doesNotMatch(r.calls, /dev 2-/, 'dev 가 돌면 리뷰 전용이 아니다')
   })
 
-  it('검증되지 않은 review-only 배치는 원격 ref와 로컬 커밋을 남기지 않는다', () => {
+  it('검증되지 않은 review-only 배치는 원격 ref 와 스토리 landing 커밋을 남기지 않는다(STOP 잔여물 보존 커밋만)', () => {
     assert.deepEqual(originHeads(fx.proj), ['refs/heads/main']);
-    assert.equal(commitsOnBranch(fx.proj).length, 0);
+    const cs = commitsOnBranch(fx.proj)
+    assert.equal(cs.filter((l) => !/STOP 잔여물 보존/.test(l)).length, 0, cs.join(' | '))
   })
 })
 

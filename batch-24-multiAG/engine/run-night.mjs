@@ -1642,11 +1642,12 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
       }
       // 2026-10-29 14:35 실사고(같은 날 12:18 과 동일 반복): 병렬 리뷰 워커가 「결정 대기 1건 인박스 등재」 뒤 COMPLETION STOP(exit 1)로 끝나면
       // 스토리 md 기재·DECISIONS-INBOX·sprint-status 가 워크트리와 함께 버려져 본 트리는 그대로 → 다음 편성이 같은 리뷰를 다시 열었다(회당 수백만 토큰).
-      // 순차 경로(runQueue)는 **모든 STOP** 에 잔여물 보존 커밋을 남기므로 병렬도 같게 — exit 8 과 같은 보존·착지 절차(통합 게이트 대상 아님 ·
-      // 보존 태그 archive/parallel-stop-*). 금지 경로·시크릿이 섞이면 preserve 가 거부하고 종전대로 증거 폴더만 남는다. 한도(exit 5) 무작업은 건너뛴다.
-      const stopKept = r?.code === 5 && !treeHasWorkBeyondLogs(wt.dir, wt.base)
-        ? null
-        : preserveStopLeftovers({ cwd: wt.dir, label: `${wt.story} (병렬 ${laneLabel} · STOP)`, exitCode: r?.code ?? 1, detachedWorktree: true })
+      // 순차 경로(runQueue)는 STOP 에 잔여물 보존 커밋을 남기므로 병렬도 같게 — exit 8 과 같은 보존·착지 절차(통합 게이트 대상 아님 ·
+      // 보존 태그 archive/parallel-stop-*). 금지 경로·시크릿이 섞이면 preserve 가 거부하고 종전대로 증거 폴더만 남는다.
+      // 범위 = 스토리 단위 STOP(exit 1)만 — 한도(5)·커밋 가드(6)·되돌림 실패(7) 등은 종전대로 증거 폴더만(한도 때 미검증 산출물을 브랜치에 싣지 않는다 · 「Codex 한도」 e2e).
+      const stopKept = isStoryLevelStop(r?.code)
+        ? preserveStopLeftovers({ cwd: wt.dir, label: `${wt.story} (병렬 ${laneLabel} · STOP)`, exitCode: r?.code ?? 1, detachedWorktree: true })
+        : null
       let stopNote = ''
       if (stopKept?.committed) {
         const l = landHead(wt, stopKept.committed)
