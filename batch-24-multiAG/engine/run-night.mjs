@@ -1640,7 +1640,25 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
         }
         continue
       }
-      record(`- **중단(exit ${r?.code ?? '?'}): ${wt.story} (병렬 dev)** — 성공분 landing 후 배치 STOP${ev ? ` · 증거 보관 ${ev}` : ''}`); worst = worseExit(worst, r?.code ?? 1); continue
+      // 2026-10-29 14:35 실사고(같은 날 12:18 과 동일 반복): 병렬 리뷰 워커가 「결정 대기 1건 인박스 등재」 뒤 COMPLETION STOP(exit 1)로 끝나면
+      // 스토리 md 기재·DECISIONS-INBOX·sprint-status 가 워크트리와 함께 버려져 본 트리는 그대로 → 다음 편성이 같은 리뷰를 다시 열었다(회당 수백만 토큰).
+      // 순차 경로(runQueue)는 **모든 STOP** 에 잔여물 보존 커밋을 남기므로 병렬도 같게 — exit 8 과 같은 보존·착지 절차(통합 게이트 대상 아님 ·
+      // 보존 태그 archive/parallel-stop-*). 금지 경로·시크릿이 섞이면 preserve 가 거부하고 종전대로 증거 폴더만 남는다. 한도(exit 5) 무작업은 건너뛴다.
+      const stopKept = r?.code === 5 && !treeHasWorkBeyondLogs(wt.dir, wt.base)
+        ? null
+        : preserveStopLeftovers({ cwd: wt.dir, label: `${wt.story} (병렬 ${laneLabel} · STOP)`, exitCode: r?.code ?? 1, detachedWorktree: true })
+      let stopNote = ''
+      if (stopKept?.committed) {
+        const l = landHead(wt, stopKept.committed)
+        if (l.ok) {
+          const tag = `archive/parallel-stop-${wt.story}-${Date.now()}`
+          spawnSync('git', ['tag', tag, l.head])
+          pendingLandings[wt.story] = { head: l.head, source: stopKept.committed, tag }
+          stopNote = ` · 잔여물 ${stopKept.entries}건 착지 ${l.head.slice(0, 12)}(보존 태그 ${tag})${l.resolved ? ` · 충돌 자동 해소 ${l.resolved}파일` : ''}`
+        } else stopNote = ` · **잔여물 landing 실패(${l.why})** — 산출물은 archive/parallel-* 태그 보존`
+      } else if (stopKept?.failed) stopNote = ` · ⚠ 잔여물 보존 실패(${stopKept.failed}) — 증거 폴더만 남는다`
+      else if (stopKept?.skipped && stopKept.skipped !== 'clean') stopNote = ` · 잔여물 보존 건너뜀(${stopKept.skipped})`
+      record(`- **중단(exit ${r?.code ?? '?'}): ${wt.story} (병렬 dev)** — 성공분 landing 후 배치 STOP${ev ? ` · 증거 보관 ${ev}` : ''}${stopNote}`); worst = worseExit(worst, r?.code ?? 1); continue
     }
     const head = spawnSync('git', ['-C', wt.dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim()
     if (head === wt.base) { record(`- 완주(커밋 없음): ${wt.story}`); continue }

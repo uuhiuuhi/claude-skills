@@ -60,6 +60,15 @@ if (m) {
     writeFileSync(join(cwd, 'config', 'credentials.json'), '{"password":"hunter2hunter2"}\n')
     console.error('boom: simulated worker failure'); process.exit(1)
   }
+  if (process.env.E2E_CLAUDE_STOP_CLEAN_STORY === key) {
+    // 결정 대기로 멈춘 워커(2026-10-29 14:35 실사고 꼴) — 시크릿 없는 잔여물: 스토리 md 기재(추적) · 인박스(미추적 신규) · sprint-status · 코드 반쯤
+    const sf = join(art, findStory(key))
+    writeFileSync(sf, readFileSync(sf, 'utf8') + '\n### Review Findings — stub 결정 대기\n- [ ] [Review][Decision] stub 결정 대기 1건\n')
+    appendFileSync(join(art, 'DECISIONS-INBOX.md'), '## 결정 대기 — ' + key + ' (stub)\n')
+    appendFileSync(join(cwd, 'src', 'keep.ts'), 'export const half_done_clean = 2\n')
+    setSprint(key, 'in-progress')
+    console.error('stop: simulated decision gate'); process.exit(1)
+  }
   const f = join(art, findStory(key))
   let md = readFileSync(f, 'utf8')
   const BT = String.fromCharCode(96)
@@ -219,7 +228,7 @@ function runRunner(fx, { env = {}, args = [] } = {}) {
       ...process.env, USERPROFILE: fx.home, HOME: fx.home, AUTO_BATCH_STATE_DIR: fx.state, E2E_STATE: fx.state,
       CLAUDE_BIN: join(fx.bin, IS_WIN ? 'claude.cmd' : 'claude'), CODEX_BIN: join(fx.bin, IS_WIN ? 'codex.cmd' : 'codex'),
       PIPELINE_NTFY_TOPIC: 'off', E2E_CLAUDE_FAIL_STORY: '', E2E_CODEX_LIMIT: '', E2E_QA_FAIL_WHEN_BOTH: '',
-      E2E_QA_FAIL_WHEN_BOTH_COMMITTED: '', E2E_QA_LEAK: '', ...env,
+      E2E_QA_FAIL_WHEN_BOTH_COMMITTED: '', E2E_QA_LEAK: '', E2E_CLAUDE_STOP_CLEAN_STORY: '', ...env,
     },
   })
   const summary = existsSync(join(fx.art, 'auto-pipeline-logs', 'night-last-run.md')) ? readFileSync(join(fx.art, 'auto-pipeline-logs', 'night-last-run.md'), 'utf8') : ''
@@ -1270,5 +1279,36 @@ describe('[e2e][09-30 실사고] 리뷰 대기(exit 8) 병렬 워크트리의 �
     assert.ok(!/^(<{7}|={7}|>{7})/m.test(sprint), '충돌 마커 잔존')
     assert.ok(existsSync(join(fx.proj, 'src', 'a.ts')) && existsSync(join(fx.proj, 'src', 'b.ts')), 'dev 산출 코드가 본 트리에 있어야 다음 라운드가 이어받는다')
     assert.equal(git(fx.proj, ['status', '--porcelain', '--untracked-files=no']).stdout.trim(), '', '본 트리 dirty 0(다음 슬롯 refresh 거부 방지)')
+  })
+})
+
+// 2026-10-29 14:35 실사고(같은 날 12:18 과 동일 반복): 병렬 워크트리의 워커가 **STOP(exit 1)** 로 끝나면(결정 대기 등재 → COMPLETION STOP)
+// 스토리 md 기재·DECISIONS-INBOX·sprint-status 가 증거 폴더에만 복사된 채 워크트리와 함께 버려져 다음 편성이 같은 리뷰를 다시 열었다.
+// 순차 경로가 모든 STOP 에 남기는 「STOP 잔여물 보존」 커밋을 병렬도 같게 착지시킨다(exit 8 과 같은 절차 · 태그 archive/parallel-stop-*).
+// 시크릿이 섞인 잔여물(위 「워커 실패 격리」)은 종전대로 보존 거부 → 증거 폴더만.
+describe('[e2e][10-29 실사고] STOP(exit 1) 병렬 워크트리의 시크릿 없는 잔여물이 본 트리에 착지한다 — md·인박스·sprint-status', { timeout: 300_000 }, () => {
+  let fx, r
+  before(() => {
+    fx = makeFixture(); fixtures.push(fx)
+    r = runRunner(fx, { env: { E2E_CLAUDE_STOP_CLEAN_STORY: '2-2-b' } })
+  })
+  it('러너 exit 1 · 2-1-a 는 landing · 2-2-b 잔여물은 STOP 보존 커밋으로 착지 · 보존 태그', () => {
+    assert.equal(r.status, 1, r.out.slice(-3000))
+    assert.match(r.summary, /완주: 2-1-a \(병렬 dev → landing\)/)
+    assert.match(r.summary, /\*\*중단\(exit 1\): 2-2-b \(병렬 dev\)\*\* — 성공분 landing 후 배치 STOP · 증거 보관 .+ · 잔여물 \d+건 착지 [0-9a-f]{12}\(보존 태그 archive\/parallel-stop-2-2-b-\d+\)/, r.summary.slice(-2500))
+    const cs = commitsOnBranch(fx.proj)
+    assert.equal(cs.filter((l) => /auto\(2-1-a\)/.test(l)).length, 1, cs.join(' | '))
+    assert.equal(cs.filter((l) => /STOP 잔여물 보존 — 2-2-b \(병렬 DEV · STOP\) \(exit 1\)/.test(l)).length, 1, cs.join(' | '))
+    assert.deepEqual(originHeads(fx.proj), ['refs/heads/main'], 'STOP 라운드는 push 하지 않는다')
+    const tags = git(fx.proj, ['tag', '-l', 'archive/parallel-stop-2-2-b-*']).stdout.trim().split('\n').filter(Boolean)
+    assert.equal(tags.length, 1, tags.join(' | '))
+  })
+  it('본 트리: 2-2-b md 의 결정 대기 기재 · 인박스(미추적 신규) · sprint in-progress · 코드 반쯤 — 전부 실재 · 트리 clean', () => {
+    assert.match(readFileSync(join(fx.art, '2-2-b.md'), 'utf8'), /\[Review\]\[Decision\] stub 결정 대기 1건/)
+    assert.match(readFileSync(join(fx.art, 'DECISIONS-INBOX.md'), 'utf8'), /결정 대기 — 2-2-b \(stub\)/)
+    const sprint = readFileSync(join(fx.art, 'sprint-status.yaml'), 'utf8')
+    assert.match(sprint, /^  2-2-b: in-progress$/m, sprint)
+    assert.match(readFileSync(join(fx.proj, 'src', 'keep.ts'), 'utf8'), /half_done_clean = 2/)
+    assert.equal(git(fx.proj, ['status', '--porcelain', '--untracked-files=no']).stdout.trim(), '', '본 트리 dirty 0')
   })
 })
