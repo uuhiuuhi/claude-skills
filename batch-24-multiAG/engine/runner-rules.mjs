@@ -186,7 +186,9 @@ export function landingResolution(files) {
     const p = String(f).trim().replace(/\\/g, '/')
     if (!p) continue
     if (p.startsWith(LOG_PREFIX)) {
-      out[p] = p.endsWith('.json') ? 'ours' : 'union'
+      out[p] = p === `${LOG_PREFIX}state.json` ? 'state' : p.endsWith('.json') ? 'ours' : 'union' // state = 스토리 키 단위(mergeStateJson)
+    } else if (p === SPRINT_STATUS_PATH) {
+      out[p] = 'sprint' // 키(스토리) 단위 병합 — union 은 이웃 줄 충돌에서 같은 키를 두 번 남겼다(2026-09-25 d389a72f8)
     } else if (SHARED_BOOKKEEPING.includes(p)) {
       out[p] = 'union'
     } else {
@@ -194,6 +196,82 @@ export function landingResolution(files) {
     }
   }
   return Object.keys(out).length > 0 ? out : null
+}
+
+export const SPRINT_STATUS_PATH = '_bmad-output/implementation-artifacts/sprint-status.yaml'
+
+/** sprint-status.yaml 충돌 해소 — **키(스토리) 단위**. 병렬 워커 둘이 이웃 줄(자기 스토리 키)을 각각 고치면 cherry-pick 이
+ *  두 줄을 한 hunk 로 묶어 충돌내고, union 은 양쪽을 다 남겨 같은 키가 두 번 생겼다(2026-09-25 d389a72f8 실사고 · 현황판 오판).
+ *  hunk 마다: ours 줄은 그대로 두되 preferKeys(착지하는 스토리) 의 키만 theirs 값으로 바꾸고, theirs 에만 있는 키는 뒤에 더한다.
+ *  같은 키가 양쪽에 있고 prefer 가 아니면 ours 가 이긴다(착지 스토리는 자기 키만 바꾸는 것이 규약). 키가 아닌 줄은 union.
+ *  마커가 남으면(비정형) null — 호출부는 보존 폴백. preferKeys 는 `2-1` 꼴 짧은 키도 받는다(`2-1-제목…` 에 매칭 · `2-10` 과 구분). */
+export function resolveSprintStatusConflict(text, { preferKeys = [] } = {}) {
+  // 키 = 들여쓰기 유무와 무관(최상위 last_updated 도 키) · 콜론 앞 공백은 같은 키(`2-1-a : x` ≡ `2-1-a: x` · Astra 10-29 #7)
+  const keyOf = (line) => /^\s*([^\s#:][^:#]*?)\s*:/.exec(line.replace(/\r$/, ''))?.[1] ?? null
+  const prefer = (k) => (preferKeys ?? []).some((p) => k === p || k.startsWith(`${p}-`))
+  const lines = String(text ?? '').split('\n')
+  const out = []
+  const hunkKeys = new Set() // 충돌 구간이 낸 키 — 결과 전체에서 두 번 나오면 병합 실패(보존 폴백)
+  let i = 0
+  while (i < lines.length) {
+    if (!/^<{7}(\s|$)/.test(lines[i].replace(/\r$/, ''))) { out.push(lines[i]); i++; continue }
+    i++
+    const ours = [], theirs = []
+    let side = ours, inBase = false, closed = false
+    for (; i < lines.length; i++) {
+      const b = lines[i].replace(/\r$/, '')
+      if (/^\|{7}(\s|$)/.test(b)) { inBase = true; continue }
+      if (/^={7}$/.test(b)) { inBase = false; side = theirs; continue }
+      if (/^>{7}(\s|$)/.test(b)) { closed = true; i++; break }
+      if (inBase) continue
+      side.push(lines[i])
+    }
+    if (!closed || side !== theirs) return null // 끝 마커 없음 · ======= 없음 = 비정형 → 보존 폴백
+    const tMap = new Map()
+    for (const t of theirs) { const k = keyOf(t); if (k && !tMap.has(k)) tMap.set(k, t) }
+    const seen = new Set()
+    for (const o of ours) {
+      const k = keyOf(o)
+      if (!k) { out.push(o); continue }
+      if (seen.has(k)) continue // 같은 쪽 안의 중복(비정상)도 하나로
+      seen.add(k); hunkKeys.add(k)
+      out.push(tMap.has(k) && prefer(k) ? tMap.get(k) : o)
+    }
+    for (const t of theirs) {
+      const k = keyOf(t)
+      if (k) { if (!seen.has(k)) { seen.add(k); hunkKeys.add(k); out.push(t) } } else if (!ours.includes(t)) out.push(t)
+    }
+  }
+  const s = out.join('\n')
+  if (/^(?:<{7}(\s|$)|>{7}(\s|$)|\|{7}(\s|$)|={7}\r?$)/m.test(s)) return null
+  // 충돌 구간이 낸 키가 파일 어디든 두 번이면 실패 — 병합이 중복 키를 만들거나 남기지 않았음을 보장한다
+  const count = new Map()
+  for (const l of out) { const k = keyOf(l); if (k && hunkKeys.has(k)) count.set(k, (count.get(k) ?? 0) + 1) }
+  for (const n of count.values()) if (n > 1) return null
+  return s
+}
+
+/** 엔진 state.json 충돌 병합 — **스토리 키 단위**(Astra 10-29 #2). 종전 'ours' 는 둘째 워커의 done·workers·quality·reviews 기록을 버려
+ *  다음 마감 재검수가 구현자 근거(T6)를 못 찾았다. ours 를 바탕으로, preferKeys(착지 스토리)에 속한 항목만 theirs 값으로 바꾼다 —
+ *  섹션(done/workers/…)의 항목 키는 `<스토리>` 또는 `<스토리>::<단계>` 꼴(엔진 key()) · 긴 슬러그는 `<스토리>-…`. 섹션이 객체가 아니면 ours 유지.
+ *  입력은 JSON 문자열(git 의 :2:/:3: 단계 전문) · 어느 쪽이든 깨진 JSON 이면 null(보존 폴백). */
+export function mergeStateJson(oursText, theirsText, { preferKeys = [] } = {}) {
+  let ours, theirs
+  try { ours = JSON.parse(String(oursText ?? '')); theirs = JSON.parse(String(theirsText ?? '')) } catch { return null }
+  if (!ours || typeof ours !== 'object' || Array.isArray(ours) || !theirs || typeof theirs !== 'object' || Array.isArray(theirs)) return null
+  const mine = (k) => (preferKeys ?? []).some((p) => k === p || k.startsWith(`${p}::`) || k.startsWith(`${p}-`))
+  const out = { ...ours }
+  for (const [section, tv] of Object.entries(theirs)) {
+    const ov = out[section]
+    if (!tv || typeof tv !== 'object' || Array.isArray(tv)) { if (!(section in out)) out[section] = tv; continue }
+    if (ov && typeof ov === 'object' && !Array.isArray(ov)) {
+      const merged = { ...ov }
+      for (const [k, v] of Object.entries(tv)) if (mine(k) || !(k in merged)) merged[k] = v
+      for (const k of Object.keys(ov)) if (mine(k) && !(k in tv)) delete merged[k] // 착지 스토리의 항목은 theirs 가 정본(invalidate 로 지운 것도 반영)
+      out[section] = merged
+    } else if (!(section in out)) out[section] = tv
+  }
+  return JSON.stringify(out, null, 2) + '\n'
 }
 
 /** 충돌 마커를 벗겨 양쪽을 순서대로 모두 보존(union). diff3 스타일의 base 구간(||||||| ~ =======)은

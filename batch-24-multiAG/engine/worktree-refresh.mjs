@@ -204,22 +204,25 @@ function preserveRunReportUnsafe({ cwd, logDir, label, branchPrefix, runGit }) {
  * diff contains a secret pattern nothing is committed (index reset) and the tree stays dirty on purpose — the refresh
  * refusal is then the correct outcome. Dry runs, no marker, and non-`auto/*` branches never commit.
  */
-export function preserveStopLeftovers({ cwd = process.cwd(), label = '', exitCode = null, dryRun = false, branchPrefix = 'auto/', runGit = spawnSync } = {}) {
+export function preserveStopLeftovers({ cwd = process.cwd(), label = '', exitCode = null, dryRun = false, branchPrefix = 'auto/', runGit = spawnSync, detachedWorktree = false } = {}) {
   if (dryRun) return { skipped: 'dry-run' }
-  if (!existsSync(join(cwd, '.auto-batch-worktree'))) return { skipped: 'no-marker' }
+  // detachedWorktree = 러너의 **병렬 배치 워크트리**(detached HEAD · 표식 파일 없음)에서 부른다 — 2026-09-30 실사고: 리뷰 대기(exit 8)
+  // 워커의 잔여물(스토리 md 기재·sprint-status·qa GREEN 코드)이 워크트리와 함께 사라져 다음 편성이 같은 일을 다시 열었다.
+  // 그 커밋은 러너가 배치 트리로 cherry-pick 한다(run-night landing) — 브랜치 검사는 그쪽 몫이다.
+  if (!detachedWorktree && !existsSync(join(cwd, '.auto-batch-worktree'))) return { skipped: 'no-marker' }
   try {
-    return preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGit })
+    return preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGit, detachedWorktree })
   } catch (error) {
     return { failed: `exception: ${error?.message ?? String(error)}` }
   }
 }
 
-function preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGit }) {
+function preserveStopLeftoversUnsafe({ cwd, label, exitCode, branchPrefix, runGit, detachedWorktree }) {
   const git = (args) => runGit('git', ['-C', cwd, '-c', 'core.quotePath=false', ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
   const headRef = git(['rev-parse', '--abbrev-ref', 'HEAD'])
   if (headRef.status !== 0) return { failed: `rev-parse --abbrev-ref HEAD: ${(headRef.stderr ?? '').trim() || `exit ${headRef.status}`}` }
   const branch = (headRef.stdout ?? '').trim()
-  if (!branch || branch === 'HEAD' || !branch.startsWith(branchPrefix)) return { skipped: 'not-on-runner-branch', branch }
+  if (detachedWorktree ? branch !== 'HEAD' : (!branch || branch === 'HEAD' || !branch.startsWith(branchPrefix))) return { skipped: 'not-on-runner-branch', branch }
   const status = git(['status', '--porcelain=v1', '-z', '--untracked-files=all'])
   if (status.status !== 0) return { failed: `status: ${(status.stderr ?? '').trim()}` }
   const entries = parsePorcelainZ(status.stdout ?? '').filter((p) => p && p !== '.auto-batch-worktree')

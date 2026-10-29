@@ -41,6 +41,7 @@ import { autoSwitch as accountAutoSwitch, saveBack as accountSaveBack } from './
 import { loadConfig } from './plan-queue.mjs'
 import { safeGitPush } from './push-guard.mjs'
 import { preserveRunReport, preserveStopLeftovers, refreshWorktree } from './worktree-refresh.mjs'
+import { mergeStateJson } from './runner-rules.mjs'
 import { assertReviewedRuntime, assertIncomingToolingStable } from './runtime-pin.mjs'
 import { verifiedLandingFingerprint } from './landing-publication.mjs'
 // 2026-09-02 「9점대 하네스」 배선 — 판정은 전부 순수 모듈이 소유하고 러너는 부르기만 한다.
@@ -49,7 +50,7 @@ import { parallelHazardsCompat } from './conflicts.mjs'
 import { appendJsonl, metricsHistoryPath, parseCodexUsage, parseEngineLog, renderMetricsTable, summarizeTimeline, writeJsonAtomic } from './metrics.mjs'
 import { makeClaudePlanRunner, requestPlan } from './orchestrate.mjs'
 import { buildDag, parseDependsOn } from './plan-dag.mjs'
-import { REVIEW_PENDING_EXIT, isReviewPendingExit, isStoryLevelStop, worseExit, LOG_PREFIX, shouldArchiveEvidence, evidenceLogKeep, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refreshStall, refundUnrun, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { REVIEW_PENDING_EXIT, isReviewPendingExit, isStoryLevelStop, worseExit, LOG_PREFIX, shouldArchiveEvidence, evidenceLogKeep, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refreshStall, refundUnrun, resolveSprintStatusConflict, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = fileURLToPath(resolveAsf('auto-story-pipeline.mjs'))
 // mockup 단계가 든 배치는 목업 폴더(config mockupGate.mockupsDir · 기본 mockups)를 스토리 커밋에 함께 싣는다 —
@@ -1096,6 +1097,9 @@ const WORKTREE_ENV = Object.freeze({
   GIT_CONFIG_COUNT: '1',
   GIT_CONFIG_KEY_0: 'credential.helper',
   GIT_CONFIG_VALUE_0: '',
+  // 자원표 1줄: 워크트리 간 **qa 는 한 번에 하나**(runtime/qa-mutex.mjs · quality-gates worker phase 가 잠근다) — 병렬 워커의
+  // 동시 qa 가 공유 개발 DB·Supabase Auth(429)를 흔든다(09-16 429 · 09-30 통합 vitest 16 워커 · 10-28 1-121 경합).
+  AUTO_QA_MUTEX: join(STATE_DIR, 'locks', 'qa.lock'),
 })
 
 // ── 통합 게이트 · push · 배치 매니페스트 (병렬·순차 **공통**) ─────────────────────────────
@@ -1558,55 +1562,95 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
   const landingBase = headSha() // 통합 게이트 RED 시 여기로 되돌린다
   const landedStories = [] // { story, head } — 통합 게이트 대상(아래 충돌 분기의 boolean `landed` 와 다른 변수)
   const evidence = {} // story → 증거 폴더 경로(배치 매니페스트가 가리킨다)
+  const pendingLandings = {} // story → 리뷰 대기(exit 8) 잔여물 착지 커밋(통합 게이트 대상 아님 · 매니페스트 failed[].landed)
+  // 워크트리 커밋 1개를 배치 트리로 cherry-pick — 성공 landing 과 리뷰 대기 잔여물 landing 이 **같은 경로**를 쓴다.
+  // 반환 { ok, resolved } 또는 { ok:false, why }(abort + archive/parallel-* 태그 보존 완료).
+  const landHead = (wt, head) => {
+    const pick = spawnSync('git', ['cherry-pick', head], { encoding: 'utf8' })
+    if (pick.status === 0) return { ok: true, resolved: 0, head: headSha() } // head = 배치 트리에 생긴 **새** 커밋(cherry-pick 은 부모가 달라 SHA 가 바뀐다)
+    // 자동 해소 가능한 충돌 클래스(엔진 자기 로그 append·state.json·공유 장부 append·sprint-status 키 단위)만 풀어 landing 을
+    // 살린다 — 그 외 파일이 섞이면 손대지 않고 종전 보존 폴백(archive 태그).
+    // core.quotePath=false — 하향 동기·라운드 커밋과 같은 이유다. 기본값이면 한글 경로가 8진
+    // 이스케이프 + 따옴표로 나와 landingResolution 의 클래스 판정이 통째로 빗나가고, 자동 해소
+    // 가능한 충돌까지 「해소 불가」로 떨어져 산출물이 archive 태그로 밀린다.
+    const conflicted = (spawnSync('git', ['-c', 'core.quotePath=false', 'diff', '--name-only', '--diff-filter=U'], { encoding: 'utf8' }).stdout ?? '')
+      .split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+    const plan = landingResolution(conflicted)
+    let landed = plan != null
+    if (landed) {
+      for (const [file, how] of Object.entries(plan)) {
+        if (how === 'ours') {
+          if (spawnSync('git', ['checkout', '--ours', '--', file]).status !== 0) { landed = false; break }
+        } else {
+          let merged
+          // sprint-status 는 키 단위(착지 스토리의 키만 워크트리 값) — union 은 이웃 줄 충돌에서 같은 키를 두 번 남겼다(09-25 d389a72f8)
+          // state.json 은 스토리 키 단위(ours 바탕 + 착지 스토리 항목만 theirs) — 'ours' 는 둘째 워커의 구현자 기록을 버려 마감 재검수 T6 가 영영 비었다(Astra 10-29 #2)
+          const stage = (n) => { const r = spawnSync('git', ['show', `:${n}:${file}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); return r.status === 0 ? r.stdout : null }
+          try { merged = how === 'sprint' ? resolveSprintStatusConflict(readFileSync(file, 'utf8'), { preferKeys: String(wt.story).split('+') }) : how === 'state' ? mergeStateJson(stage(2), stage(3), { preferKeys: String(wt.story).split('+') }) : stripConflictMarkers(readFileSync(file, 'utf8')) } catch { merged = null }
+          if (merged == null) { landed = false; break }
+          writeFileSync(file, merged)
+        }
+        if (spawnSync('git', ['add', '--', file]).status !== 0) { landed = false; break }
+      }
+      if (landed) landed = spawnSync('git', ['-c', 'core.editor=true', 'cherry-pick', '--continue'], { encoding: 'utf8' }).status === 0
+    }
+    if (landed) return { ok: true, resolved: Object.keys(plan).length, head: headSha() }
+    spawnSync('git', ['cherry-pick', '--abort'])
+    spawnSync('git', ['tag', `archive/parallel-${wt.story}-${Date.now()}`, head]) // 산출물 보존 — 유실 금지
+    // 충돌 파일 0 = 충돌이 아니라 **적용 거부**(dirty 트리·잘못된 부모 등)다 — 사유를 그대로 적어야 다음 사람이 헛짚지 않는다.
+    const why = conflicted.length ? '자동 해소 불가 충돌: ' + conflicted.slice(0, 4).join(', ') : 'cherry-pick 거부: ' + ((pick.stderr ?? '').trim().split('\n').find((l) => /error|fatal/i.test(l)) ?? (pick.stderr ?? '').trim().split('\n')[0] ?? '?').slice(0, 160)
+    return { ok: false, why }
+  }
   for (const wt of wts) {
     const r = outs.find((o) => o.story === wt.story)
     if (!r || r.code !== 0) {
       // 한도(exit 5) 무작업 워크트리는 증거를 만들지 않는다(09-12 디스크 0 실사고 · 로그 밖 변경이 있으면 종전대로 보관)
       const ev = shouldArchiveEvidence({ code: r?.code, hasWork: r?.code === 5 ? treeHasWorkBeyondLogs(wt.dir, wt.base) : true }) ? await archiveEvidence(wt) : null
       if (ev) evidence[wt.story] = ev
-      record(isReviewPendingExit(r?.code) ? `- ⏳ 리뷰 대기(exit ${r.code}): ${wt.story} (병렬 dev) — 다음 편성이 마감 재검수${ev ? ` · 증거 보관 ${ev}` : ''}` : `- **중단(exit ${r?.code ?? '?'}): ${wt.story} (병렬 dev)** — 성공분 landing 후 배치 STOP${ev ? ` · 증거 보관 ${ev}` : ''}`); worst = worseExit(worst, r?.code ?? 1); continue
+      if (isReviewPendingExit(r?.code)) {
+        // 2026-09-30 실사고(5-8·5-9·5-15 · parallel 4→1 의 원인): 리뷰 대기(exit 8)는 done/commit 없음이라 워크트리에 **미커밋 잔여물**
+        // (스토리 md 의 리뷰 기재·Status · sprint-status · qa GREEN 코드)만 남고, 종전엔 증거 폴더에만 복사한 채 워크트리를 지웠다 → 본 트리는
+        // 그대로라 다음 편성이 같은 재검수를 다시 열었다(무한 재검수 · 회당 160만~300만 토큰). 순차 경로가 같은 자리에서 하는 「STOP 잔여물
+        // 보존」 커밋을 워크트리(detached)에서 만들고 성공분과 같은 cherry-pick 으로 착지시킨다 — 통합 게이트도 함께 본다.
+        const kept = preserveStopLeftovers({ cwd: wt.dir, label: `${wt.story} (병렬 ${laneLabel} · 리뷰 대기)`, exitCode: r.code, detachedWorktree: true })
+        if (kept?.committed) {
+          const l = landHead(wt, kept.committed)
+          if (l.ok) {
+            // 통합 게이트 대상(landedStories)엔 넣지 않는다 — 워커 completion 이 「ready」가 아니라 게이트가 거부한다(landing-publication).
+            // 순차 경로의 STOP 잔여물 커밋과 같다: 성공 스토리와 섞이면 그 게이트가 합쳐진 트리(이 코드 포함)를 검사하고, 단독이면
+            // push 없이 브랜치에 남아 다음 GREEN 배치의 push 에 실린다. 매니페스트 failed[].landed 가 착지 커밋을 가리킨다.
+            // 통합 게이트 RED 는 landingBase 로 reset 한다 — 게이트 대상이 아닌 이 커밋은 태그가 없으면 reflog 에만 남는다(Astra 10-29 #1). 착지 **결과** 커밋을 태그로 묶는다.
+            const tag = `archive/parallel-pending-${wt.story}-${Date.now()}`
+            spawnSync('git', ['tag', tag, l.head])
+            pendingLandings[wt.story] = { head: l.head, source: kept.committed, tag }
+            record(`- ⏳ 리뷰 대기(exit ${r.code}): ${wt.story} (병렬 ${laneLabel}) — 잔여물 ${kept.entries}건 착지 ${l.head.slice(0, 12)}(보존 태그 ${tag})${l.resolved ? ` · 충돌 자동 해소 ${l.resolved}파일` : ''}${kept.denied?.length ? ` · 금지 경로 ${kept.denied.length}건 미커밋` : ''} · 다음 편성이 ${reviewOnly ? '회수' : '마감 재검수'}${ev ? ` · 증거 보관 ${ev}` : ''}`)
+            worst = worseExit(worst, r.code)
+          } else {
+            record(`- **리뷰 대기 잔여물 landing 실패(${l.why}): ${wt.story}** — 산출물은 archive/parallel-* 태그 보존 · 다음 라운드가 같은 단계를 다시 연다${ev ? ` · 증거 보관 ${ev}` : ''}`)
+            worst = worseExit(worst, 1)
+          }
+        } else if (kept?.failed) {
+          record(`⚠ 리뷰 대기 잔여물 보존 실패 — ${wt.story}: ${kept.failed} · 본 트리에 착지하지 못해 다음 편성이 같은 단계를 다시 연다${ev ? ` · 증거 보관 ${ev}` : ''}`)
+          notify('병렬 리뷰 대기 잔여물 보존 실패', `${wt.story} (exit ${r.code})\n${kept.failed}\n증거: ${ev ?? '없음'} — 스토리 md·sprint-status 를 사람이 본 트리에 옮길 것(09-30 apply-…-land-closeout-findings.sh 선례)`,
+            `병렬 잔여물 보존 실패 1건. ${NTFY_BRIEF}`)
+          worst = worseExit(worst, 1)
+        } else {
+          record(`- ⏳ 리뷰 대기(exit ${r.code}): ${wt.story} (병렬 ${laneLabel}) — 착지할 잔여물 없음(${kept?.skipped ?? '?'}) · 다음 편성이 마감 재검수${ev ? ` · 증거 보관 ${ev}` : ''}`)
+          worst = worseExit(worst, r.code)
+        }
+        continue
+      }
+      record(`- **중단(exit ${r?.code ?? '?'}): ${wt.story} (병렬 dev)** — 성공분 landing 후 배치 STOP${ev ? ` · 증거 보관 ${ev}` : ''}`); worst = worseExit(worst, r?.code ?? 1); continue
     }
     const head = spawnSync('git', ['-C', wt.dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim()
     if (head === wt.base) { record(`- 완주(커밋 없음): ${wt.story}`); continue }
-    const pick = spawnSync('git', ['cherry-pick', head], { encoding: 'utf8' })
-    if (pick.status !== 0) {
-      // 자동 해소 가능한 충돌 클래스(엔진 자기 로그 append·state.json·공유 장부 append)만 풀어 landing 을
-      // 살린다 — 그 외 파일이 섞이면 손대지 않고 종전 보존 폴백(archive 태그).
-      // core.quotePath=false — 하향 동기·라운드 커밋과 같은 이유다. 기본값이면 한글 경로가 8진
-      // 이스케이프 + 따옴표로 나와 landingResolution 의 클래스 판정이 통째로 빗나가고, 자동 해소
-      // 가능한 충돌까지 「해소 불가」로 떨어져 산출물이 archive 태그로 밀린다.
-      const conflicted = (spawnSync('git', ['-c', 'core.quotePath=false', 'diff', '--name-only', '--diff-filter=U'], { encoding: 'utf8' }).stdout ?? '')
-        .split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
-      const plan = landingResolution(conflicted)
-      let landed = plan != null
-      if (landed) {
-        for (const [file, how] of Object.entries(plan)) {
-          if (how === 'ours') {
-            if (spawnSync('git', ['checkout', '--ours', '--', file]).status !== 0) { landed = false; break }
-          } else {
-            let merged
-            try { merged = stripConflictMarkers(readFileSync(file, 'utf8')) } catch { merged = null }
-            if (merged == null) { landed = false; break }
-            writeFileSync(file, merged)
-          }
-          if (spawnSync('git', ['add', '--', file]).status !== 0) { landed = false; break }
-        }
-        if (landed) landed = spawnSync('git', ['-c', 'core.editor=true', 'cherry-pick', '--continue'], { encoding: 'utf8' }).status === 0
-      }
-      if (!landed) {
-        spawnSync('git', ['cherry-pick', '--abort'])
-        spawnSync('git', ['tag', `archive/parallel-${wt.story}-${Date.now()}`, head]) // 산출물 보존 — 유실 금지
-        // 충돌 파일 0 = 충돌이 아니라 **적용 거부**(dirty 트리·잘못된 부모 등)다 — 사유를 그대로 적어야 다음 사람이 헛짚지 않는다.
-        const why = conflicted.length ? '자동 해소 불가 충돌: ' + conflicted.slice(0, 4).join(', ') : 'cherry-pick 거부: ' + ((pick.stderr ?? '').trim().split('\n').find((l) => /error|fatal/i.test(l)) ?? (pick.stderr ?? '').trim().split('\n')[0] ?? '?').slice(0, 160)
-        record(`- **landing 실패(${why}): ${wt.story}** — 산출물은 archive/parallel-* 태그 보존 · 다음 순차 라운드가 회수`)
-        worst = worseExit(worst, 1)
-        continue
-      }
-      record(`- 완주: ${wt.story} (병렬 dev → landing · 충돌 자동 해소 ${Object.keys(plan).length}파일)`)
-      landedStories.push({ story: wt.story, head })
+    const l = landHead(wt, head)
+    if (!l.ok) {
+      record(`- **landing 실패(${l.why}): ${wt.story}** — 산출물은 archive/parallel-* 태그 보존 · 다음 순차 라운드가 회수`)
+      worst = worseExit(worst, 1)
       continue
     }
-    record(`- 완주: ${wt.story} (병렬 dev → landing)`)
+    record(`- 완주: ${wt.story} (병렬 dev → landing${l.resolved ? ` · 충돌 자동 해소 ${l.resolved}파일` : ''})`)
     landedStories.push({ story: wt.story, head })
   }
 
@@ -1617,13 +1661,17 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
     timeoutMin: batch.stageTimeoutMin ?? defaults.stageTimeoutMin ?? 120,
   })
   const integration = gateOut.integration
+  if (integration.result !== 'pass' && Object.keys(pendingLandings).length) record(`- ⚠ 통합 게이트 ${integration.result} 로 리뷰 대기 잔여물 착지 ${Object.keys(pendingLandings).length}건도 브랜치에서 되돌아갔다 — 보존 태그: ${Object.values(pendingLandings).map((p) => p.tag).join(', ')} (다음 라운드가 같은 단계를 다시 열거나 사람이 태그를 cherry-pick)`)
   // 되돌림 실패(7)는 다른 실패보다 위다 — 앞선 워커 실패로 worst 가 이미 1이어도 7 로 올린다.
   worst = worseExit(worst, gateOut.worst) // 진짜 실패 > 리뷰 대기(8) > 성공 · 되돌림 실패(7) 최상위
   const pushed = pushBranchOnce({ enabled: Boolean(defaults.push), skipPush: gateOut.skipPush, record })
   writeBatchManifest({
     batchId, label: batch.label ?? '', stories: storyList, stages: batch.stages ?? ['dev'], workers, mode: 'parallel',
     landedStories, integration, pushed, worst, record,
-    failed: outs.filter((o) => o.code !== 0).map((o) => ({ story: o.story, exit: o.code, evidence: evidence[o.story] ?? null })),
+    // landed = 배치 브랜치에 실제로 남은 착지 커밋(통합 RED 되돌림 뒤면 null · 태그 preservedTag 로 복구) · source = 워크트리 쪽 원본 커밋
+    failed: outs.filter((o) => o.code !== 0).map((o) => ({ story: o.story, exit: o.code, evidence: evidence[o.story] ?? null,
+      landed: pendingLandings[o.story] && integration.result === 'pass' ? pendingLandings[o.story].head : null,
+      preservedTag: pendingLandings[o.story]?.tag ?? null, source: pendingLandings[o.story]?.source ?? null })),
   })
 
   // ── 계측 — 「무엇이 빨라졌나」를 숫자로. 품질 게이트를 함께 실어 **통과한 실행끼리만** 비교한다. ──

@@ -102,6 +102,7 @@ import { detectGates, parseQaChain, classifyQaFailure, repairDecision, buildVeri
 
 import { fingerprint as qualityFingerprint, qualityRunOutcome, qualityFailureKind } from './quality-gates.mjs';
 import { readRecord } from './schema-migration.mjs';
+import { acquireQaMutex } from './qa-mutex.mjs';
 const SKILL_DIR = dirname(fileURLToPath(import.meta.url));
 const CODEX_REVIEW_SCHEMA = join(SKILL_DIR, "providers", "codex-review.schema.json");
 
@@ -1662,7 +1663,19 @@ function runQualityLoop(story) {
       // `coverage::ready` 로 3회 수리 뒤 STOP 했다(2026-10-08 2-18·1-54·4-22). 지우지 못하면 수정 시각으로 신선도를 가른다.
       let staleMtime = null;
       try { unlinkSync(policyFile); } catch (e) { if (e?.code !== 'ENOENT') { try { staleMtime = statSync(policyFile).mtimeMs; } catch { /* gone */ } } }
-      const policyRun = spawnSync(process.execPath, [join(SKILL_DIR, 'quality-gates.mjs'), '--base', opt('quality-base', 'HEAD'), '--out', policyFile], { encoding: 'utf8', timeout: stageTimeoutMs, windowsHide: true });
+      // 병렬 워크트리 간 qa 직렬 잠금(AUTO_QA_MUTEX · 러너가 넣는다 · runtime/qa-mutex.mjs) — 게이트 프로세스 **밖에서** 기다려 대기가 stage 타임아웃을 먹지 않는다.
+      // 시한을 넘기면 qa 를 돌리지 않고 STOP(fail-closed · 잠금 없는 동시 qa 는 공유 개발 DB 를 어지럽혀 결과를 믿을 수 없다).
+      const mutex = process.env.AUTO_QA_MUTEX ? acquireQaMutex({ path: process.env.AUTO_QA_MUTEX, log: (m) => note(`[${story}][QUALITY] ${m}`) }) : null;
+      if (mutex?.timedOut) {
+        note(`✖ STOP — [${story}] qa 직렬 잠금을 시한 안에 얻지 못했다(${process.env.AUTO_QA_MUTEX}). 다른 워커의 qa 가 멈춘 것으로 본다 — 사람/감시자가 lock 을 확인할 것.`);
+        holdStory(story); finalizeManifest(story, null);
+        writeExitInfo({ code: 1, kind: "qa", provider: parseModelSpec(models.dev).provider, story, stage: "qa", why: "qa-mutex-timeout" });
+        process.exit(1);
+      }
+      if (mutex?.waitedMs > 0) note(`[${story}][QUALITY] qa 잠금 ${Math.round(mutex.waitedMs / 1000)}s 대기 뒤 획득`);
+      let policyRun;
+      try { policyRun = spawnSync(process.execPath, [join(SKILL_DIR, 'quality-gates.mjs'), '--base', opt('quality-base', 'HEAD'), '--out', policyFile], { encoding: 'utf8', timeout: stageTimeoutMs, windowsHide: true }); }
+      finally { mutex?.release(); }
       let report = null;
       try { if (staleMtime === null || statSync(policyFile).mtimeMs !== staleMtime) report = JSON.parse(readFileSync(policyFile, 'utf8')); } catch { report = null; }
       const outcome = qualityRunOutcome({ status: policyRun.status, report, stderr: policyRun.stderr });

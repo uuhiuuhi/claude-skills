@@ -1223,3 +1223,52 @@ describe('[e2e] review 전용 배치 병렬 — File List 겹침 무시 · 장�
     assert.equal(commitsOnBranch(fx.proj).length, 0);
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-09-30 실사고(BaroOS 라운드 4 · 5-8·5-9·5-15): 병렬 워크트리의 워커가 **리뷰 대기(exit 8)** 로 끝나면
+// (done/commit 없음 — 회수 dev 전용 배치의 T6 미충족 · 마감 재검수가 지적을 남김) 러너는 증거만 보관하고 워크트리를
+// 지웠다. 스토리 md 의 기재·Status·sprint-status·qa GREEN 코드가 본 트리에 오지 않아 다음 편성이 같은 일을 다시 열었다
+// (무한 재검수 · 회당 160만~300만 토큰). 순차 경로는 같은 자리에서 「STOP 잔여물 보존」 커밋으로 남긴다 — 병렬도 같아야 한다.
+describe('[e2e][09-30 실사고] 리뷰 대기(exit 8) 병렬 워크트리의 잔여물이 본 트리에 착지한다 — md·sprint-status·코드 · 중복 키 0', { timeout: 300_000 }, () => {
+  let fx, r
+  before(() => {
+    // dev 전용(회수) 배치 — review 단계가 없어 T6 만 미충족 → 엔진 exit 8(리뷰 대기) · 워커 2개가 sprint-status 의 **이웃 줄**을 각각 고친다
+    fx = makeFixture({ stages: ['dev'], models: { dev: 'fable' } }); fixtures.push(fx)
+    r = runRunner(fx)
+  })
+  it('러너 exit 8 · 병렬 2폭 · 두 워크트리의 잔여물이 각각 STOP 보존 커밋으로 본 트리에 착지한다', () => {
+    assert.ok([0, 8].includes(r.status), `리뷰 대기는 고장이 아니다(exit 0/8): ${r.status} ${r.out.slice(-3000)}`)
+    assert.match(r.summary, /병렬 실행 2폭/, r.summary.slice(-2000))
+    assert.match(r.summary, /리뷰 대기\(exit 8\): 2-1-a \(병렬 DEV\) — 잔여물 \d+건 착지 [0-9a-f]{12}\(보존 태그 archive\/parallel-pending-2-1-a-\d+\)/, r.summary.slice(-2000))
+    assert.match(r.summary, /리뷰 대기\(exit 8\): 2-2-b \(병렬 DEV\) — 잔여물 \d+건 착지 [0-9a-f]{12}\(보존 태그 archive\/parallel-pending-2-2-b-\d+\) · 충돌 자동 해소 \d+파일/, '둘째 워크트리는 sprint-status 이웃 줄·장부가 충돌해 자동 해소를 거친다')
+    assert.match(r.summary, /⏳ 리뷰 대기\(exit 8\): E2E 병렬 짝 \(병렬\)/, '배치는 고장(중단)이 아니라 리뷰 대기로 끝난다')
+    const cs = commitsOnBranch(fx.proj)
+    assert.equal(cs.length, 2, cs.join(' | '))
+    assert.equal(cs.filter((l) => /STOP 잔여물 보존 — 2-1-a \(병렬 DEV · 리뷰 대기\) \(exit 8\)/.test(l)).length, 1, cs.join(' | '))
+    assert.equal(cs.filter((l) => /STOP 잔여물 보존 — 2-2-b \(병렬 DEV · 리뷰 대기\) \(exit 8\)/.test(l)).length, 1, cs.join(' | '))
+    // 순차 경로의 STOP 잔여물과 같다 — 통합 게이트 대상이 아니므로(워커 completion 미완) 게이트·push 없이 브랜치에만 남는다
+    assert.equal(cs.filter((l) => /통합 게이트 결과 매니페스트 반영/.test(l)).length, 0, cs.join(' | '))
+    assert.deepEqual(originHeads(fx.proj), ['refs/heads/main'], '리뷰 대기 잔여물만으로는 push 하지 않는다')
+    const manifest = JSON.parse(readFileSync(join(fx.art, 'auto-pipeline-logs', readdirSync(join(fx.art, 'auto-pipeline-logs')).find((n) => /^batch-.*-manifest\.json$/.test(n))), 'utf8'))
+    assert.equal((manifest.failed ?? []).length, 2)
+    const branchShas = git(fx.proj, ['rev-list', 'main..HEAD']).stdout.trim().split(/\r?\n/)
+    for (const f of manifest.failed ?? []) {
+      assert.equal(f.exit, 8)
+      // (Astra 10-29 #8) landed = 배치 브랜치에 실제로 있는 cherry-pick **결과** 커밋(워크트리 원본 SHA 가 아니다) · 보존 태그가 같은 커밋을 가리킨다
+      assert.ok(branchShas.includes(f.landed), `failed[].landed 가 브랜치 커밋이어야 한다: ${JSON.stringify(f)} / ${branchShas}`)
+      assert.match(f.source ?? '', /^[0-9a-f]{40}$/, '워크트리 쪽 원본 커밋도 적는다(같은 부모·같은 초 안이면 SHA 가 같을 수 있다)')
+      assert.equal(git(fx.proj, ['rev-parse', `${f.preservedTag}^{commit}`]).stdout.trim(), f.landed, '보존 태그 = 착지 커밋(통합 RED 되돌림 뒤에도 남는다)')
+    }
+  })
+  it('본 트리: 스토리 md Status review · sprint-status 두 키 review · **중복 키 0** · qa GREEN 코드 실재 · 트리 clean', () => {
+    for (const k of ['2-1-a', '2-2-b']) assert.match(readFileSync(join(fx.art, `${k}.md`), 'utf8'), /^Status: review$/m, k)
+    const sprint = readFileSync(join(fx.art, 'sprint-status.yaml'), 'utf8')
+    assert.match(sprint, /^  2-1-a: review$/m, sprint)
+    assert.match(sprint, /^  2-2-b: review$/m, sprint)
+    const keys = sprint.split('\n').map((l) => /^  ([^:#\s]+):/.exec(l)?.[1]).filter(Boolean)
+    assert.equal(new Set(keys).size, keys.length, `중복 키(09-25 d389a72f8 실사고 꼴): ${sprint}`)
+    assert.ok(!/^(<{7}|={7}|>{7})/m.test(sprint), '충돌 마커 잔존')
+    assert.ok(existsSync(join(fx.proj, 'src', 'a.ts')) && existsSync(join(fx.proj, 'src', 'b.ts')), 'dev 산출 코드가 본 트리에 있어야 다음 라운드가 이어받는다')
+    assert.equal(git(fx.proj, ['status', '--porcelain', '--untracked-files=no']).stdout.trim(), '', '본 트리 dirty 0(다음 슬롯 refresh 거부 방지)')
+  })
+})
