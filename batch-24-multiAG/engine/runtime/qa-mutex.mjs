@@ -16,7 +16,7 @@ const WRITE_GRACE_MS = 10_000 // 방금 생긴 빈/손상 lock = 다른 프로�
 
 const sleepSync = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) } catch { /* 환경이 막으면 즉시 */ } }
 const defaultPidAlive = (pid) => { try { process.kill(pid, 0); return true } catch (e) { return e?.code === 'EPERM' ? 'unknown' : false } }
-const readLock = (path) => { let holder = null; try { holder = JSON.parse(readFileSync(path, 'utf8')) } catch { holder = null } return holder }
+const readLock = (path) => { try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return null } }
 const ageOf = (path, now) => { try { return now() - statSync(path).mtimeMs } catch { return null } } // null = 없음
 
 /** 잠금 획득. 반환 { release(), waitedMs, timedOut, path } — timedOut=true 면 잠그지 못했다(호출부가 qa 를 돌리지 말 것). */
