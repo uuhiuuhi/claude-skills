@@ -465,7 +465,10 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
         const used = batch.flatMap(realFiles)
         const mateIdx = pool.findIndex((c) => {
           const mateFiles = realFiles(c)
-          const sameShape = c.kind === head.kind && c.epic === head.epic &&
+          // 2026-10-29(👤 「병렬 2폭인데 배치가 1건씩 — 계획기 묶음 수리」): **같은 에픽** 조건을 뺐다 — 마감 재검수·회수가 에픽마다 하나씩이면
+          // 전부 단독 배치가 되어 parallel 이 켜져도 순차로 돌았다(11:27 실측 · review 1건 · review 1건). 병렬 안전은 에픽이 아니라
+          // 같은 종류·같은 단계 서명 + File List 서로소 + 확장 충돌 판정(아래)이 지킨다. 에픽 순서 규칙(규칙 1)은 신규 착수에만 걸리고 후보 단계에서 이미 적용됐다.
+          const sameShape = c.kind === head.kind &&
             (c.stages ?? []).join() === (head.stages ?? []).join() && (c.replanHint ?? '') === (head.replanHint ?? '') // 단계 서명이 같은 것끼리만(replan 유무)
           if (reviewOnly) return sameShape
           return sameShape && mateFiles.length > 0 &&

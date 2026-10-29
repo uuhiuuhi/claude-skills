@@ -146,6 +146,9 @@ export function summarizeTimeline(events = [], opts = {}) {
   const idleMs = Math.max(0, capacityMs - occupancyMs)
   const idleRatio = capacityMs > 0 ? Number((idleMs / capacityMs).toFixed(4)) : 0
   const parallelEfficiency = capacityMs > 0 ? Number((serialMs / capacityMs).toFixed(4)) : 0
+  // 평균 동시 폭 = 점유 ÷ 벽시계 — 「실제로 몇 개가 같이 돌았나」(순차 = 1.0 · 2폭이 꽉 차면 2.0). 병렬 효율은 워커 수로 나눠
+  // 순차 배치(워커 1)에서도 99% 가 찍혀 병렬 여부를 보여 주지 못한다(2026-10-29 지휘 창 지적) — 이 값이 그 질문에 답한다.
+  const concurrency = wallMs > 0 ? Number((occupancyMs / wallMs).toFixed(2)) : 0
 
   // 스토리별
   const keys = [...new Set([...storyEvs, ...stages].map((e) => String(e.story ?? '')).filter(Boolean))].sort(cmpStr)
@@ -219,6 +222,7 @@ export function summarizeTimeline(events = [], opts = {}) {
     idleMs,
     idleRatio,
     parallelEfficiency,
+    concurrency,
     stories,
     p50Ms: percentile(durations, 50),
     p95Ms: percentile(durations, 95),
@@ -246,6 +250,7 @@ export function renderMetricsTable(s, { title = '## 계측' } = {}) {
     `| 워커 | ${s.workers} |`,
     `| 직렬 합 | ${sec(s.serialMs)} |`,
     `| 병렬 효율 | ${pct(s.parallelEfficiency)} |`,
+    `| 평균 동시 폭 | ${s.concurrency ?? 0}(순차 = 1.0) |`,
     `| 워커 유휴 | ${sec(s.idleMs)} (${pct(s.idleRatio)}) |`,
     `| 스토리 p50 / p95 | ${sec(s.p50Ms)} / ${sec(s.p95Ms)} |`,
     `| 재시도 | 수리 ${s.retries.repairRounds}회 · 프로바이더 전환 ${s.retries.providerSwitches}회 |`,
@@ -259,6 +264,7 @@ const METRIC_ROWS = Object.freeze([
   { key: 'wallMs', label: '전체(벽시계)', fmt: sec, better: 'lower' },
   { key: 'serialMs', label: '직렬 합', fmt: sec, better: 'lower' },
   { key: 'parallelEfficiency', label: '병렬 효율', fmt: pct, better: 'higher' },
+  { key: 'concurrency', label: '평균 동시 폭', fmt: (n) => String(Number(n) || 0), better: 'higher' },
   { key: 'idleRatio', label: '워커 유휴 비율', fmt: pct, better: 'lower' },
   { key: 'p50Ms', label: '스토리 p50', fmt: sec, better: 'lower' },
   { key: 'p95Ms', label: '스토리 p95', fmt: sec, better: 'lower' },

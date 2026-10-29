@@ -78,6 +78,12 @@ test('summarizeTimeline — 유휴·병렬 효율 산식이 정의대로다(워�
   // 직렬 합 = 단계 합 10+2+8+1+9 = 30s → 30/(2×40)
   assert.equal(s.serialMs, 30_000)
   assert.equal(s.parallelEfficiency, 0.375)
+  // 평균 동시 폭 = 점유 40s ÷ 벽시계 40s = 1.0(두 스토리가 겹친 10s 와 혼자 돈 20s 의 평균) · 순차 1워커면 항상 ≤ 1.0
+  assert.equal(s.concurrency, 1)
+  const seq = summarizeTimeline([{ kind: 'batch', start: '2026-09-02T18:00:00.000Z', end: '2026-09-02T18:00:40.000Z' }, storyEv('a', '2026-09-02T18:00:00.000Z', '2026-09-02T18:00:40.000Z')], { workers: 1 })
+  assert.equal(seq.concurrency, 1)
+  assert.equal(seq.parallelEfficiency, 0, '단계 이벤트 없는 순차 = 효율 0 — 병렬 여부는 concurrency 로 본다')
+  assert.match(renderMetricsTable(s), /평균 동시 폭 \| 1\(순차 = 1\.0\)/)
 })
 
 test('summarizeTimeline — p50/p95 · 재시도 · 모델 호출량이 스토리 단위로 집계된다', () => {
