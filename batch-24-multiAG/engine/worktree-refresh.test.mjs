@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { literalPathspec, parsePorcelainZ, preserveRunReport, preserveStopLeftovers, refreshWorktree, unstageNewLogArtifacts } from './worktree-refresh.mjs'
+import { dirtyPaths, literalPathspec, parsePorcelainZ, preserveRunReport, preserveStopLeftovers, refreshWorktree, unstageNewLogArtifacts } from './worktree-refresh.mjs'
 
 const branch = 'auto/2026-09-06'
 function fixture(t) {
@@ -624,4 +624,49 @@ test('preserveStopLeftovers names the exit code even when git fails with an empt
     return spawnSync(file, args, opts)
   }
   assert.equal(preserveStopLeftovers({ cwd: f.cwd, label: 'x', exitCode: 6, runGit }).failed, 'add: (exit null error EPERM)')
+})
+
+test('(2026-11-01) 감시자 구현자 기록 복원 — state.json 한 파일만 러너 갈래에 보존 커밋하고, 새로고침이 다시 시작된다', (t) => {
+  const f = fixture(t)
+  const state = '_bmad-output/implementation-artifacts/auto-pipeline-logs/state.json'
+  f.write(state, '{"done":{},"workers":{}}\n')
+  f.commit('state baseline')
+  f.git('checkout', '-qb', branch)
+  f.git('branch', '-u', `origin/${branch}`)
+  f.git('reset', '-q', '--hard', `origin/${branch}`) // 러너 갈래 = 원격 갈래(새로고침이 앞선 HEAD 를 거부하지 않게)
+  f.write(state, '{"done":{},"workers":{}}\n')
+  const base = f.commit('state baseline on runner branch')
+  f.git('push', '-q', 'origin', `HEAD:refs/heads/${branch}`)
+  // 감시자가 복원한 직후 — 추적 파일 1건만 수정(` M` 로 시작하는 줄 1개 · 11-01 00:50 실사고 모양)
+  f.write(state, '{"done":{"1-132::dev":{}},"workers":{"1-132::dev":{"model":"opus"}}}\n')
+  // 회귀: .trim() 으로 읽던 옛 판정은 이 경로를 `ad-output/…` 로 읽어 「소스 잔여물」로 오판했다
+  assert.deepEqual(dirtyPaths({ cwd: f.cwd }), [state])
+  assert.throws(() => f.run(), /unfinished changes preserved in place \(1 entries\)/)
+  const r = preserveRunReport({ cwd: f.cwd, logDir: join(f.cwd, state), message: 'chore(batch): 감시자 복원분 보존 — 1-132 구현자 기록(claude/opus)' })
+  assert.equal(typeof r.committed, 'string', JSON.stringify(r))
+  assert.equal(r.entries, 1)
+  assert.notEqual(r.committed, base)
+  assert.equal(f.git('log', '-1', '--format=%s'), 'chore(batch): 감시자 복원분 보존 — 1-132 구현자 기록(claude/opus)')
+  assert.deepEqual(f.git('show', '--name-only', '--format=', 'HEAD').split('\n'), [state])
+  assert.deepEqual(dirtyPaths({ cwd: f.cwd }), []) // 클론이 깨끗하다
+  f.run() // 깨끗해진 클론 — 새로고침이 거부하지 않는다(새로고침은 detach 한다 — 러너처럼 갈래로 되돌아간다)
+  f.git('checkout', '-q', branch)
+  // 다른 미완 변경이 함께 있으면 state.json 만 커밋하고 나머지는 그대로 둔다(사람 몫 판단은 dirty 플레이북이 한다)
+  f.write(state, '{"done":{"1-133::dev":{}},"workers":{}}\n')
+  f.write('source.txt', 'unfinished\n')
+  const r2 = preserveRunReport({ cwd: f.cwd, logDir: join(f.cwd, state), message: 'chore(batch): 감시자 복원분 보존 — 1-133' })
+  assert.equal(r2.entries, 1, JSON.stringify(r2))
+  assert.deepEqual(f.git('show', '--name-only', '--format=', 'HEAD').split('\n'), [state])
+  assert.deepEqual(dirtyPaths({ cwd: f.cwd }), ['source.txt'])
+})
+
+test('(2026-11-01) 러너 갈래가 아니면(detached·main) 복원분 커밋을 하지 않는다 — 버려지는 커밋 방지', (t) => {
+  const f = fixture(t)
+  const state = '_bmad-output/implementation-artifacts/auto-pipeline-logs/state.json'
+  f.write(state, '{}\n'); const base = f.commit('state baseline')
+  f.write(state, '{"done":{}}\n')
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir: join(f.cwd, state), message: 'x' }), { skipped: 'not-on-runner-branch', branch: 'main' })
+  f.git('checkout', '-q', '--detach')
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir: join(f.cwd, state), message: 'x' }), { skipped: 'not-on-runner-branch', branch: 'HEAD' })
+  assert.equal(f.git('rev-parse', 'HEAD'), base)
 })

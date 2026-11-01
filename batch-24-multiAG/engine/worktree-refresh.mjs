@@ -138,20 +138,20 @@ export function refreshWorktree({ cwd = process.cwd(), branch, date, dryRun = fa
  * blocks the next refresh, which is the intended protection. Ignored files stay ignored (`git add -A` honours .gitignore).
  * Dry runs and checkouts without the execution marker never commit.
  */
-export function preserveRunReport({ cwd = process.cwd(), logDir, label = '', dryRun = false, branchPrefix = 'auto/', runGit = spawnSync } = {}) {
+export function preserveRunReport({ cwd = process.cwd(), logDir, label = '', message = '', dryRun = false, branchPrefix = 'auto/', runGit = spawnSync } = {}) {
   if (dryRun) return { skipped: 'dry-run' }
   if (!existsSync(join(cwd, '.auto-batch-worktree'))) return { skipped: 'no-marker' }
   if (!logDir) return { skipped: 'no-log-dir' }
   // Housekeeping must never throw — a finished run must not turn into a crash because git or the executor misbehaved
   // (Sol-high round 12 M2). Git non-zero exits are reported as {failed}; so are executor exceptions.
   try {
-    return preserveRunReportUnsafe({ cwd, logDir, label, branchPrefix, runGit })
+    return preserveRunReportUnsafe({ cwd, logDir, label, message, branchPrefix, runGit })
   } catch (error) {
     return { failed: `exception: ${error?.message ?? String(error)}` }
   }
 }
 
-function preserveRunReportUnsafe({ cwd, logDir, label, branchPrefix, runGit }) {
+function preserveRunReportUnsafe({ cwd, logDir, label, message: customMessage, branchPrefix, runGit }) {
   const git = (args) => runGit('git', ['-C', cwd, ...args], { encoding: 'utf8' })
   const top = git(['rev-parse', '--show-toplevel'])
   if (top.status !== 0) return { failed: `rev-parse --show-toplevel: ${(top.stderr ?? '').trim() || `exit ${top.status}`}` }
@@ -185,7 +185,7 @@ function preserveRunReportUnsafe({ cwd, logDir, label, branchPrefix, runGit }) {
     const addNew = git(['add', '--', ...newLedgers.map(literalPathspec)])
     if (addNew.status !== 0) return { failed: `add: ${(addNew.stderr ?? '').trim()}`, entries: staged }
   }
-  const message = `chore(batch): 실행 보고·게이트 로그 보존${label ? ` (${label})` : ''}`
+  const message = customMessage || `chore(batch): 실행 보고·게이트 로그 보존${label ? ` (${label})` : ''}`
   const commit = git(['-c', 'core.editor=true', 'commit', '-q', '-m', message, '--', rel])
   if (commit.status !== 0) return { failed: `commit: ${(commit.stderr ?? commit.stdout ?? '').trim()}`, entries: staged }
   const head = (git(['rev-parse', 'HEAD']).stdout ?? '').trim()
@@ -313,6 +313,15 @@ export function parsePorcelainZ(stdout) {
     if (/[RC]/.test(xy)) { const src = fields[i + 1]; if (src) out.push(src); i++ }
   }
   return out
+}
+
+/** 러너 클론의 미완 변경 경로 목록(추적 수정 + 미추적). `git status --porcelain` 을 `.trim()` 하면 첫 줄의 앞 공백(` M`)이
+ *  잘려 `slice(3)` 이 경로 앞 글자를 먹는다 — `_bmad-output/…` 이 `ad-output/…` 로 읽혀 감시자가 「소스 잔여물 — 사람 몫」으로
+ *  오판하고 러너를 몇 시간 세웠다(2026-10-30 · 11-01 실사고). -z 로 읽어 경로를 그대로 돌려준다. */
+export function dirtyPaths({ cwd = process.cwd(), runGit = spawnSync } = {}) {
+  const r = runGit('git', ['-C', cwd, 'status', '--porcelain=v1', '-z'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  if (r.status !== 0) return null
+  return parsePorcelainZ(r.stdout)
 }
 
 /** git 에 되돌려 주는 pathspec 은 항상 리터럴이다 — glob(`*`·`[]`)·매직(`:(top)` 등)이 든 파일 이름이 선택 범위를 넓히지 못한다. */

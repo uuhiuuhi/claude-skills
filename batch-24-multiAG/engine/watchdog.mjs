@@ -30,7 +30,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { lockDead, restoreDevProvenance, stopBlocked, stopWindowId, telegramCurlRequest, telegramSent } from './runner-rules.mjs'
-import { parsePorcelainZ, preserveStopLeftovers, unstageNewLogArtifacts } from './worktree-refresh.mjs'
+import { dirtyPaths, parsePorcelainZ, preserveRunReport, preserveStopLeftovers, unstageNewLogArtifacts } from './worktree-refresh.mjs'
 
 const args = process.argv.slice(2)
 const has = (k) => args.includes(k)
@@ -213,8 +213,13 @@ const PLAYBOOK = [
       const who = implementerFromStory(story) ?? { provider: 'claude', model: 'opus' }
       const { key: K, added, worker } = restoreDevProvenance(st, story, who, now().toISOString())
       if (!added.length) return `이미 기록 있음(workers+done) ${JSON.stringify(worker).slice(0, 80)}`
-      if (!DRY) writeFileSync(p, JSON.stringify(st, null, 2))
-      return `state.json workers+done[${K}] 확인 — 새로 적은 칸 ${added.join('+')} · 구현자 ${worker.provider}/${worker.model}`
+      if (DRY) return `(리허설) state.json workers+done[${K}] 복원 + 보존 커밋`
+      writeFileSync(p, JSON.stringify(st, null, 2))
+      // 고친 state.json 을 미커밋으로 두면 다음 슬롯의 worktree-refresh 가 「unfinished changes」로 시작을 거부한다(2026-11-01 00:50 실사고).
+      // state.json 한 파일만 러너 갈래(auto/*)에 커밋한다 — 푸시는 러너가 한다.
+      const kept = preserveRunReport({ cwd: RUNNER, logDir: p, message: `chore(batch): 감시자 복원분 보존 — ${story} 구현자 기록(${worker.provider}/${worker.model})` })
+      const keptText = kept.committed ? `보존 커밋 ${kept.committed.slice(0, 8)}` : `보존 커밋 안 됨(${kept.failed ?? kept.skipped})`
+      return `state.json workers+done[${K}] 확인 — 새로 적은 칸 ${added.join('+')} · 구현자 ${worker.provider}/${worker.model} · ${keptText}`
     },
   },
   {
@@ -259,9 +264,9 @@ const PLAYBOOK = [
     name: '워크트리 새로고침 중단(dirty 러너 클론)',
     match: (s) => /unfinished changes preserved/.test(s) || (/워크트리 새로고침 중단/.test(s) && !/divergent|non-date/.test(s)),
     fix: () => {
-      const st = spawnSync('git', ['status', '--porcelain'], { cwd: RUNNER, encoding: 'utf8' }).stdout.trim().split(/\r?\n/).filter(Boolean)
-      if (!st.length) return 'dirty 아님(이미 정리됨)'
-      const files = st.map((l) => l.slice(3).trim())
+      const files = dirtyPaths({ cwd: RUNNER }) // (2026-11-01) .trim() 이 첫 줄 앞 공백을 잘라 `_bmad-output/` 을 소스로 오판하던 것 수리
+      if (!files) return 'git status 실패 — 사람 몫'
+      if (!files.length) return 'dirty 아님(이미 정리됨)'
       if (!files.every((f) => f.startsWith('_bmad-output/'))) return claudeDiagnose(`dirty 러너 클론 — 소스 잔여물 ${files.slice(0, 5).join(', ')}`) === 'fixed' ? 'Claude 진단이 잔여물 정리' : '소스 잔여물 — 사람 몫'
       if (DRY) return `(리허설) 잔여물 ${files.length}건 보존 커밋`
       spawnSync('git', ['add', '-A', '_bmad-output'], { cwd: RUNNER, encoding: 'utf8' })
@@ -291,7 +296,7 @@ function reinstallEngineAndRepin() {
   if (DRY) return `(리허설) ${CANONICAL}/install.mjs --force + 핀 재기록`
   const inst = spawnSync(process.execPath, [join(CANONICAL, 'install.mjs'), '--force'], { cwd: RUNNER, encoding: 'utf8', timeout: 600000, windowsHide: true })
   if (inst.status !== 0) { rgit(['checkout', '--', 'tools/auto']); return `설치 실패 exit ${inst.status} — 되돌림 · 사람 몫` }
-  const changed = rgit(['status', '--porcelain']).stdout.trim().split(/\r?\n/).filter(Boolean).map((l) => l.slice(3).trim())
+  const changed = dirtyPaths({ cwd: RUNNER }) ?? [] // (2026-11-01) .trim() 이 첫 경로 앞 글자를 먹어 tools/auto 밖으로 오판하던 것 수리
   if (!changed.length) return '설치했으나 바뀐 파일 0 — 원인이 엔진이 아니다'
   const outside = changed.filter((p) => !p.startsWith('tools/auto/'))
   if (outside.length) { rgit(['checkout', '--', '.']); return `설치가 tools/auto 밖을 건드림(${outside[0]}) — 되돌림 · 사람 몫` }
