@@ -595,13 +595,18 @@ const scrubLog = (t) => redactSecrets(t);
  *  origin 만 보면 워커가 `git remote add sneak … && git push sneak` 로 빠져나간다. 원격이 없으면 빈 문자열
  *  (비교는 항상 같음 = skip). 조회 실패도 비교 대상 아님(네트워크 없는 밤도 있다) — 다만 실패/성공이
  *  전후로 뒤바뀌면 그 자체가 변화로 잡히지 않게 실패는 그 remote 를 건너뛴다. */
+// (2026-11-11 깃러너) 비교 대상 = 원격 이름 목록 + **러너 자기 갈래**(--branch · 현재 갈래)만.
+//   종전엔 모든 heads 를 비교해 다른 창·깃러너가 main 을 올릴 때마다 워커가 STOP(exit 6)했다.
+//   원격 추가(sneak)는 이름 목록 변화로, 자기 갈래 push 는 ref 변화로, 커밋은 localGitFingerprint 로 여전히 잡는다.
 function remoteHeads() {
   const names = git(["remote"]).out.split("\n").map((l) => l.trim()).filter(Boolean);
   if (!names.length) return "";
-  const parts = [];
+  const cur = currentBranch();
+  const own = new Set([branchName, cur === "HEAD" ? "" : cur].filter(Boolean).map((b) => `refs/heads/${b}`));
+  const parts = [`remotes ${names.join(",")}`];
   for (const n of names) {
     const r = git(["ls-remote", "--heads", n], { timeout: 20000 });
-    if (r.code === 0) parts.push(`${n}\n${r.out.trim()}`);
+    if (r.code === 0) parts.push(`${n}\n${r.out.split("\n").filter((l) => own.has(l.split("\t")[1]?.trim())).join("\n").trim()}`);
   }
   return parts.join("\n");
 }

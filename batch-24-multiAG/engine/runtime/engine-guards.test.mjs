@@ -106,6 +106,9 @@ describe('[engine-guards] v3 다중 프로바이더 규율', () => {
     assert.ok(has('const guardBlocked = isGuardBlocked({ code, stderr: res.stderr }, guard);'))
     assert.ok(!/res\.stdout \|\| ""\}`\.includes\(guard\.blockedPrefix\)/.test(src), 'stdout 부분 문자열 판정이 되살아났다')
     assert.ok(has('const remoteBefore = remoteHeads();') && has('const remoteAfter = remoteHeads();'))
+    // 2026-11-11 깃러너: 원격 비교는 원격 이름 목록 + 러너 자기 갈래만 — 다른 갈래(main) push 로 STOP 하지 않는다
+    assert.ok(has('const parts = [`remotes ${names.join(",")}`];'), '원격 이름 목록(sneak remote 탐지)')
+    assert.ok(has('own.has(l.split("\\t")[1]?.trim())'), '자기 갈래만 비교')
     assert.ok(has('guard?.cleanup();'), 'finally 에서 shim 정리')
   })
   it('무인 커밋 자리 제한(#4) — detached 또는 auto/* 에서만 · 커밋 시점에도 재확인', () => {
