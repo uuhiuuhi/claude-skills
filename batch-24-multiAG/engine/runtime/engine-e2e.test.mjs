@@ -78,6 +78,18 @@ if (m) {
   if (process.env.E2E_DUMP_ENV === '1') writeFileSync(join(process.env.E2E_STATE, 'worker-env.json'), JSON.stringify({ keys: Object.keys(process.env), allowProtocol: process.env.GIT_ALLOW_PROTOCOL || null, sshCommand: process.env.GIT_SSH_COMMAND || null }))
   if (action === 'push') runGit('push origin HEAD:main')
   if (action === 'commit-reset') { runGit('commit -q -am "worker sneak"'); runGit('reset --hard HEAD~1') }
+  if (action === 'foreign-push') {
+    // 2026-11-11 깃러너: **다른 창**이 워커 실행 중에 main 과 새 갈래를 올린다(따로 복제한 폴더 · 이 클론에 없는 새 커밋)
+    const url = absGit(['remote', 'get-url', 'origin']).stdout.trim()
+    const other = join(process.env.E2E_STATE, 'other-window')
+    absGit(['clone', '-q', url, other])
+    const og = (a) => { const r = spawnSync(process.env.E2E_REAL_GIT, ['-C', other, ...a], { encoding: 'utf8', env: { ...process.env, GIT_ALLOW_PROTOCOL: 'file:https:ssh', GIT_TERMINAL_PROMPT: '0' } }); log('othergit[' + a.join(' ') + '] exit=' + r.status + (r.status ? ' ' + String(r.stderr).trim().split('\n').slice(-2).join(' / ') : '')); return r }
+    // 픽스처 러너는 main 위에서 돈다(실제 러너는 auto/<날짜>) — 다른 창은 러너 자기 갈래가 아닌 기존 갈래 release 와 새 갈래를 올린다
+    og(['checkout', '-q', '-B', 'w', 'origin/release'])
+    writeFileSync(join(other, 'other.txt'), 'y\n')
+    og(['add', '-A']); og(['-c', 'user.email=o@x', '-c', 'user.name=o', 'commit', '-q', '-m', 'other window'])
+    og(['push', 'origin', 'HEAD:refs/heads/release', 'HEAD:refs/heads/auto/other-window'])
+  }
   if (action === 'abs-push') {
     writeFileSync(join(cwd, 'sneak.txt'), 'x\n')
     absGit(['add', '-A']); absGit(['-c', 'user.email=w@x', '-c', 'user.name=w', 'commit', '-q', '-m', 'sneak'])
@@ -790,6 +802,16 @@ describe('[engine-e2e][N2] shim 우회(절대경로 git + GIT_ALLOW_PROTOCOL 재
     assert.equal(r.status, 6, r.out.slice(-3000))
     assert.match(r.out, /원격 ref 가 실행 전후로 달라졌다/)
     assert.ok(originHeads(fx.proj).length > before.length, '전제: 원격이 실제로 늘었다(차단이 아니라 탐지다)')
+  })
+  it('(2026-11-11 깃러너) 다른 창이 워커 실행 중 다른 갈래·새 갈래를 올려도 STOP 하지 않는다', { skip: REAL_GIT ? false : 'git 없음' }, () => {
+    const fx = makeFixture()
+    git(fx.proj, ['push', '-q', 'origin', 'HEAD:refs/heads/release'])
+    const before = originHeads(fx.proj)
+    const r = runEngine(fx, { args: ['--stages', 'dev'], env: { E2E_DEV_ACTION: 'foreign-push' } })
+    assert.match(r.calls, /othergit\[push origin HEAD:refs\/heads\/release HEAD:refs\/heads\/auto\/other-window\] exit=0/, '전제: 다른 창 push 가 실제로 성공했다')
+    assert.ok(originHeads(fx.proj).length > before.length, '전제: 원격이 실제로 바뀌었다')
+    assert.doesNotMatch(r.out, /원격 ref 가 실행 전후로 달라졌다/)
+    assert.notEqual(r.status, 6, r.out.slice(-3000))
   })
   it('워커가 절대경로 git 으로 commit→reset 하면 HEAD 는 같아도 reflog 지문 변화로 exit 6', { skip: REAL_GIT ? false : 'git 없음' }, () => {
     const fx = makeFixture()

@@ -748,6 +748,14 @@ function doDownSync() {
   day.notified.d2conflict = true
   save()
   if (dec.mode === 'halt') {
+    // (2026-11-11 깃러너) 설정 downSyncCodeConflict="continue" 면 쉬지 않는다 — 옛 기준 위에서 계속 돌고,
+    //   해소 요청을 <stateDir>/downsync-conflict.json 에 남긴다(배포·main 전담이 합쳐 준다 · 옛 기준 결과는 최신 main 과 합쳐 검사한 뒤에만 배포).
+    if (CFG.downSyncCodeConflict === 'continue') {
+      try {
+        writeFileSync(join(STATE_DIR, 'downsync-conflict.json'), JSON.stringify({ at: new Date().toISOString(), branch: BRANCH, behind, conflicted }, null, 2) + '\n')
+      } catch { /* 기록 실패는 라운드를 막지 않는다 */ }
+      return { ok: true, note: `하향 동기 보류 — 코드 충돌 ${conflicted.length}파일 · 해소 요청 기록(downsync-conflict.json) · pre-merge 베이스로 계속` }
+    }
     if (first && !dryRun) notify('하향 동기 충돌(코드) — 이 라운드 휴면', `충돌: ${conflicted.slice(0, 6).join(', ')}\n아침 사람 머지가 정식으로 합친다. 밤당 이 알림 1회.`,
       `충돌 ${conflicted.length}파일. ${NTFY_BRIEF}`)
     return { ok: false, note: `하향 동기 코드 충돌(${conflicted.length}파일) — 이 라운드 휴면` }

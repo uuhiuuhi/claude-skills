@@ -595,20 +595,34 @@ const scrubLog = (t) => redactSecrets(t);
  *  origin 만 보면 워커가 `git remote add sneak … && git push sneak` 로 빠져나간다. 원격이 없으면 빈 문자열
  *  (비교는 항상 같음 = skip). 조회 실패도 비교 대상 아님(네트워크 없는 밤도 있다) — 다만 실패/성공이
  *  전후로 뒤바뀌면 그 자체가 변화로 잡히지 않게 실패는 그 remote 를 건너뛴다. */
-// (2026-11-11 깃러너) 비교 대상 = 원격 이름 목록 + **러너 자기 갈래**(--branch · 현재 갈래)만.
-//   종전엔 모든 heads 를 비교해 다른 창·깃러너가 main 을 올릴 때마다 워커가 STOP(exit 6)했다.
-//   원격 추가(sneak)는 이름 목록 변화로, 자기 갈래 push 는 ref 변화로, 커밋은 localGitFingerprint 로 여전히 잡는다.
 function remoteHeads() {
   const names = git(["remote"]).out.split("\n").map((l) => l.trim()).filter(Boolean);
   if (!names.length) return "";
-  const cur = currentBranch();
-  const own = new Set([branchName, cur === "HEAD" ? "" : cur].filter(Boolean).map((b) => `refs/heads/${b}`));
   const parts = [`remotes ${names.join(",")}`];
   for (const n of names) {
     const r = git(["ls-remote", "--heads", n], { timeout: 20000 });
-    if (r.code === 0) parts.push(`${n}\n${r.out.split("\n").filter((l) => own.has(l.split("\t")[1]?.trim())).join("\n").trim()}`);
+    if (r.code === 0) parts.push(...r.out.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => `${n} ${l.replace(/\s+/, " ")}`));
   }
   return parts.join("\n");
+}
+/** (2026-11-11 깃러너) 원격 변화 중 **워커가 낸 것**만 가린다 — 종전엔 문자열 전체 비교라 다른 창·깃러너가
+ *  main 이나 새 갈래를 올릴 때마다 워커가 STOP(exit 6)했다. 의심 = ① 원격 이름 목록 변화(sneak remote)
+ *  ② 러너 자기 갈래(--branch · 현재 갈래)의 변화 ③ **새로 생긴** 원격 ref 가 이 클론에 이미 있는 커밋을 가리킴
+ *  (워커는 로컬 커밋만 올릴 수 있다 · 다른 창의 새 갈래 커밋은 워커 실행 중엔 가져오지 않아 이 클론에 없다). */
+function remoteMoved(before, after) {
+  if (before === after) return false;
+  const split = (s) => { const [head, ...rest] = s.split("\n"); return { head, refs: new Map(rest.map((l) => { const [rem, sha, ref] = l.split(" "); return [`${rem} ${ref}`, sha]; })) }; };
+  const a = split(before), b = split(after);
+  if (a.head !== b.head) return true;
+  const cur = currentBranch();
+  const own = new Set([branchName, cur === "HEAD" ? "" : cur].filter(Boolean).map((x) => `refs/heads/${x}`));
+  for (const [k, sha] of b.refs) {
+    const ref = k.slice(k.indexOf(" ") + 1);
+    if (own.has(ref) && a.refs.get(k) !== sha) return true;
+    if (!a.refs.has(k) && git(["cat-file", "-e", `${sha}^{commit}`]).code === 0) return true;
+  }
+  for (const k of a.refs.keys()) if (own.has(k.slice(k.indexOf(" ") + 1)) && !b.refs.has(k)) return true;
+  return false;
 }
 /** (N2) 로컬 git 이동의 흔적 — HEAD reflog 엔트리 수 + 모든 로컬 ref.
  *  절대경로 git 우회로 `commit → reset` 을 해도 **reflog 는 자란다**(HEAD 값은 원상복구돼도 기록은 남는다).
@@ -1280,10 +1294,11 @@ function runClaude(stage, story, variant = null) {
   const guardBlocked = isGuardBlocked({ code, stderr: res.stderr }, guard);
   const remoteAfter = remoteHeads();
   const localAfter = localGitFingerprint();
-  if (guardBlocked || remoteBefore !== remoteAfter || localBefore !== localAfter) {
+  const remoteChanged = remoteMoved(remoteBefore, remoteAfter);
+  if (guardBlocked || remoteChanged || localBefore !== localAfter) {
     const why = [
       guardBlocked ? `워커가 금지된 git 명령을 실행하려다 차단됨(${guard.blockedPrefix} · exit ${guard.exitCode})` : "",
-      remoteBefore !== remoteAfter ? "원격 ref 가 실행 전후로 달라졌다(push 의심 — 절대경로 git 우회)" : "",
+      remoteChanged ? "원격 ref 가 실행 전후로 달라졌다(push 의심 — 절대경로 git 우회)" : "",
       localBefore !== localAfter ? "로컬 reflog/ref 지문이 달라졌다(commit·reset·branch 우회 의심 — HEAD 가 원상복구돼도 reflog 는 남는다)" : "",
     ].filter(Boolean).join(" · ");
     note(`✖ COMMIT GUARD STOP — [${story}] ${w.stageLabel}: ${why}. 워커의 commit/push/stash/reset 은 금지다(엔진만 커밋한다) — **사람 확인 후 재개**. log=${logFile}`);
