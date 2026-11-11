@@ -90,6 +90,14 @@ if (m) {
     og(['add', '-A']); og(['-c', 'user.email=o@x', '-c', 'user.name=o', 'commit', '-q', '-m', 'other window'])
     og(['push', 'origin', 'HEAD:refs/heads/release', 'HEAD:refs/heads/auto/other-window'])
   }
+  if (action === 'foreign-branch-at-known') {
+    // 2026-11-11 낮: 다른 창이 **새 커밋 없이** main 위에 새 갈래만 올린다(이 클론에도 그 커밋이 있다)
+    const url = absGit(['remote', 'get-url', 'origin']).stdout.trim()
+    const other = join(process.env.E2E_STATE, 'other-window2')
+    absGit(['clone', '-q', url, other])
+    const r = spawnSync(process.env.E2E_REAL_GIT, ['-C', other, 'push', 'origin', 'refs/remotes/origin/release:refs/heads/auto/deploy-at-main'], { encoding: 'utf8', env: { ...process.env, GIT_ALLOW_PROTOCOL: 'file:https:ssh', GIT_TERMINAL_PROMPT: '0' } })
+    log('othergit2[push auto/deploy-at-main] exit=' + r.status)
+  }
   if (action === 'abs-push') {
     writeFileSync(join(cwd, 'sneak.txt'), 'x\n')
     absGit(['add', '-A']); absGit(['-c', 'user.email=w@x', '-c', 'user.name=w', 'commit', '-q', '-m', 'sneak'])
@@ -810,6 +818,16 @@ describe('[engine-e2e][N2] shim 우회(절대경로 git + GIT_ALLOW_PROTOCOL 재
     const r = runEngine(fx, { args: ['--stages', 'dev'], env: { E2E_DEV_ACTION: 'foreign-push' } })
     assert.match(r.calls, /othergit\[push origin HEAD:refs\/heads\/release HEAD:refs\/heads\/auto\/other-window\] exit=0/, '전제: 다른 창 push 가 실제로 성공했다')
     assert.ok(originHeads(fx.proj).length > before.length, '전제: 원격이 실제로 바뀌었다')
+    assert.doesNotMatch(r.out, /원격 ref 가 실행 전후로 달라졌다/)
+    assert.notEqual(r.status, 6, r.out.slice(-3000))
+  })
+  it('(2026-11-11 낮) 다른 창이 커밋 없이 기존 커밋 위에 새 갈래만 올려도 STOP 하지 않는다', { skip: REAL_GIT ? false : 'git 없음' }, () => {
+    const fx = makeFixture()
+    git(fx.proj, ['push', '-q', 'origin', 'HEAD:refs/heads/release'])
+    const before = originHeads(fx.proj)
+    const r = runEngine(fx, { args: ['--stages', 'dev'], env: { E2E_DEV_ACTION: 'foreign-branch-at-known' } })
+    assert.match(r.calls, /othergit2\[push auto\/deploy-at-main\] exit=0/, '전제: 다른 창 push 가 실제로 성공했다')
+    assert.ok(originHeads(fx.proj).length > before.length, '전제: 원격에 새 갈래가 생겼다')
     assert.doesNotMatch(r.out, /원격 ref 가 실행 전후로 달라졌다/)
     assert.notEqual(r.status, 6, r.out.slice(-3000))
   })

@@ -616,10 +616,15 @@ function remoteMoved(before, after) {
   if (a.head !== b.head) return true;
   const cur = currentBranch();
   const own = new Set([branchName, cur === "HEAD" ? "" : cur].filter(Boolean).map((x) => `refs/heads/${x}`));
+  // (2026-11-11 낮) 실행 전부터 원격에 공개돼 있던 커밋은 워커가 만든 것이 아니다 — 다른 창이 main 위에 커밋 없이
+  //   새 갈래만 만들면(예: auto/…-deploy-… = main 커밋 그대로) 이 클론에도 그 커밋이 있어 종전엔 STOP 했다(1-178 실사고).
+  const known = [...new Set([...a.refs.values()])].filter((x) => git(["cat-file", "-e", `${x}^{commit}`]).code === 0);
+  const workerMade = (sha) => git(["cat-file", "-e", `${sha}^{commit}`]).code === 0
+    && git(["rev-list", "-n", "1", sha, ...(known.length ? ["--not", ...known] : [])]).out.trim() !== "";
   for (const [k, sha] of b.refs) {
     const ref = k.slice(k.indexOf(" ") + 1);
     if (own.has(ref) && a.refs.get(k) !== sha) return true;
-    if (!a.refs.has(k) && git(["cat-file", "-e", `${sha}^{commit}`]).code === 0) return true;
+    if (!a.refs.has(k) && workerMade(sha)) return true;
   }
   for (const k of a.refs.keys()) if (own.has(k.slice(k.indexOf(" ") + 1)) && !b.refs.has(k)) return true;
   return false;
