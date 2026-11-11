@@ -183,7 +183,7 @@ BUNDLE=$(basename "$(ls dist/assets/index-*.js | head -1)")
 # ── ⑦ 실측(번들 해시 · 조각 200 · 설명서 크기·장 표식) — RED 면 직전 판으로 되돌림
 ok=0; for i in 1 2 3 4 5 6; do sleep 10; LIVE=$(curl -s "$SITE/" | grep -oE 'index-[A-Za-z0-9_-]+[.]js' | head -1); [ "$LIVE" = "$BUNDLE" ] && { ok=1; break; }; done
 CHUNK=$(ls dist/assets/*.js | grep -v index- | head -1 | xargs basename); CODE=$(curl -s -o /dev/null -w '%{http_code}' "$SITE/assets/$CHUNK")
-MAN=$(curl -s "$SITE/manual/index.html"); MSZ=${#MAN}; echo "$MAN" | grep -q 'id="attendance"' && MID=1 || MID=0
+curl -sL -o "$REL/manual-live.html" "$SITE/manual/"; MSZ=$(stat -c %s "$REL/manual-live.html" 2>/dev/null || echo 0); MID=$(grep -c 'id="attendance"' "$REL/manual-live.html" 2>/dev/null); MID=${MID:-0}; [ "$MID" -ge 1 ] && MID=1 || MID=0
 if [ $ok -ne 1 ] || [ "$CODE" != 200 ] || [ "$MSZ" -lt 100000 ] || [ $MID -ne 1 ]; then
   RB="되돌림 안 함(직전 판 모름)"; [ -n "$PREV" ] && env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN npx wrangler rollback "$PREV" --env production -y -m "gitrunner $ID 실측 RED" >> "$REL/deploy.log" 2>&1 && RB="직전 ${PREV:0:8} 로 되돌림"
   hold "배포 실측 RED(번들 $LIVE/$BUNDLE · 조각 $CODE · 설명서 ${MSZ}B·표식 $MID) — $RB · main·DB 는 반영됨" "version=$VER"
