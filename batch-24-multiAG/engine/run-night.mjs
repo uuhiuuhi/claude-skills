@@ -50,7 +50,7 @@ import { parallelHazardsCompat } from './conflicts.mjs'
 import { appendJsonl, metricsHistoryPath, parseCodexUsage, parseEngineLog, renderMetricsTable, summarizeTimeline, writeJsonAtomic } from './metrics.mjs'
 import { makeClaudePlanRunner, requestPlan } from './orchestrate.mjs'
 import { buildDag, parseDependsOn } from './plan-dag.mjs'
-import { REVIEW_PENDING_EXIT, isReviewPendingExit, isStoryLevelStop, worseExit, LOG_PREFIX, shouldArchiveEvidence, evidenceLogKeep, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refreshStall, refundUnrun, resolveSprintStatusConflict, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { REVIEW_PENDING_EXIT, isReviewPendingExit, isStoryLevelStop, worseExit, LOG_PREFIX, shouldArchiveEvidence, evidenceLogKeep, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, downSyncRegenerateMap, downSyncSprintPick, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refreshStall, refundUnrun, resolveSprintStatusConflict, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = fileURLToPath(resolveAsf('auto-story-pipeline.mjs'))
 // mockup 단계가 든 배치는 목업 폴더(config mockupGate.mockupsDir · 기본 mockups)를 스토리 커밋에 함께 싣는다 —
@@ -698,11 +698,14 @@ function doDownSync() {
   const behind = Number((spawnSync('git', ['rev-list', '--count', 'HEAD..origin/main'], { encoding: 'utf8' }).stdout ?? '0').trim())
   if (behind === 0) return { ok: true, note: null }
   const { day, save } = loadState()
-  if (day.d2halt) return { ok: true, note: '하향 동기 중단 상태(오늘 반복 충돌) — pre-merge 베이스로 계속' }
+  // 2026-11-12: 반복 백스톱은 「그 main 해시」에만 건다 — main 이 새로 움직이면 다시 시도한다(하루 통째 중단 금지).
+  const mainSha = (spawnSync('git', ['rev-parse', 'origin/main'], { encoding: 'utf8' }).stdout ?? '').trim()
+  if (day.d2haltMain && day.d2haltMain === mainSha) return { ok: true, note: `하향 동기 중단 상태(같은 main ${mainSha.slice(0, 8)} 로 반복 충돌) — main 이 움직이면 다시 시도 · pre-merge 베이스로 계속` }
   const reviewedCommit = assertOperationalRuntime()
   if (reviewedCommit) assertIncomingToolingStable({ cwd: process.cwd(), ref: 'origin/main', toolingDir: import.meta.dirname })
+  const clearRequest = () => { try { unlinkSync(join(STATE_DIR, 'downsync-conflict.json')) } catch { /* 없으면 그만 */ } }
   const mg = spawnSync('git', ['-c', 'core.editor=true', 'merge', '--no-edit', '-m', `sync: main→${BRANCH} 하향 동기(낮 확정·큐 반영)`, 'origin/main'], { encoding: 'utf8' })
-  if (mg.status === 0) return { ok: true, note: `하향 동기 — origin/main ${behind}커밋 반영` }
+  if (mg.status === 0) { clearRequest(); return { ok: true, note: `하향 동기 — origin/main ${behind}커밋 반영` } }
   // core.quotePath=false — 기본값이면 한글 경로가 8진 이스케이프 + 따옴표로 나와 `_bmad-output/` 접두
   // 판정이 빗나가고, 문서 충돌(defer)이 코드 충돌(halt)로 오분류돼 라운드가 불필요하게 선다.
   const conflicted = (spawnSync('git', ['-c', 'core.quotePath=false', 'diff', '--name-only', '--diff-filter=U'], { encoding: 'utf8' }).stdout ?? '')
@@ -714,51 +717,73 @@ function doDownSync() {
     spawnSync('git', ['merge', '--abort'])
     return { ok: true, note: `하향 동기 보류 — merge 거부(충돌 아님): ${(mg.stderr ?? '').trim().split('\n')[0]}` }
   }
-  const dec = downSyncDecision(conflicted)
+  // 2026-11-12 부분 자동 해소: 장부·로그·스토리 문서·생성물(downSyncRegenerate)은 엔진이 풀고, 진짜 코드 충돌만 남으면 halt.
+  const regenMap = downSyncRegenerateMap(CFG.downSyncRegenerate)
+  const dec = downSyncDecision(conflicted, { regenerate: regenMap })
+  let mode = dec.mode
+  let haltList = dec.mode === 'halt' ? dec.remaining : null // 해소 요청·지문에 올릴 「남은 충돌」
   if (dec.mode === 'resolve') {
     let landed = true
+    const regenFiles = []
     for (const [file, how] of Object.entries(dec.plan)) {
       if (how === 'ours') { if (spawnSync('git', ['checkout', '--ours', '--', file]).status !== 0) { landed = false; break } }
+      else if (how === 'regen') { if (spawnSync('git', ['checkout', '--theirs', '--', file]).status !== 0) { landed = false; break } regenFiles.push(file) }
       else {
         let merged
-        try { merged = stripConflictMarkers(readFileSync(file, 'utf8')) } catch { merged = null }
+        try {
+          const text = readFileSync(file, 'utf8')
+          // sprint-status = 키 단위(같은 키는 상태가 더 나아간 쪽 · 같으면 main) — union 은 같은 키를 두 번 남긴다(2026-09-25)
+          merged = how === 'sprint' ? resolveSprintStatusConflict(text, { pick: downSyncSprintPick }) : stripConflictMarkers(text)
+        } catch { merged = null }
         if (merged == null) { landed = false; break }
         writeFileSync(file, merged)
       }
       if (spawnSync('git', ['add', '--', file]).status !== 0) { landed = false; break }
     }
+    // 생성물은 다른 충돌을 다 푼 뒤 다시 만든다(명령마다 1회) — 실패하면 halt 로 강등(그 파일을 사람에게)
+    if (landed && regenFiles.length > 0) {
+      for (const cmd of [...new Set(regenFiles.map((f) => regenMap[f]))]) {
+        const r = spawnSync(cmd, { shell: true, encoding: 'utf8', timeout: 10 * 60_000 })
+        if (r.status !== 0) { landed = false; mode = 'halt'; haltList = regenFiles.filter((f) => regenMap[f] === cmd); break }
+      }
+      if (landed && spawnSync('git', ['add', '--', ...regenFiles]).status !== 0) landed = false
+    }
     if (landed && spawnSync('git', ['-c', 'core.editor=true', 'commit', '--no-edit'], { encoding: 'utf8' }).status === 0) {
-      return { ok: true, note: `하향 동기 — 충돌 ${conflicted.length}파일 자동 해소(로그·장부 클래스)` }
+      clearRequest()
+      return { ok: true, note: `하향 동기 — 충돌 ${conflicted.length}파일 자동 해소(로그·장부·생성물 클래스${regenFiles.length ? ` · 재생성 ${regenFiles.length}` : ''})` }
     }
     spawnSync('git', ['merge', '--abort'])
-    // 자동 해소 실패는 defer 로 강등 — 밤을 막지 않는다
+    // 자동 해소 실패는 defer 로 강등 — 밤을 막지 않는다(재생성 명령 실패만 halt)
   } else {
     spawnSync('git', ['merge', '--abort'])
   }
-  const fp = conflictFingerprint(conflicted)
+  const fp = conflictFingerprint(haltList ?? conflicted, mainSha)
   day.d2fp ??= {}
+  delete day.d2halt // 종전 「하루 통째 중단」 표식 — 더는 쓰지 않는다(d2haltMain 으로 대체)
   // 2026-09-02 개정: 백스톱은 halt(코드 충돌)만 센다 — defer/문서 해소 실패까지 세면
   // 무해한 문서 충돌 2회 만에 하루치 동기를 통째로 끈다(19시간 38분 미동기 실사고).
-  if (dec.mode === 'halt') {
+  if (mode === 'halt') {
     day.d2fp[fp] = (day.d2fp[fp] ?? 0) + 1
-    if (day.d2fp[fp] >= 2) day.d2halt = true // 같은 코드 충돌 2회 — 오늘 동기 재시도 중단
+    if (day.d2fp[fp] >= 2) day.d2haltMain = mainSha // 같은 main 해시로 2회 — 그 해시에 대해서만 재시도 중단
   }
   day.notified ??= {}
   const first = !day.notified.d2conflict
   day.notified.d2conflict = true
   save()
-  if (dec.mode === 'halt') {
+  if (mode === 'halt') {
     // (2026-11-11 깃러너) 설정 downSyncCodeConflict="continue" 면 쉬지 않는다 — 옛 기준 위에서 계속 돌고,
     //   해소 요청을 <stateDir>/downsync-conflict.json 에 남긴다(배포·main 전담이 합쳐 준다 · 옛 기준 결과는 최신 main 과 합쳐 검사한 뒤에만 배포).
+    //   (2026-11-12) conflicted 에는 엔진이 못 푸는 「남은 충돌」만 적는다 — 장부·생성물은 autoResolvable 로 따로.
+    const autoResolvable = Object.keys(dec.plan ?? {}).filter((f) => !haltList.includes(f))
     if (CFG.downSyncCodeConflict === 'continue') {
       try {
-        writeFileSync(join(STATE_DIR, 'downsync-conflict.json'), JSON.stringify({ at: new Date().toISOString(), branch: BRANCH, behind, conflicted }, null, 2) + '\n')
+        writeFileSync(join(STATE_DIR, 'downsync-conflict.json'), JSON.stringify({ at: new Date().toISOString(), branch: BRANCH, behind, main: mainSha, conflicted: haltList, autoResolvable }, null, 2) + '\n')
       } catch { /* 기록 실패는 라운드를 막지 않는다 */ }
-      return { ok: true, note: `하향 동기 보류 — 코드 충돌 ${conflicted.length}파일 · 해소 요청 기록(downsync-conflict.json) · pre-merge 베이스로 계속` }
+      return { ok: true, note: `하향 동기 보류 — 코드 충돌 ${haltList.length}파일(자동 해소 가능 ${autoResolvable.length}파일 제외) · 해소 요청 기록(downsync-conflict.json) · pre-merge 베이스로 계속` }
     }
-    if (first && !dryRun) notify('하향 동기 충돌(코드) — 이 라운드 휴면', `충돌: ${conflicted.slice(0, 6).join(', ')}\n아침 사람 머지가 정식으로 합친다. 밤당 이 알림 1회.`,
-      `충돌 ${conflicted.length}파일. ${NTFY_BRIEF}`)
-    return { ok: false, note: `하향 동기 코드 충돌(${conflicted.length}파일) — 이 라운드 휴면` }
+    if (first && !dryRun) notify('하향 동기 충돌(코드) — 이 라운드 휴면', `충돌: ${haltList.slice(0, 6).join(', ')}\n아침 사람 머지가 정식으로 합친다. 밤당 이 알림 1회.`,
+      `충돌 ${haltList.length}파일. ${NTFY_BRIEF}`)
+    return { ok: false, note: `하향 동기 코드 충돌(${haltList.length}파일) — 이 라운드 휴면` }
   }
   if (first && !dryRun) notify('하향 동기 보류(문서 충돌)', `충돌: ${conflicted.slice(0, 6).join(', ')}\n동기 없이 계속 — 아침 사람 머지가 정식으로 합친다.`,
     `충돌 ${conflicted.length}파일. ${NTFY_BRIEF}`)
@@ -1024,9 +1049,12 @@ function writeHumanGates(meta, queueFile) {
     const list = spawnSync('git', ['for-each-ref', 'refs/heads/auto', 'refs/remotes/origin/auto', '--format=%(refname:short)'], { encoding: 'utf8' })
     const unmerged = [...new Set((list.stdout ?? '').split('\n').map((s) => s.trim()).filter(Boolean))]
       .filter((b) => Number((spawnSync('git', ['rev-list', '--count', `origin/main..${b}`], { encoding: 'utf8' }).stdout ?? '0').trim()) > 0)
+    // 감시자가 올린 항목(source:'watchdog' — 하향 동기 충돌 등)은 편성기 몫이 아니라 덮어쓰지 않고 이어 둔다(감시자가 닫는다)
+    let kept = []
+    try { kept = (JSON.parse(readFileSync(join(STATE_DIR, 'human-gates.json'), 'utf8').replace(/^﻿/, '')).humanGates ?? []).filter((g) => g?.source === 'watchdog') } catch { /* 없거나 깨짐 = 이어 둘 것 없음 */ }
     writeJsonAtomic(join(STATE_DIR, 'human-gates.json'), {
       at: new Date().toISOString(), project: PROJECT, mode: meta?.mode ?? 'guarded', planSource: PLAN_SOURCE,
-      humanGates: meta?.humanGates ?? [], excluded: meta?.excluded ?? [], picked: (meta?.picked ?? []).length,
+      humanGates: [...(meta?.humanGates ?? []).filter((g) => !kept.some((k) => k.key === g?.key)), ...kept], excluded: meta?.excluded ?? [], picked: (meta?.picked ?? []).length,
       chainAgeDays: meta?.chainAgeDays ?? 0, unmergedBranches: unmerged, queueFile,
     })
   } catch (e) { console.log(`⚠ human-gates.json 기록 실패(무시하고 계속): ${e?.message ?? e}`) }

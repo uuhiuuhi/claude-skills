@@ -29,7 +29,7 @@ import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { lockDead, restoreDevProvenance, stopBlocked, stopWindowId, telegramCurlRequest, telegramSent } from './runner-rules.mjs'
+import { DOWNSYNC_GATE_KEY, downSyncGateUpdate, lockDead, restoreDevProvenance, stopBlocked, stopWindowId, telegramCurlRequest, telegramSent } from './runner-rules.mjs'
 import { dirtyPaths, parsePorcelainZ, preserveRunReport, preserveStopLeftovers, unstageNewLogArtifacts } from './worktree-refresh.mjs'
 
 const args = process.argv.slice(2)
@@ -114,6 +114,16 @@ function readLockInfo() {
   try { process.kill(pid, 0); pidAlive = true } catch (e) { pidAlive = e?.code === 'ESRCH' ? false : 'unknown' }
   const hb = Date.parse(parsed.hb ?? parsed.at ?? '') || 0
   return { exists: true, parseOk: true, pidAlive, hbAgeMs: hb ? Date.now() - hb : Infinity, parsed }
+}
+// 하향 동기 해소 요청이 30분 넘게 남으면 사람 질문 목록에 1건(중복 없음 · 파일이 사라지면 닫기 · 알림 없음 — 2026-11-12)
+{
+  const HG = join(STATE_DIR, 'human-gates.json')
+  const conflictPath = join(STATE_DIR, 'downsync-conflict.json')
+  const next = downSyncGateUpdate(readJson(HG, null), existsSync(conflictPath) ? readJson(conflictPath, { at: null, conflicted: [] }) : null)
+  if (next) {
+    log(`사람 질문 목록 — 하향 동기 충돌 항목 ${next.humanGates.some((g) => g.key === DOWNSYNC_GATE_KEY) ? '올림/갱신' : '닫음'}`)
+    if (!DRY) { try { writeFileSync(HG + '.tmp', JSON.stringify(next, null, 2) + '\n'); renameSync(HG + '.tmp', HG) } catch (e) { log(`human-gates.json 기록 실패: ${e?.message ?? e}`) } }
+  }
 }
 const lockInfo = readLockInfo()
 const lock = lockInfo.exists

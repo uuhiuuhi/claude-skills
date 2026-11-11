@@ -205,7 +205,7 @@ export const SPRINT_STATUS_PATH = '_bmad-output/implementation-artifacts/sprint-
  *  hunk 마다: ours 줄은 그대로 두되 preferKeys(착지하는 스토리) 의 키만 theirs 값으로 바꾸고, theirs 에만 있는 키는 뒤에 더한다.
  *  같은 키가 양쪽에 있고 prefer 가 아니면 ours 가 이긴다(착지 스토리는 자기 키만 바꾸는 것이 규약). 키가 아닌 줄은 union.
  *  마커가 남으면(비정형) null — 호출부는 보존 폴백. preferKeys 는 `2-1` 꼴 짧은 키도 받는다(`2-1-제목…` 에 매칭 · `2-10` 과 구분). */
-export function resolveSprintStatusConflict(text, { preferKeys = [] } = {}) {
+export function resolveSprintStatusConflict(text, { preferKeys = [], pick = null } = {}) {
   // 키 = 들여쓰기 유무와 무관(최상위 last_updated 도 키) · 콜론 앞 공백은 같은 키(`2-1-a : x` ≡ `2-1-a: x` · Astra 10-29 #7)
   const keyOf = (line) => /^\s*([^\s#:][^:#]*?)\s*:/.exec(line.replace(/\r$/, ''))?.[1] ?? null
   const prefer = (k) => (preferKeys ?? []).some((p) => k === p || k.startsWith(`${p}-`))
@@ -235,7 +235,7 @@ export function resolveSprintStatusConflict(text, { preferKeys = [] } = {}) {
       if (!k) { out.push(o); continue }
       if (seen.has(k)) continue // 같은 쪽 안의 중복(비정상)도 하나로
       seen.add(k); hunkKeys.add(k)
-      out.push(tMap.has(k) && prefer(k) ? tMap.get(k) : o)
+      out.push(tMap.has(k) && (prefer(k) || (typeof pick === 'function' && pick(k, o, tMap.get(k)) === 'theirs')) ? tMap.get(k) : o)
     }
     for (const t of theirs) {
       const k = keyOf(t)
@@ -333,6 +333,31 @@ export function lockAction({ exists, parseOk, pidAlive, hbAgeMs }) {
   return (hbAgeMs ?? Infinity) > LOCK_HB_STALE_MS ? 'takeover' : 'skip-unknown'
 }
 
+/** 감시자 — 하향 동기 해소 요청(<stateDir>/downsync-conflict.json)이 오래 남으면 사람 질문 목록에 1건만 올린다(2026-11-12).
+ *  러너는 옛 기준 위에서 계속 돌기 때문에(downSyncCodeConflict=continue) 아무도 안 풀면 체인이 main 에서 계속 멀어진다.
+ *  @param gates human-gates.json 내용(없으면 null) · @param conflict downsync-conflict.json 내용(없으면 null)
+ *  @returns 바뀐 문서 또는 null(그대로) — 항목 키는 하나(`downsync-conflict`) · 파일이 사라지면 항목을 닫는다(지운다). 알림은 보내지 않는다. */
+export const DOWNSYNC_GATE_KEY = 'downsync-conflict'
+export const DOWNSYNC_GATE_AFTER_MIN = 30
+export function downSyncGateUpdate(gates, conflict, { nowMs = Date.now(), afterMin = DOWNSYNC_GATE_AFTER_MIN } = {}) {
+  const doc = gates && typeof gates === 'object' && !Array.isArray(gates) ? { ...gates } : {}
+  const list = Array.isArray(doc.humanGates) ? doc.humanGates : []
+  const rest = list.filter((g) => g?.key !== DOWNSYNC_GATE_KEY)
+  const had = rest.length !== list.length
+  const atMs = Date.parse(conflict?.at ?? '')
+  const n = Array.isArray(conflict?.conflicted) ? conflict.conflicted.length : 0
+  const due = conflict && n > 0 && Number.isFinite(atMs) && nowMs - atMs > afterMin * 60_000
+  if (!due) {
+    if (!conflict && had) return { ...doc, humanGates: rest } // 해소 요청 파일이 사라졌다 — 항목 닫기
+    return null // 아직 30분 전 · 기록 이상 — 손대지 않는다(열려 있던 항목은 그대로 둔다)
+  }
+  const text = `하향 동기 충돌 ${n}파일 — 러너 지휘 창이 풀 것(CLAUDE.md 운영 방식 8) · 파일: ${conflict.conflicted.slice(0, 6).join(', ')}${n > 6 ? ' 외' : ''} · 기록 ${conflict.at}`
+  const item = { key: DOWNSYNC_GATE_KEY, type: 'question', source: 'watchdog', text }
+  const prev = list.find((g) => g?.key === DOWNSYNC_GATE_KEY)
+  if (prev && prev.text === text && prev.source === 'watchdog' && list.filter((g) => g?.key === DOWNSYNC_GATE_KEY).length === 1) return null
+  return { ...doc, humanGates: [...rest, item] }
+}
+
 /** 감시자 「lock-dead」 기본 심박 기한 — 주인 pid 가 죽은 것을 확인한 뒤의 보조 조건이라 짧아도 된다. */
 export const WD_LOCK_DEAD_HB_MS = 30 * 60 * 1000
 
@@ -389,23 +414,53 @@ export function refreshStall(prev, { ok, at, winId, after = REFRESH_STALL_NOTIFY
  *  장부는 'union'. 종전 'defer' 는 아래 반복 백스톱과 결합해 **19시간 38분 미동기 실사고**를
  *  만들었다: 문서 2파일 충돌이 2회 나자 d2halt 가 섰고, 새 날 브랜치가 정본이 아니라 전날
  *  작업 tip 을 승계해 정본의 확정·코드가 밤새 러너에 닿지 않았다(편성기가 낡은 원장으로 오보). */
-export function downSyncDecision(files) {
+export function downSyncDecision(files, { regenerate = null } = {}) {
   const list = (files ?? []).map((f) => String(f).trim().replace(/\\/g, '/')).filter(Boolean)
   if (list.length === 0) return { mode: 'resolve', plan: {} }
-  const plan = landingResolution(list)
-  if (plan) return { mode: 'resolve', plan }
-  const docOnly = list.every((p) => p.startsWith('_bmad-output/') && p.endsWith('.md'))
-  if (docOnly) {
-    const docPlan = {}
-    for (const p of list) docPlan[p] = SHARED_BOOKKEEPING.includes(p) ? 'union' : 'ours'
-    return { mode: 'resolve', plan: docPlan }
+  // 2026-11-12 부분 자동 해소: 파일마다 따로 분류한다 — 종전엔 코드 1파일이 섞이면 장부·생성물까지 통째로 halt 였다
+  //   (11-12 00:35 충돌 13파일 = 장부 2 · 생성물 1 · 시험 4 · 원장 번호 3 · 코드 3 → 사람이 손으로 풂).
+  //   장부(sprint = 키 단위 · 공유 원장 = union) · 로그 · 스토리 문서(ours) · 생성물(regen = theirs 받고 명령으로 재생성)은
+  //   계획에 넣고, 남은 진짜 코드만 remaining 으로 돌려준다. remaining 이 있으면 halt(호출부는 merge --abort).
+  const regen = downSyncRegenerateMap(regenerate)
+  const plan = {}
+  const remaining = []
+  for (const p of list) {
+    const one = landingResolution([p])
+    if (one) { Object.assign(plan, one); continue }
+    if (Object.hasOwn(regen, p)) { plan[p] = 'regen'; continue }
+    if (p.startsWith('_bmad-output/') && p.endsWith('.md')) { plan[p] = 'ours'; continue }
+    remaining.push(p)
   }
-  return { mode: 'halt' }
+  return remaining.length > 0 ? { mode: 'halt', plan, remaining } : { mode: 'resolve', plan }
 }
 
-/** 충돌 지문 — 같은 충돌을 라운드마다 재생산하는 것을 막는 반복 백스톱의 재료(순서 무관 동일). */
-export function conflictFingerprint(files) {
-  return (files ?? []).map((f) => String(f).trim().replace(/\\/g, '/')).filter(Boolean).sort().join('|')
+/** 설정 downSyncRegenerate({ 경로: 명령 }) 정규화 — 경로는 / 로 · 빈 명령·객체 아님은 버린다. */
+export function downSyncRegenerateMap(cfg) {
+  const out = {}
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return out
+  for (const [k, v] of Object.entries(cfg)) {
+    const p = String(k).trim().replace(/\\/g, '/')
+    const cmd = typeof v === 'string' ? v.trim() : ''
+    if (p && cmd) out[p] = cmd
+  }
+  return out
+}
+
+const SPRINT_RANK = Object.freeze({ backlog: 0, 'ready-for-dev': 1, 'in-progress': 2, review: 3, done: 4 })
+/** 하향 동기 sprint-status 같은 키 충돌의 승자 — 상태가 더 나아간 쪽 · 같으면 main(theirs: 사람이 확정한 주석
+ *  「⏸ 러너 편성 제외」 등이 main 에서 온다) · 체인(ours)이 더 나아갔으면 체인. 상태값을 모르면 같은 순위로 본다. */
+export function downSyncSprintPick(_key, oursLine, theirsLine) {
+  const rank = (l) => SPRINT_RANK[/:\s*([^\s#]+)/.exec(String(l ?? ''))?.[1]] ?? -1
+  return rank(theirsLine) >= rank(oursLine) ? 'theirs' : 'ours'
+}
+
+/** 충돌 지문 — 같은 충돌을 라운드마다 재생산하는 것을 막는 반복 백스톱의 재료(순서 무관 동일).
+ *  2026-11-12: origin/main 해시를 앞에 붙인다 — main 이 새로 움직이면 같은 파일 집합이어도 다른 지문(다시 시도).
+ *  하루 통째 중단이던 백스톱이 「그 main 해시에 대해서만」 멈춘다(깃러너가 하루 10회 넘게 main 을 올린다). */
+export function conflictFingerprint(files, mainSha = '') {
+  const base = (files ?? []).map((f) => String(f).trim().replace(/\\/g, '/')).filter(Boolean).sort().join('|')
+  const sha = String(mainSha ?? '').trim()
+  return sha ? sha + '::' + base : base
 }
 
 /** 선형 승계 — 미머지 `auto/<날짜>` 목록에서 승계 기준을 고른다. 구판은 미머지 브랜치가 남아 있으면
