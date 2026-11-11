@@ -101,7 +101,10 @@ while :; do
   if [ -n "$NEWM" ]; then
     AC=$(node tools/ops/additive-check.mjs --since "$OM" 2>&1); rc=$?
     echo "$AC" > "$REL/additive-check.txt"
-    [ $rc -eq 0 ] || hold "덧셈 아닌 DB 변경 — 👤 승인 필요(판정 $REL/additive-check.txt)" "additive=$rc"
+    # 👤 이 이 요청의 DB 를 승인했으면(깃러너 창이 dbApproved 에 승인 원문·시각을 적음) 통과 — 기존 마이그레이션 수정·유일 색인·EF 는 여전히 멈춤
+    DBOK=$(get dbApproved 2>/dev/null)
+    if [ $rc -ne 0 ] && [ -n "$DBOK" ] && [ "$DBOK" != false ]; then say "덧셈 아닌 DB 변경 — 👤 승인으로 진행($DBOK)"
+    else [ $rc -eq 0 ] || hold "덧셈 아닌 DB 변경 — 👤 승인 필요(판정 $REL/additive-check.txt)" "additive=$rc"; fi
     UQ=$(node "$LIB" replaced $NEWM | grep '^unique ' | cut -d' ' -f2 | tr '\n' ' ')
     [ -z "$UQ" ] || hold "유일 색인 — 기존 자료 중복 0 실측이 먼저(ⓘ · 깃러너 창 몫): $UQ"
   fi
