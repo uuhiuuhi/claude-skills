@@ -128,8 +128,16 @@ while :; do
     # 정적 시험(DB 접속 없음): 원장·마이그레이션 성질 가드 + 바뀐 시험 중 tests/db 실DB 시험이 아닌 것
     T=$( { echo tests/db/story-ledger-guard.test.ts; echo tests/db/migration-guard.test.ts; echo tests/db/migration-properties-guard.test.ts
            echo "$CH" | grep -E '^tests/.*\.test\.tsx?$' | grep -v -E '^tests/db/' ; echo "$CH" | grep -E '^tests/db/.*-guard\.test\.ts$'; } | sort -u | while read -r t; do [ -f "$t" ] && echo "$t"; done )
+    # 👤 11-11 16시: tests/authz 는 개발 서버에 실제 요청을 보내는 권한 시험이라 연결 설정이 있어야 돈다 — 빼지 않고 따로 연결을 붙여 돌린다
+    TA=$(echo "$T" | grep '^tests/authz/'); T=$(echo "$T" | grep -v '^tests/authz/')
     rm -f .env.local  # 👤 11-11 13시: 시험은 개발 DB 에 붙지 않는다(공용 개발 DB 를 다른 갈래가 바꾸면 거짓 RED — 실DB 부분은 건너뜀)
     timeout 3600 npx vitest run --fileParallelism=false $T --reporter=dot > "$REL/vitest.log" 2>&1 || hold "시험 RED($REL/vitest.log)"
+    if [ -n "$TA" ]; then
+      cp "$M/.env.local" .env.local || hold "권한 시험용 개발 연결 설정 복사 실패"
+      timeout 1800 npx vitest run --fileParallelism=false $TA --reporter=dot > "$REL/vitest-authz.log" 2>&1; arc=$?; rm -f .env.local
+      [ $arc -eq 0 ] || hold "권한 시험 RED($REL/vitest-authz.log)"; T="$T
+$TA"
+    fi
     say "검사 GREEN — 타입·eslint·시험 $(echo "$T" | wc -l)파일"
   fi
   if [ "$PRE" = 1 ]; then
