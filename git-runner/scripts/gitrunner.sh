@@ -11,6 +11,7 @@ B=/c/Users/user/.baroos-auto; G=$B/gitrunner; M=/c/Projects/jng-os; W=/c/Project
 PROD=eubtqkueostvgmvschfa; DEV=dahsgpporxvdstqayqla; SITE=https://baro.jngsystem.co.kr
 SB="/c/Users/user/AppData/Local/npm-cache/_npx/b96a6bd565c470ce/node_modules/@supabase/cli-windows-x64/bin/supabase.exe"
 LIB="$G/gitrunner-lib.mjs"; DRY=${GR_DRY:-0}
+SEND_EF="outbox-dispatch marketing-publish"  # 👤 11-12: 발송 담당 서버 기능은 코드 수정도 계속 👤 승인(외부 발송 · 절대 제약 1)
 mkdir -p "$G/queue" "$G/running" "$G/done" "$G/held" "$G/logs"
 LOG="$G/logs/gitrunner-$(date +%Y%m%d).log"
 say() { echo "$(date '+%F %T') [깃러너] $*" | tee -a "$LOG"; }
@@ -95,9 +96,23 @@ while :; do
   EF=$(echo "$CH" | grep '^supabase/functions/' | cut -d/ -f3 | sort -u | grep -v '^_shared$' | tr '\n' ' ')
   echo "$CH" | grep -q '^supabase/functions/_shared/' && EF="$EF(공용 _shared 바뀜)"
   EFOK=$(get efApproved 2>/dev/null)  # 👤 11-11 16시: 깃러너 창이 efApproved 에 승인 원문·시각을 적은 요청만 EF 를 DB 다음·화면 전에 배포(_shared 바뀜은 여전히 멈춤)
+  # 👤 11-12 07:3x: 기존 Edge Function 코드 수정은 자동 배포 — 조건 = 교차 검토 기록(crossReview) · 검사 통과 · 배포 뒤 익명 401/403 · 실패면 직전 main 판으로 되돌림
+  #   계속 👤 승인(efApproved) = 새 Edge Function · 새 비밀값 이름(Deno.env.get) · 공용 _shared · 발송 담당 함수(SEND_EF) — pg_cron·발송 트리거는 DB 판정기가 멈춘다
   if [ -n "${EF// /}" ]; then
-    if [ -n "$EFOK" ] && [ "$EFOK" != false ] && ! echo "$EF" | grep -q '_shared'; then say "Edge Function 변경 — 👤 승인으로 진행($EFOK): $EF"
-    else hold "Edge Function 변경 — 자동 배포 밖(👤 승인 · 깃러너 창이 처리): $EF" "ef=$EF"; fi
+    echo "$EF" | grep -q '_shared' && hold "Edge Function 공용 _shared 바뀜 — 👤 승인 밖(깃러너 창이 처리): $EF" "ef=$EF"
+    if [ -n "$EFOK" ] && [ "$EFOK" != false ]; then say "Edge Function 변경 — 👤 승인으로 진행($EFOK): $EF"
+    else
+      WHY=""
+      for f in $EF; do
+        git cat-file -e "$OM:supabase/functions/$f/index.ts" 2>/dev/null || WHY="$WHY 새 서버 기능 $f ·"
+        case " $SEND_EF " in *" $f "*) WHY="$WHY 발송 담당 $f ·";; esac
+        NS=$(comm -13 <(git grep -ohE "Deno\.env\.get\(['\"][A-Z0-9_]+" "$OM" -- "supabase/functions/$f" 2>/dev/null | sed 's/.*[(]["'"'"']//' | sort -u)                       <(git grep -ohE "Deno\.env\.get\(['\"][A-Z0-9_]+" "$H" -- "supabase/functions/$f" 2>/dev/null | sed 's/.*[(]["'"'"']//' | sort -u) | tr '\n' ' ')
+        [ -z "${NS// /}" ] || WHY="$WHY $f 새 비밀값 이름($NS) ·"
+      done
+      XR=$(get crossReview 2>/dev/null); { [ -n "$XR" ] && [ "$XR" != false ]; } || WHY="$WHY 교차 검토 기록(crossReview) 없음 ·"
+      [ -z "$WHY" ] || hold "Edge Function 변경 — 자동 배포 조건 밖(👤 승인 · 깃러너 창이 처리):$WHY 대상 $EF" "ef=$EF"
+      EFOK="자동(기존 서버 기능 수정 · 교차 검토 $XR)"; say "Edge Function 변경 — 기존 서버 기능 수정 · 자동 배포: $EF"
+    fi
   fi
   NEWM=$(git diff --name-only --diff-filter=A "$OM" "$H" -- supabase/migrations/ | grep '\.sql$')
   if [ "$MODE" = already ]; then  # 👤 11-11 13:18 재시도 때 main 이 이미 올라가 있어 DB 적용을 건너뛰고 화면만 나갔다 — 요청 기준(base)부터 다시 센다(운영 장부에 있는 것은 ⑤가 뺀다)
@@ -191,13 +206,21 @@ if [ -n "$NEWM" ]; then
   else say "새 마이그레이션은 운영에 이미 다 있음"; fi
 fi
 
-# ── ⑤-2 Edge Function 배포(👤 efApproved 요청만 · 합친 main 판 그대로 · DB 다음 · 화면 전) — 익명 POST 401/403 실측
+# ── ⑤-2 Edge Function 배포(👤 efApproved 또는 기존 서버 기능 자동 조건 · 합친 main 판 그대로 · DB 다음 · 화면 전) — 익명 POST 401/403 실측
 if [ -n "${EF// /}" ] && [ -n "$EFOK" ] && [ "$EFOK" != false ]; then
   for f in $EF; do
-    timeout 600 env -u SUPABASE_ACCESS_TOKEN "$SB" functions deploy "$f" --project-ref $PROD --use-api >> "$REL/ef-deploy.log" 2>&1 || hold "EF $f 운영 배포 실패 — main·DB 는 반영됨 · 화면 배포 안 함($REL/ef-deploy.log)"
-    PC=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "https://$PROD.supabase.co/functions/v1/$f")
+    PC=fail; timeout 600 env -u SUPABASE_ACCESS_TOKEN "$SB" functions deploy "$f" --project-ref $PROD --use-api >> "$REL/ef-deploy.log" 2>&1       && PC=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "https://$PROD.supabase.co/functions/v1/$f")
     echo "$f 익명 POST $PC" >> "$REL/ef-deploy.log"
-    case "$PC" in 401|403) say "EF $f 운영 배포 · 익명 POST $PC(정상 차단)";; *) hold "EF $f 배포 뒤 익명 POST $PC — 닫힌 문 아님 · 화면 배포 안 함";; esac
+    case "$PC" in
+      401|403) say "EF $f 운영 배포 · 익명 POST $PC(정상 차단)";;
+      *) # 👤 11-12: 실패면 직전 main 판(OM)으로 되돌린다 — 새 기능이면 되돌릴 판이 없어 멈춤만
+        RB="되돌릴 판 없음(새 서버 기능)"
+        if git cat-file -e "$OM:supabase/functions/$f/index.ts" 2>/dev/null; then
+          RW="$REL/ef-prev"; rm -rf "$RW"; git worktree add -f -q --detach "$RW" "$OM" >> "$REL/ef-deploy.log" 2>&1             && (cd "$RW" && timeout 600 env -u SUPABASE_ACCESS_TOKEN "$SB" functions deploy "$f" --project-ref $PROD --use-api) >> "$REL/ef-deploy.log" 2>&1             && RB="직전 main 판 ${OM:0:9} 으로 되돌림" || RB="⚠ 되돌리기도 실패 — 사람 확인 필요"
+          git worktree remove --force "$RW" >/dev/null 2>&1
+        fi
+        hold "EF $f 배포 실패/익명 POST $PC — $RB · main·DB 는 반영됨 · 화면 배포 안 함($REL/ef-deploy.log)";;
+    esac
   done
 fi
 
