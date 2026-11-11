@@ -814,6 +814,14 @@ export function applyIntegrationToManifest(manifestJson, result) {
 }
 
 /** 정규화 설정 → 엔진 추가 플래그(순수). 설정이 하나도 없으면 [] — 종전 명령줄과 바이트 단위로 같다(하위 호환). */
+/** 순차 경로(수동 큐 night-queue.json)의 `--policy-assigned` 표식 — 2026-11-12 7-23 실사고.
+ *  병렬 경로는 배정기가 고른 모델을 넘기므로 정책이 켜져 있으면 늘 붙인다. 순차 경로는 **배치에 models 지정이 있을 때만** 붙인다 —
+ *  안 붙이면 파이프라인이 지정 모델(예 review=opus)을 라우터 선호로 쓰지 않아, codex(sol) 구현 + astra 중지 스토리의
+ *  검토 후보가 0 → exit 5 가 된다. 지정이 없으면 종전 명령줄 그대로(휴리스틱 선호 유지). */
+export function sequentialPolicyFlags(modelPolicy, batchModels) {
+  return modelPolicy?.enabled === true && Object.values(batchModels ?? {}).some((m) => String(m ?? '').trim()) ? ['--policy-assigned'] : []
+}
+
 export function engineFlagsFromConfig(pc) {
   const a = []
   if (pc?.autonomy?.mode === 'full') a.push('--autonomy', 'full') // configured 와 무관 — full 은 그 자체로 켜진다

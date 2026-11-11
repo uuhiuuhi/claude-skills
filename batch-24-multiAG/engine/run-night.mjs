@@ -50,7 +50,7 @@ import { parallelHazardsCompat } from './conflicts.mjs'
 import { appendJsonl, metricsHistoryPath, parseCodexUsage, parseEngineLog, renderMetricsTable, summarizeTimeline, writeJsonAtomic } from './metrics.mjs'
 import { makeClaudePlanRunner, requestPlan } from './orchestrate.mjs'
 import { buildDag, parseDependsOn } from './plan-dag.mjs'
-import { REVIEW_PENDING_EXIT, isReviewPendingExit, isStoryLevelStop, worseExit, LOG_PREFIX, shouldArchiveEvidence, evidenceLogKeep, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, downSyncRegenerateMap, downSyncSprintPick, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refreshStall, refundUnrun, resolveSprintStatusConflict, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
+import { REVIEW_PENDING_EXIT, sequentialPolicyFlags, isReviewPendingExit, isStoryLevelStop, worseExit, LOG_PREFIX, shouldArchiveEvidence, evidenceLogKeep, applyIntegrationToManifest, blockedProviderFromExit, conflictFingerprint, downSyncDecision, downSyncRegenerateMap, downSyncSprintPick, engineFlagsFromConfig, fileListConflicts, inheritPlan, integrationGateDecision, integrationGateInvocation, landingResolution, limitNoWorkKeys, limitRefundKeys, lockAction, notifyChannel, orchestratorLadder, parallelHazards, parallelPlanWithWorkers, parseFileList, pickRunnable, progressedStoryKeys, providerConfig, refreshStall, refundUnrun, resolveSprintStatusConflict, roundDidRealWork, shouldContinueLoop, shouldLadderOn, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin } from './runner-rules.mjs'
 
 const ENGINE = fileURLToPath(resolveAsf('auto-story-pipeline.mjs'))
 // mockup 단계가 든 배치는 목업 폴더(config mockupGate.mockupsDir · 기본 mockups)를 스토리 커밋에 함께 싣는다 —
@@ -1901,7 +1901,9 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     if (defaults.push) args.push('--push', ...(seqGate ? ['--defer-push'] : []))
     if (dryRun) args.push('--dry-run')
     args.push(...engineFlagsFromConfig(PCFG)) // 설정 없으면 [] — 종전 명령줄 그대로(하위 호환)
-    args.push(...routingFlags())
+    // 2026-11-12: 배치가 models 를 지정하면(수동 큐 · 예 review=opus) 라우터가 그 모델을 먼저 보게 한다 — 병렬 경로와 같은 표식.
+    // 빠지면 지정이 무시돼 codex 구현 스토리의 마감 검토자가 0 이 된다(7-23 exit 5 실사고).
+    args.push(...routingFlags(), ...sequentialPolicyFlags(CFG.modelPolicy, batch.models))
     args.push('--batch-kind', batchKindOf(batch))
 
     console.log(`\n==== ${label} ====`)
