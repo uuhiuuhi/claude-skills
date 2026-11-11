@@ -94,7 +94,11 @@ while :; do
   # ── ② 판정: Edge Function · DB
   EF=$(echo "$CH" | grep '^supabase/functions/' | cut -d/ -f3 | sort -u | grep -v '^_shared$' | tr '\n' ' ')
   echo "$CH" | grep -q '^supabase/functions/_shared/' && EF="$EF(공용 _shared 바뀜)"
-  [ -z "${EF// /}" ] || hold "Edge Function 변경 — 자동 배포 밖(👤 승인 · 깃러너 창이 처리): $EF" "ef=$EF"
+  EFOK=$(get efApproved 2>/dev/null)  # 👤 11-11 16시: 깃러너 창이 efApproved 에 승인 원문·시각을 적은 요청만 EF 를 DB 다음·화면 전에 배포(_shared 바뀜은 여전히 멈춤)
+  if [ -n "${EF// /}" ]; then
+    if [ -n "$EFOK" ] && [ "$EFOK" != false ] && ! echo "$EF" | grep -q '_shared'; then say "Edge Function 변경 — 👤 승인으로 진행($EFOK): $EF"
+    else hold "Edge Function 변경 — 자동 배포 밖(👤 승인 · 깃러너 창이 처리): $EF" "ef=$EF"; fi
+  fi
   NEWM=$(git diff --name-only --diff-filter=A "$OM" "$H" -- supabase/migrations/ | grep '\.sql$')
   if [ "$MODE" = already ]; then  # 👤 11-11 13:18 재시도 때 main 이 이미 올라가 있어 DB 적용을 건너뛰고 화면만 나갔다 — 요청 기준(base)부터 다시 센다(운영 장부에 있는 것은 ⑤가 뺀다)
     BS=$(get base 2>/dev/null); git cat-file -e "$BS^{commit}" 2>/dev/null || BS=$(git merge-base "$C" "$OM~1" 2>/dev/null)
@@ -177,6 +181,16 @@ if [ -n "$NEWM" ]; then
     [ "$NOW" -eq "$(echo "$VERS" | grep -c .)" ] || hold "운영 DB 적용 실패(exit $arc · 장부 $NOW/$(echo "$VERS" | grep -c .)) — main 은 올라감 · 화면 배포 안 함 · $REL/apply-prod.out"
     APPLIED=$(cat "$REL/apply-versions.txt"); say "운영 DB 적용 $APPLIED (장부 실측 $NOW)"
   else say "새 마이그레이션은 운영에 이미 다 있음"; fi
+fi
+
+# ── ⑤-2 Edge Function 배포(👤 efApproved 요청만 · 합친 main 판 그대로 · DB 다음 · 화면 전) — 익명 POST 401/403 실측
+if [ -n "${EF// /}" ] && [ -n "$EFOK" ] && [ "$EFOK" != false ]; then
+  for f in $EF; do
+    timeout 600 env -u SUPABASE_ACCESS_TOKEN "$SB" functions deploy "$f" --project-ref $PROD --use-api >> "$REL/ef-deploy.log" 2>&1 || hold "EF $f 운영 배포 실패 — main·DB 는 반영됨 · 화면 배포 안 함($REL/ef-deploy.log)"
+    PC=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "https://$PROD.supabase.co/functions/v1/$f")
+    echo "$f 익명 POST $PC" >> "$REL/ef-deploy.log"
+    case "$PC" in 401|403) say "EF $f 운영 배포 · 익명 POST $PC(정상 차단)";; *) hold "EF $f 배포 뒤 익명 POST $PC — 닫힌 문 아님 · 화면 배포 안 함";; esac
+  done
 fi
 
 # ── ⑥ 화면 배포(main 판 그대로)
