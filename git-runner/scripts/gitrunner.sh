@@ -163,7 +163,7 @@ if [ -n "$NEWM" ]; then
   IN=$(echo "$VERS" | sed "s/.*/'&'/" | paste -sd,)
   for try in 1 2 3; do  # 👤 11-11 13:12 한 번 읽기 실패(일시 연결) — 3번까지 다시
     QO=$(timeout 180 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD "select version from supabase_migrations.schema_migrations where version in ($IN)" 2>&1)
-    echo "$QO" | grep -q '"rows"' && break; echo "$QO" > "$REL/ledger-read-fail-$try.txt"
+    echo "$QO" | grep -qE '"rows"|^\[\]$' && break; echo "$QO" > "$REL/ledger-read-fail-$try.txt"
     { env | grep -iE '^(SUPABASE|PG|HOME|USERPROFILE|APPDATA)' | sed 's/=.*TOKEN.*/=(값 숨김)/'; timeout 120 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD --debug "select 1" 2>&1 | tail -40; } > "$REL/ledger-read-debug-$try.txt" 2>&1; sleep 20
   done
   echo "$QO" | grep -q '"rows"\|\[\]' || hold "운영 DB 장부 읽기 실패(로그인 만료?) — main 은 올라감 · 화면 배포 전 멈춤: $(echo "$QO" | tail -1 | cut -c1-120)"
