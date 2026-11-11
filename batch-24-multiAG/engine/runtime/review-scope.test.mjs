@@ -229,3 +229,24 @@ describe('[review-scope] 러너 엔진 사본 · 공용 기록 문서는 스토�
     assert.equal(isSharedDocPath(own), true)
   })
 })
+
+// 2026-11-12 7-23 마감 재검수 실사고 — baseline_commit..HEAD 가 573커밋 · 251파일(done 스토리 파일 = 소유 불분명 = 남김) → 열람 근거 5/251 → T6 STOP
+describe('[review-scope] ownOnly — 커밋된 라운드는 자기 File List 로 한정', () => {
+  const files = ['src/pages/SchedulePage.tsx', 'src/lib/schedule/x.ts', 'tests/4-21-schedule.test.ts', 'src/pages/Old.tsx', 'src/util/date.ts', 'src/pages/ContractsPage.tsx']
+  it('File List·키 경로만 남고 done/미소유 파일은 excludedOutside · 활성 소유는 excludedByOwner', () => {
+    const r = scope(files, { ownOnly: true })
+    assert.deepEqual(r.kept, ['src/pages/SchedulePage.tsx', 'src/lib/schedule/x.ts', 'tests/4-21-schedule.test.ts'])
+    assert.deepEqual(r.excludedOutside, ['src/pages/Old.tsx', 'src/util/date.ts'])
+    assert.deepEqual(r.excludedByOwner, [{ file: 'src/pages/ContractsPage.tsx', owner: '4-20-contracts' }])
+  })
+  it('ownOnly 없으면 종전대로 미소유 파일을 남긴다(작업 트리 라운드 · 보수적)', () => {
+    const r = scope(files)
+    assert.deepEqual(r.excludedOutside, [])
+    assert.ok(r.kept.includes('src/pages/Old.tsx') && r.kept.includes('src/util/date.ts'))
+  })
+  it('자기 File List 가 비면 ownOnly 여도 종전(보수적)대로 남긴다', () => {
+    const r = scope(files, { ownOnly: true, ownText: '# Story\n\nStatus: review\n' })
+    assert.deepEqual(r.excludedOutside, [])
+    assert.ok(r.kept.includes('src/util/date.ts'))
+  })
+})

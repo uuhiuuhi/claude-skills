@@ -900,7 +900,7 @@ function trackedDiffExcludingSensitive(names, ref) {
 
 // (2026-10-02 5-18·4-18 오귀속 실사고) 리뷰 범위 좁히기 — 「이 스토리 File List 밖 + 경로에 스토리 키 없음 + 다른 활성 스토리 File List 소유」만 뺀다.
 // 순수 판정은 review-scope.mjs · 여기는 파일 읽기와 fail-open 만 한다(어떤 오류도 리뷰를 막지 않는다 — 종전 전체 범위 + 경고 1줄).
-function scopeReviewFiles(story, storyFile, files) {
+function scopeReviewFiles(story, storyFile, files, ownOnly = false) {
   const warn = (m) => note(`⚠ [${story}] review: ${m}`);
   try {
     const readStory = (key) => { const f = findStoryFile(key); return f ? { key: basename(f, ".md"), file: rel(f), text: readFileSync(f, "utf8") } : null; };
@@ -908,30 +908,32 @@ function scopeReviewFiles(story, storyFile, files) {
       files, story, ownKey: storyFile ? basename(storyFile, ".md") : story,
       ownText: storyFile ? readFileSync(storyFile, "utf8") : null,
       sprintText: existsSync(sprintStatusFile) ? readFileSync(sprintStatusFile, "utf8") : null,
-      readStory,
+      readStory, ownOnly,
     }, warn);
     if (s.fallback && s.fallback !== "오류") warn(`리뷰 범위를 좁히지 않았다(${s.fallback}) — 종전 전체 범위로 리뷰한다`);
     return s;
   } catch (e) {
     warn(`리뷰 범위 좁히기 실패(${e?.message ?? e}) — 종전 전체 범위로 리뷰한다`);
-    return { kept: [...files], excludedByOwner: [], owners: [], fallback: "오류" };
+    return { kept: [...files], excludedByOwner: [], excludedOutside: [], owners: [], fallback: "오류" };
   }
 }
 
 function collectReviewDiff(story, storyFile, scoped) {
-  let excludedByOwner = [], owners = [];
-  // 이번 단계의 변경 파일 → 남길 집합(scoped=false 면 전부)
-  const narrow = (list) => {
+  let excludedByOwner = [], excludedOutside = [], owners = [];
+  // 이번 단계의 변경 파일 → 남길 집합(scoped=false 면 전부) · ownOnly = 커밋된 라운드(baseline..HEAD)는 자기 File List 로 한정(2026-11-12 7-23)
+  const narrow = (list, ownOnly = false) => {
     if (!scoped || !list.length) return new Set(list);
-    const s = scopeReviewFiles(story, storyFile, list);
-    excludedByOwner = s.excludedByOwner; owners = s.owners;
+    const s = scopeReviewFiles(story, storyFile, list, ownOnly);
+    excludedByOwner = s.excludedByOwner; excludedOutside = s.excludedOutside ?? []; owners = s.owners;
     return new Set(s.kept);
   };
   // 뺀 파일은 pathspec 이 아니라 diff 본문 단계에서 절째 들어낸다(파일 수가 많아도 명령줄 길이와 무관)
   const dropOwned = (diff) => {
-    if (!excludedByOwner.length) return diff;
+    if (!excludedByOwner.length && !excludedOutside.length) return diff;
     const dropped = new Map(excludedByOwner.map((e) => [e.file.replace(/\\/g, "/"), e.owner]));
-    return dropFileSections(diff, (p) => dropped.has(p), (p) => `[리뷰 범위 밖 — 다른 활성 스토리(${dropped.get(p) ?? "?"}) 소유: ${p}]`);
+    const outside = new Set(excludedOutside.map((f) => f.replace(/\\/g, "/")));
+    return dropFileSections(diff, (p) => dropped.has(p) || outside.has(p),
+      (p) => dropped.has(p) ? `[리뷰 범위 밖 — 다른 활성 스토리(${dropped.get(p) ?? "?"}) 소유: ${p}]` : `[리뷰 범위 밖 — 이 스토리 File List 밖(커밋된 라운드): ${p}]`);
   };
   // 리뷰 diff 에 자격증명이 실리면 그대로 외부 벤더로 나간다 — gitignore·추적 여부와 무관하게 env·키·시크릿
   // 파일은 ① pathspec 제외 ② unified diff 에서 파일 섹션째 제거 ③ 최종 확정 후 값 마스킹, 셋을 모두 건다
@@ -954,28 +956,29 @@ function collectReviewDiff(story, storyFile, scoped) {
     // (종전에는 여기서 마스킹 **이후**에 원문 diff 로 덮어써 `sk-…`·URL 자격증명이 그대로 나갔다).
     const base = /^baseline_commit:\s*([0-9a-f]{7,40})/m.exec(readFileSync(storyFile, "utf8"))?.[1];
     if (base && git(["cat-file", "-e", `${base}^{commit}`]).code === 0) {
-      excludedByOwner = []; owners = []; // 이 단계의 범위로 다시 판정한다
+      excludedByOwner = []; excludedOutside = []; owners = []; // 이 단계의 범위로 다시 판정한다
       const committed = splitLines(git(["diff", "--name-only", `${base}..HEAD`, "--"]).out).filter((f) => !isLedgerPath(f));
-      keep = narrow(committed);
+      keep = narrow(committed, true);
       names = committed.filter((f) => keep.has(f));
       diff = !scoped || names.length ? dropOwned(trackedDiffExcludingSensitive(committed, `${base}..HEAD`)) : "";
       files = names.filter((f) => !isSensitivePath(f));
       targetRef = `${base.slice(0, 7)}..HEAD`;
     }
   }
-  return { diff, files, targetRef, excludedByOwner, owners };
+  return { diff, files, targetRef, excludedByOwner, excludedOutside, owners };
 }
 
 function prepareReviewDiff(story) {
   const storyFile = findStoryFile(story);
   const diffFile = resolve(logDir, `codex-${hash8(story)}-review-diff.txt`);
   let r = collectReviewDiff(story, storyFile, true);
-  if (!r.diff.trim() && r.excludedByOwner.length) {
+  if (!r.diff.trim() && (r.excludedByOwner.length || r.excludedOutside.length)) {
     // 좁힌 결과가 비면 리뷰 대상 없음 STOP(exit 4)·전환이 나므로 종전 전체 범위로 되돌린다(fail-open)
-    note(`⚠ [${story}] review: 범위를 좁히자 리뷰 대상이 비었다(다른 활성 스토리 소유 ${r.excludedByOwner.length}건) — 종전 전체 범위로 리뷰한다`);
+    note(`⚠ [${story}] review: 범위를 좁히자 리뷰 대상이 비었다(다른 활성 스토리 소유 ${r.excludedByOwner.length}건 · File List 밖 ${r.excludedOutside.length}건) — 종전 전체 범위로 리뷰한다`);
     r = collectReviewDiff(story, storyFile, false);
   }
   if (r.excludedByOwner.length) note(`[${story}] review: ${summarizeExcluded(r.excludedByOwner)}`);
+  if (r.excludedOutside.length) note(`[${story}] review: 커밋된 라운드 — 이 스토리 File List 밖 ${r.excludedOutside.length}건 범위 제외(${r.excludedOutside.slice(0, 20).join(", ")}${r.excludedOutside.length > 20 ? ` 외 ${r.excludedOutside.length - 20}건` : ""})`);
   let { diff, files } = r;
   const { targetRef, excludedByOwner, owners } = r;
   files = files.filter((f) => !f.includes("auto-pipeline-logs/"));

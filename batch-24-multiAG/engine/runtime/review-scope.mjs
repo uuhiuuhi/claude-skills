@@ -117,20 +117,25 @@ export function ownerOfPath(owners, file) {
  * @returns {{kept:string[], excludedByOwner:{file:string, owner:string}[], owners:{key:string, entries:string[]}[], fallback:string|null}}
  *   fallback = 좁히지 않은 이유(sprint-status 없음 · 스토리 파일 없음) — 이때 kept = 입력 전체.
  */
-export function computeReviewScope({ files = [], story = '', ownKey = '', ownText = null, sprintText = null, readStory }) {
+export function computeReviewScope({ files = [], story = '', ownKey = '', ownText = null, sprintText = null, readStory, ownOnly = false }) {
   const all = [...files]
-  if (sprintText == null) return { kept: all, excludedByOwner: [], owners: [], fallback: 'sprint-status 없음' }
-  if (ownText == null) return { kept: all, excludedByOwner: [], owners: [], fallback: '스토리 파일 없음' }
+  if (sprintText == null) return { kept: all, excludedByOwner: [], excludedOutside: [], owners: [], fallback: 'sprint-status 없음' }
+  if (ownText == null) return { kept: all, excludedByOwner: [], excludedOutside: [], owners: [], fallback: '스토리 파일 없음' }
   const own = parseFileListLoose(ownText) ?? []
   const owners = activeOwners({ sprintText, story, ownKey, readStory })
-  const kept = [], excludedByOwner = []
+  // ownOnly = 이미 커밋된 라운드(baseline_commit..HEAD). 그 사이 같은 갈래에 쌓인 done 스토리 커밋까지 들어와 「소유 불분명 = 남긴다」가
+  // 수백 파일이 된다(2026-11-12 7-23 마감 재검수 — 573커밋 · 251파일 · 열람 근거 5/251 → T6 STOP). 자기 File List 가 있으면
+  // 그 밖 파일은 소유자가 없어도 뺀다. File List 가 비면 종전(보수적)대로 남긴다.
+  const strict = ownOnly && own.length > 0
+  const kept = [], excludedByOwner = [], excludedOutside = []
   for (const f of all) {
     if (own.some((e) => entryMatches(e, f)) || pathHasStoryKey(f, ownKey) || pathHasStoryKey(f, story)) { kept.push(f); continue }
     const owner = ownerOfPath(owners, f)
     if (owner) excludedByOwner.push({ file: f, owner })
+    else if (strict) excludedOutside.push(f)
     else kept.push(f)
   }
-  return { kept, excludedByOwner, owners, fallback: null }
+  return { kept, excludedByOwner, excludedOutside, owners, fallback: null }
 }
 
 /** computeReviewScope 의 fail-open 판 — 어떤 오류도 리뷰를 막지 않는다: 전체 범위 + warn 1회. */
@@ -139,7 +144,7 @@ export function safeReviewScope(args, warn = () => {}) {
     return computeReviewScope(args)
   } catch (e) {
     warn(`리뷰 범위 좁히기 실패(${e?.message ?? e}) — 종전 전체 범위로 리뷰한다`)
-    return { kept: [...(args?.files ?? [])], excludedByOwner: [], owners: [], fallback: '오류' }
+    return { kept: [...(args?.files ?? [])], excludedByOwner: [], excludedOutside: [], owners: [], fallback: '오류' }
   }
 }
 
