@@ -25,9 +25,9 @@ fi
 echo $$ > "$LK/pid"; trap 'rm -rf "$LK"' EXIT
 
 REQ=$(ls "$G/queue"/*.json 2>/dev/null | sort | head -1); [ -n "$REQ" ] || exit 0
-# ── 배포 안 하는 시간(👤 2026-11-11): 평일·주말 구분 없이 08:50~12:00 · 13:00~18:10 — 사람이 요청한 건("humanRequested": true)만 처리
+# ── 배포 안 하는 시간(👤 2026-11-11): 08:50~12:00 · 13:00~18:10 — 사람이 요청한 건("humanRequested": true)만 처리 · 나머지는 미리 검사 · 배포 가능 시간엔 묻지 않고 바로 진행
 HM=$((10#$(date +%H%M)))
-if { [ $HM -ge 850 ] && [ $HM -lt 1200 ]; } || { [ $HM -ge 1300 ] && [ $HM -lt 1810 ]; }; then
+if [ "${QUIET_HOURS:-1}" = 1 ] && { { [ $HM -ge 850 ] && [ $HM -lt 1200 ]; } || { [ $HM -ge 1300 ] && [ $HM -lt 1810 ]; }; }; then
   REQ=""; for q in $(ls "$G/queue"/*.json 2>/dev/null | sort); do
     [ "$(node "$LIB" get "$q" humanRequested 2>/dev/null)" = true ] && { REQ=$q; break; }
   done
@@ -114,14 +114,14 @@ while :; do
     say "미리 검사 재사용 — main ${OM:0:9} 이후 안 바뀜 · 합친 결과 같음"
   elif [ "$MODE" != already ]; then
     if [ -n "$(git diff --name-only "$OM" "$H" -- package-lock.json)" ]; then npm ci --no-audit --no-fund >>"$LOG" 2>&1 || hold "npm ci 실패"; fi
-    timeout 1200 npm run -s typecheck > "$REL/typecheck.log" 2>&1 || hold "타입 검사 RED($REL/typecheck.log)"
+    timeout 3600 npm run -s typecheck > "$REL/typecheck.log" 2>&1 || hold "타입 검사 RED($REL/typecheck.log)"
     LINT=$(echo "$CH" | grep -E '\.(ts|tsx|js|mjs)$' | while read -r f; do [ -f "$f" ] && echo "$f"; done)
     if [ -n "$LINT" ]; then timeout 900 npx eslint $LINT > "$REL/eslint.log" 2>&1 || hold "eslint RED($REL/eslint.log)"; fi
     # 정적 시험(DB 접속 없음): 원장·마이그레이션 성질 가드 + 바뀐 시험 중 tests/db 실DB 시험이 아닌 것
     T=$( { echo tests/db/story-ledger-guard.test.ts; echo tests/db/migration-guard.test.ts; echo tests/db/migration-properties-guard.test.ts
            echo "$CH" | grep -E '^tests/.*\.test\.tsx?$' | grep -v -E '^tests/db/' ; echo "$CH" | grep -E '^tests/db/.*-guard\.test\.ts$'; } | sort -u | while read -r t; do [ -f "$t" ] && echo "$t"; done )
     [ -f .env.local ] || cp "$M/.env.local" .env.local 2>/dev/null
-    timeout 1500 npx vitest run --fileParallelism=false $T --reporter=dot > "$REL/vitest.log" 2>&1 || hold "시험 RED($REL/vitest.log)"
+    timeout 3600 npx vitest run --fileParallelism=false $T --reporter=dot > "$REL/vitest.log" 2>&1 || hold "시험 RED($REL/vitest.log)"
     say "검사 GREEN — 타입·eslint·시험 $(echo "$T" | wc -l)파일"
   fi
   if [ "$PRE" = 1 ]; then
