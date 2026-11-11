@@ -96,6 +96,10 @@ while :; do
   echo "$CH" | grep -q '^supabase/functions/_shared/' && EF="$EF(공용 _shared 바뀜)"
   [ -z "${EF// /}" ] || hold "Edge Function 변경 — 자동 배포 밖(👤 승인 · 깃러너 창이 처리): $EF" "ef=$EF"
   NEWM=$(git diff --name-only --diff-filter=A "$OM" "$H" -- supabase/migrations/ | grep '\.sql$')
+  if [ "$MODE" = already ]; then  # 👤 11-11 13:18 재시도 때 main 이 이미 올라가 있어 DB 적용을 건너뛰고 화면만 나갔다 — 요청 기준(base)부터 다시 센다(운영 장부에 있는 것은 ⑤가 뺀다)
+    BS=$(get base 2>/dev/null); git cat-file -e "$BS^{commit}" 2>/dev/null || BS=$(git merge-base "$C" "$OM~1" 2>/dev/null)
+    [ -n "$BS" ] && NEWM=$(git diff --name-only --diff-filter=A "$BS" "$C" -- supabase/migrations/ | grep '\.sql$')
+  fi
   MODM=$(git diff --name-only --diff-filter=MDR "$OM" "$H" -- supabase/migrations/)
   [ -z "$MODM" ] || hold "이미 있던 마이그레이션 파일이 바뀜/지워짐 — $(echo $MODM)"
   if [ -n "$NEWM" ]; then
@@ -120,7 +124,7 @@ while :; do
     # 정적 시험(DB 접속 없음): 원장·마이그레이션 성질 가드 + 바뀐 시험 중 tests/db 실DB 시험이 아닌 것
     T=$( { echo tests/db/story-ledger-guard.test.ts; echo tests/db/migration-guard.test.ts; echo tests/db/migration-properties-guard.test.ts
            echo "$CH" | grep -E '^tests/.*\.test\.tsx?$' | grep -v -E '^tests/db/' ; echo "$CH" | grep -E '^tests/db/.*-guard\.test\.ts$'; } | sort -u | while read -r t; do [ -f "$t" ] && echo "$t"; done )
-    [ -f .env.local ] || cp "$M/.env.local" .env.local 2>/dev/null
+    rm -f .env.local  # 👤 11-11 13시: 시험은 개발 DB 에 붙지 않는다(공용 개발 DB 를 다른 갈래가 바꾸면 거짓 RED — 실DB 부분은 건너뜀)
     timeout 3600 npx vitest run --fileParallelism=false $T --reporter=dot > "$REL/vitest.log" 2>&1 || hold "시험 RED($REL/vitest.log)"
     say "검사 GREEN — 타입·eslint·시험 $(echo "$T" | wc -l)파일"
   fi
@@ -145,7 +149,11 @@ APPLIED=""
 if [ -n "$NEWM" ]; then
   VERS=$(for f in $NEWM; do basename "$f" | cut -d_ -f1; done)
   IN=$(echo "$VERS" | sed "s/.*/'&'/" | paste -sd,)
-  QO=$(timeout 180 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked --project-ref $PROD "select version from supabase_migrations.schema_migrations where version in ($IN)" 2>&1)
+  for try in 1 2 3; do  # 👤 11-11 13:12 한 번 읽기 실패(일시 연결) — 3번까지 다시
+    QO=$(timeout 180 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD "select version from supabase_migrations.schema_migrations where version in ($IN)" 2>&1)
+    echo "$QO" | grep -q '"rows"' && break; echo "$QO" > "$REL/ledger-read-fail-$try.txt"
+    { env | grep -iE '^(SUPABASE|PG|HOME|USERPROFILE|APPDATA)' | sed 's/=.*TOKEN.*/=(값 숨김)/'; timeout 120 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD --debug "select 1" 2>&1 | tail -40; } > "$REL/ledger-read-debug-$try.txt" 2>&1; sleep 20
+  done
   echo "$QO" | grep -q '"rows"\|\[\]' || hold "운영 DB 장부 읽기 실패(로그인 만료?) — main 은 올라감 · 화면 배포 전 멈춤: $(echo "$QO" | tail -1 | cut -c1-120)"
   HAVE=$(echo "$QO" | grep -oE '"version": *"[0-9]{14}"' | grep -oE '[0-9]{14}' | sort -u)
   TODO=$(for f in $NEWM; do v=$(basename "$f" | cut -d_ -f1); echo "$HAVE" | grep -qx "$v" || echo "$f"; done)
@@ -155,16 +163,16 @@ if [ -n "$NEWM" ]; then
       sch=${name%%.*}; obj=${name#*.}
       if [ "$kind" = function ]; then sql="select pg_get_functiondef(p.oid) as def from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='$sch' and p.proname='$obj'"
       else sql="select pg_get_viewdef('$sch.$obj'::regclass, true) as def where to_regclass('$sch.$obj') is not null"; fi
-      timeout 120 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked --project-ref $PROD "$sql" > "$REL/before-$kind-$name.json" 2>&1
+      timeout 120 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD "$sql" > "$REL/before-$kind-$name.json" 2>&1
     done
     node "$LIB" build-apply "$REL/apply-prod.sql" "$ID" $TODO > "$REL/apply-versions.txt" || hold "적용 묶음 만들기 실패 — main 은 올라감"
     {
       echo "# 운영 DB 반영 ⓖ~ⓙ — $ID"; echo "- 파일: $(echo $TODO)"; echo "- 덧셈 판정: tools/ops/additive-check.mjs exit 0(additive-check.txt)"
       echo "- ⓖ $(get db.compat)"; echo "- ⓗ $(get db.access)"; echo "- ⓘ 유일 색인 없음(있으면 자동 적용 안 함) · $(get db.index)"; echo "- ⓙ 교체 전 정의 = before-*.json"
     } > "$REL/CHECKS.md"
-    AO=$(timeout 600 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked --project-ref $PROD -f "$REL/apply-prod.sql" 2>&1); arc=$?
+    AO=$(timeout 600 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD -f "$REL/apply-prod.sql" 2>&1); arc=$?
     echo "$AO" > "$REL/apply-prod.out"
-    QO=$(timeout 180 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked --project-ref $PROD "select version from supabase_migrations.schema_migrations where version in ($IN)" 2>&1)
+    QO=$(timeout 180 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD "select version from supabase_migrations.schema_migrations where version in ($IN)" 2>&1)
     NOW=$(echo "$QO" | grep -oE '"version": *"[0-9]{14}"' | grep -oE '[0-9]{14}' | sort -u | grep -c .)
     [ "$NOW" -eq "$(echo "$VERS" | grep -c .)" ] || hold "운영 DB 적용 실패(exit $arc · 장부 $NOW/$(echo "$VERS" | grep -c .)) — main 은 올라감 · 화면 배포 안 함 · $REL/apply-prod.out"
     APPLIED=$(cat "$REL/apply-versions.txt"); say "운영 DB 적용 $APPLIED (장부 실측 $NOW)"
