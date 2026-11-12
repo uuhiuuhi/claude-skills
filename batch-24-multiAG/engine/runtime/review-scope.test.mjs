@@ -238,6 +238,7 @@ describe('[review-scope] ownOnly — 커밋된 라운드는 자기 File List 로
     assert.deepEqual(r.kept, ['src/pages/SchedulePage.tsx', 'src/lib/schedule/x.ts', 'tests/4-21-schedule.test.ts'])
     assert.deepEqual(r.excludedOutside, ['src/pages/Old.tsx', 'src/util/date.ts'])
     assert.deepEqual(r.excludedByOwner, [{ file: 'src/pages/ContractsPage.tsx', owner: '4-20-contracts' }])
+    assert.equal(r.strict, true)
   })
   it('ownOnly 없으면 종전대로 미소유 파일을 남긴다(작업 트리 라운드 · 보수적)', () => {
     const r = scope(files)
@@ -248,5 +249,6 @@ describe('[review-scope] ownOnly — 커밋된 라운드는 자기 File List 로
     const r = scope(files, { ownOnly: true, ownText: '# Story\n\nStatus: review\n' })
     assert.deepEqual(r.excludedOutside, [])
     assert.ok(r.kept.includes('src/util/date.ts'))
+    assert.equal(r.strict, false, '목록이 비면 덤프도 종전 경로')
   })
 })

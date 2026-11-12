@@ -135,7 +135,7 @@ export function computeReviewScope({ files = [], story = '', ownKey = '', ownTex
     else if (strict) excludedOutside.push(f)
     else kept.push(f)
   }
-  return { kept, excludedByOwner, excludedOutside, owners, fallback: null }
+  return { kept, excludedByOwner, excludedOutside, owners, strict, fallback: null }
 }
 
 /** computeReviewScope 의 fail-open 판 — 어떤 오류도 리뷰를 막지 않는다: 전체 범위 + warn 1회. */

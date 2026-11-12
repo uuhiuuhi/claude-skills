@@ -897,6 +897,14 @@ function trackedDiffExcludingSensitive(names, ref) {
   const base = ref ? [ref] : ["HEAD"];
   return git(["diff", ...base, "--", ":(top)", ...excl]).out;
 }
+/** 커밋된 라운드(ownOnly 가 실제로 적용된 경우) 전용 — 범위 안 경로만 pathspec 으로 뽑는다(2026-11-12 7-23 후속).
+ *  종전엔 baseline..HEAD 전체를 뽑은 뒤 본문 단계에서 빼서 표식 줄 수백 개 + 공용 기록 문서 본문(sprint-status 85KB·deferred-work 49KB —
+ *  대부분 다른 스토리 변경)이 남아 덤프가 343KB → 검토자가 Read 로 못 열고 Bash 로만 봄 → 열람 근거 5/6. quotepath=false = 한글 경로 표기 보호. */
+function trackedDiffForPaths(paths, ref) {
+  const keep = paths.filter((f) => !isSensitivePath(f) && !isLedgerPath(f)).map((f) => `:(top,literal)${f}`);
+  if (!keep.length) return "";
+  return git(["-c", "core.quotepath=false", "diff", ref, "--", ...keep]).out;
+}
 
 // (2026-10-02 5-18·4-18 오귀속 실사고) 리뷰 범위 좁히기 — 「이 스토리 File List 밖 + 경로에 스토리 키 없음 + 다른 활성 스토리 File List 소유」만 뺀다.
 // 순수 판정은 review-scope.mjs · 여기는 파일 읽기와 fail-open 만 한다(어떤 오류도 리뷰를 막지 않는다 — 종전 전체 범위 + 경고 1줄).
@@ -919,12 +927,12 @@ function scopeReviewFiles(story, storyFile, files, ownOnly = false) {
 }
 
 function collectReviewDiff(story, storyFile, scoped) {
-  let excludedByOwner = [], excludedOutside = [], owners = [];
+  let excludedByOwner = [], excludedOutside = [], owners = [], strict = false;
   // 이번 단계의 변경 파일 → 남길 집합(scoped=false 면 전부) · ownOnly = 커밋된 라운드(baseline..HEAD)는 자기 File List 로 한정(2026-11-12 7-23)
   const narrow = (list, ownOnly = false) => {
     if (!scoped || !list.length) return new Set(list);
     const s = scopeReviewFiles(story, storyFile, list, ownOnly);
-    excludedByOwner = s.excludedByOwner; excludedOutside = s.excludedOutside ?? []; owners = s.owners;
+    excludedByOwner = s.excludedByOwner; excludedOutside = s.excludedOutside ?? []; owners = s.owners; strict = Boolean(s.strict);
     return new Set(s.kept);
   };
   // 뺀 파일은 pathspec 이 아니라 diff 본문 단계에서 절째 들어낸다(파일 수가 많아도 명령줄 길이와 무관)
@@ -960,7 +968,22 @@ function collectReviewDiff(story, storyFile, scoped) {
       const committed = splitLines(git(["diff", "--name-only", `${base}..HEAD`, "--"]).out).filter((f) => !isLedgerPath(f));
       keep = narrow(committed, true);
       names = committed.filter((f) => keep.has(f));
-      diff = !scoped || names.length ? dropOwned(trackedDiffExcludingSensitive(committed, `${base}..HEAD`)) : "";
+      // 범위 안 경로만 뽑는다 · 공용 기록 문서(sprint-status·deferred-work 등 · 자기 스토리 md 제외)는 baseline..HEAD 에
+      // 다른 스토리 변경이 대부분이라 본문을 싣지 않고 표식만 — 필수 열람 대상도 아니다(isSharedDocPath · 직접 열어 확인).
+      // 범위 안 본문이 비면(공용 문서만 남음 등) 종전 경로로 — 리뷰 대상 없음 STOP 을 새로 만들지 않는다.
+      const own = storyFile ? rel(storyFile) : "";
+      const scopedDiff = strict ? trackedDiffForPaths(names.filter((f) => !isSharedDocPath(f, own)), `${base}..HEAD`) : "";
+      if (scopedDiff.trim()) {
+        const shared = names.filter((f) => isSharedDocPath(f, own));
+        diff = scopedDiff;
+        const marks = [
+          ...shared.map((f) => `[공용 기록 문서 — 커밋된 라운드라 다른 스토리 변경이 섞여 본문 생략 · 필요하면 직접 열어 확인: ${f}]`),
+          ...(excludedOutside.length || excludedByOwner.length ? [`[리뷰 범위 밖 — 커밋된 라운드: File List 밖 ${excludedOutside.length}건 · 다른 활성 스토리 소유 ${excludedByOwner.length}건 본문 생략]`] : []),
+        ];
+        if (marks.length) diff = `${marks.join("\n")}\n${diff}`;
+      } else {
+        diff = !scoped || names.length ? dropOwned(trackedDiffExcludingSensitive(committed, `${base}..HEAD`)) : "";
+      }
       files = names.filter((f) => !isSensitivePath(f));
       targetRef = `${base.slice(0, 7)}..HEAD`;
     }
