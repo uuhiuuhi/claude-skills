@@ -146,7 +146,8 @@ while :; do
     # 👤 11-11 16시: tests/authz 는 개발 서버에 실제 요청을 보내는 권한 시험이라 연결 설정이 있어야 돈다 — 빼지 않고 따로 연결을 붙여 돌린다
     TA=$(echo "$T" | grep '^tests/authz/'); T=$(echo "$T" | grep -v '^tests/authz/')
     rm -f .env.local  # 👤 11-11 13시: 시험은 개발 DB 에 붙지 않는다(공용 개발 DB 를 다른 갈래가 바꾸면 거짓 RED — 실DB 부분은 건너뜀)
-    timeout 3600 npx vitest run --fileParallelism=false $T --reporter=dot > "$REL/vitest.log" 2>&1 || hold "시험 RED($REL/vitest.log)"
+    # 11-12: 화면 시험은 src/lib/supabase.ts 를 불러오기만 해도 접속값을 요구한다 — 닿지 않는 가짜 주소를 넣어 불러오기만 통과시킨다(개발 DB 연결 없음 · 실DB 시험은 연결 실패로 RED 쪽)
+    VITE_SUPABASE_URL=http://127.0.0.1:9 VITE_SUPABASE_PUBLISHABLE_KEY=gitrunner-no-db timeout 3600 npx vitest run --fileParallelism=false $T --reporter=dot > "$REL/vitest.log" 2>&1 || hold "시험 RED($REL/vitest.log)"
     if [ -n "$TA" ]; then
       cp "$M/.env.local" .env.local || hold "권한 시험용 개발 연결 설정 복사 실패"
       timeout 1800 npx vitest run --fileParallelism=false $TA --reporter=dot > "$REL/vitest-authz.log" 2>&1; arc=$?; rm -f .env.local
