@@ -139,7 +139,7 @@ while :; do
     if [ -n "$(git diff --name-only "$OM" "$H" -- package-lock.json)" ]; then npm ci --no-audit --no-fund >>"$LOG" 2>&1 || hold "npm ci 실패"; fi
     timeout 3600 npm run -s typecheck > "$REL/typecheck.log" 2>&1 || hold "타입 검사 RED($REL/typecheck.log)"
     LINT=$(echo "$CH" | grep -E '\.(ts|tsx|js|mjs)$' | while read -r f; do [ -f "$f" ] && echo "$f"; done)
-    if [ -n "$LINT" ]; then timeout 900 npx eslint $LINT > "$REL/eslint.log" 2>&1 || hold "eslint RED($REL/eslint.log)"; fi
+    if [ -n "$LINT" ]; then echo "$LINT" | timeout 900 xargs -n 80 npx eslint > "$REL/eslint.log" 2>&1 || hold "eslint RED($REL/eslint.log)"; fi
     # 정적 시험(DB 접속 없음): 원장·마이그레이션 성질 가드 + 바뀐 시험 중 tests/db 실DB 시험이 아닌 것
     T=$( { echo tests/db/story-ledger-guard.test.ts; echo tests/db/migration-guard.test.ts; echo tests/db/migration-properties-guard.test.ts
            echo "$CH" | grep -E '^tests/.*\.test\.tsx?$' | grep -v -E '^tests/db/' ; echo "$CH" | grep -E '^tests/db/.*-guard\.test\.ts$'; } | sort -u | while read -r t; do [ -f "$t" ] && echo "$t"; done )
