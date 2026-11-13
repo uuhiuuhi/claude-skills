@@ -29,9 +29,12 @@ echo $$ > "$LK/pid"; trap 'rm -rf "$LK"' EXIT
 qlist() { local q; for q in $(ls "$G/queue"/*.json 2>/dev/null | sort); do [ -n "$(node "$LIB" get "$q" waitingFollowUp 2>/dev/null)" ] && echo "$q"; done
   for q in $(ls "$G/queue"/*.json 2>/dev/null | sort); do [ -n "$(node "$LIB" get "$q" waitingFollowUp 2>/dev/null)" ] || echo "$q"; done; }
 REQ=$(qlist | head -1); [ -n "$REQ" ] || exit 0
-# ── 배포 안 하는 시간(👤 2026-11-11 · 끝 18:10→19:00 👤 2026-11-13): 08:50~12:00 · 13:00~19:00 — 사람이 요청한 건("humanRequested": true)만 처리 · 나머지는 미리 검사 · 배포 가능 시간엔 묻지 않고 바로 진행
+# ── 배포 안 하는 시간(👤 2026-11-11 · 끝 18:10→19:00 👤 2026-11-13): 평일 08:50~12:00 · 13:00~19:00 — 사람이 요청한 건("humanRequested": true)만 처리 · 나머지는 미리 검사 · 배포 가능 시간엔 묻지 않고 바로 진행
 HM=$((10#$(date +%H%M)))
-if [ "${QUIET_HOURS:-1}" = 1 ] && { { [ $HM -ge 850 ] && [ $HM -lt 1200 ]; } || { [ $HM -ge 1300 ] && [ $HM -lt 1900 ]; }; }; then
+# 토·일·공휴일은 시간 지정 없이 바로 배포(👤 2026-11-14) — 공휴일 = 이 폴더 holidays.txt 의 YYYY-MM-DD 줄(대체공휴일·임시공휴일은 그 파일에 더한다)
+FREE_DAY=0; [ "$(date +%u)" -ge 6 ] && FREE_DAY=1
+grep -qx "$(date +%F)" "$G/holidays.txt" 2>/dev/null && FREE_DAY=1
+if [ "${QUIET_HOURS:-1}" = 1 ] && [ $FREE_DAY = 0 ] && { { [ $HM -ge 850 ] && [ $HM -lt 1200 ]; } || { [ $HM -ge 1300 ] && [ $HM -lt 1900 ]; }; }; then
   # 사람 요청은 깃러너 창이 「배포 진행합니다」 확인 칩으로 👤 재확인을 받아 "humanConfirmed" 를 적은 것만(👤 2026-11-13 — 말이 엇갈려 원치 않은 배포가 나간 사례)
   REQ=""; for q in $(qlist); do
     [ "$(node "$LIB" get "$q" humanRequested 2>/dev/null)" = true ] && [ -n "$(node "$LIB" get "$q" humanConfirmed 2>/dev/null)" ] && { REQ=$q; break; }
