@@ -33,7 +33,7 @@ REQ=$(qlist | head -1); [ -n "$REQ" ] || exit 0
 HM=$((10#$(date +%H%M)))
 # 토·일·공휴일은 시간 지정 없이 바로 배포(👤 2026-11-14) — 공휴일 = 이 폴더 holidays.txt 의 YYYY-MM-DD 줄(대체공휴일·임시공휴일은 그 파일에 더한다)
 FREE_DAY=0; [ "$(date +%u)" -ge 6 ] && FREE_DAY=1
-grep -qx "$(date +%F)" "$G/holidays.txt" 2>/dev/null && FREE_DAY=1
+tr -d "\r" < "$G/holidays.txt" 2>/dev/null | grep -qx "$(date +%F)" && FREE_DAY=1
 if [ "${QUIET_HOURS:-1}" = 1 ] && [ $FREE_DAY = 0 ] && { { [ $HM -ge 850 ] && [ $HM -lt 1200 ]; } || { [ $HM -ge 1300 ] && [ $HM -lt 1900 ]; }; }; then
   # 사람 요청은 깃러너 창이 「배포 진행합니다」 확인 칩으로 👤 재확인을 받아 "humanConfirmed" 를 적은 것만(👤 2026-11-13 — 말이 엇갈려 원치 않은 배포가 나간 사례)
   REQ=""; for q in $(qlist); do
