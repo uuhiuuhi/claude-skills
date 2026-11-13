@@ -25,17 +25,21 @@ if ! mkdir "$LK" 2>/dev/null; then
 fi
 echo $$ > "$LK/pid"; trap 'rm -rf "$LK"' EXIT
 
-REQ=$(ls "$G/queue"/*.json 2>/dev/null | sort | head -1); [ -n "$REQ" ] || exit 0
+# ── 처리 순서(👤 2026-11-13): 배포 뒤 대화 창이 후속 작업을 기다리는 요청("waitingFollowUp": "<무엇을 기다리나>")을 먼저 · 그 안과 나머지는 이름 순서
+qlist() { local q; for q in $(ls "$G/queue"/*.json 2>/dev/null | sort); do [ -n "$(node "$LIB" get "$q" waitingFollowUp 2>/dev/null)" ] && echo "$q"; done
+  for q in $(ls "$G/queue"/*.json 2>/dev/null | sort); do [ -n "$(node "$LIB" get "$q" waitingFollowUp 2>/dev/null)" ] || echo "$q"; done; }
+REQ=$(qlist | head -1); [ -n "$REQ" ] || exit 0
 # ── 배포 안 하는 시간(👤 2026-11-11 · 끝 18:10→19:00 👤 2026-11-13): 08:50~12:00 · 13:00~19:00 — 사람이 요청한 건("humanRequested": true)만 처리 · 나머지는 미리 검사 · 배포 가능 시간엔 묻지 않고 바로 진행
 HM=$((10#$(date +%H%M)))
 if [ "${QUIET_HOURS:-1}" = 1 ] && { { [ $HM -ge 850 ] && [ $HM -lt 1200 ]; } || { [ $HM -ge 1300 ] && [ $HM -lt 1900 ]; }; }; then
-  REQ=""; for q in $(ls "$G/queue"/*.json 2>/dev/null | sort); do
-    [ "$(node "$LIB" get "$q" humanRequested 2>/dev/null)" = true ] && { REQ=$q; break; }
+  # 사람 요청은 깃러너 창이 「배포 진행합니다」 확인 칩으로 👤 재확인을 받아 "humanConfirmed" 를 적은 것만(👤 2026-11-13 — 말이 엇갈려 원치 않은 배포가 나간 사례)
+  REQ=""; for q in $(qlist); do
+    [ "$(node "$LIB" get "$q" humanRequested 2>/dev/null)" = true ] && [ -n "$(node "$LIB" get "$q" humanConfirmed 2>/dev/null)" ] && { REQ=$q; break; }
   done
   # 미리 검사(👤 2026-11-11 「미리 검사 넣어줘」): 배포는 안 하고 합치기·판정·검사만 — 지금 main 기준 미리 검사가 안 된 요청 1건
   if [ -z "$REQ" ]; then
     git -C "$W" fetch -q origin 2>>"$LOG"; OMNOW=$(git -C "$W" rev-parse origin/main)
-    for q in $(ls "$G/queue"/*.json 2>/dev/null | sort); do
+    for q in $(qlist); do
       pc="$G/precheck/$(basename "$q" .json).ok"
       [ -f "$pc" ] && [ "$(cut -d' ' -f1,2 "$pc")" = "$OMNOW $(node "$LIB" get "$q" commit 2>/dev/null)" ] && continue
       REQ=$q; PRE=1; break
