@@ -26,9 +26,9 @@ fi
 echo $$ > "$LK/pid"; trap 'rm -rf "$LK"' EXIT
 
 REQ=$(ls "$G/queue"/*.json 2>/dev/null | sort | head -1); [ -n "$REQ" ] || exit 0
-# ── 배포 안 하는 시간(👤 2026-11-11): 08:50~12:00 · 13:00~18:10 — 사람이 요청한 건("humanRequested": true)만 처리 · 나머지는 미리 검사 · 배포 가능 시간엔 묻지 않고 바로 진행
+# ── 배포 안 하는 시간(👤 2026-11-11 · 끝 18:10→19:00 👤 2026-11-13): 08:50~12:00 · 13:00~19:00 — 사람이 요청한 건("humanRequested": true)만 처리 · 나머지는 미리 검사 · 배포 가능 시간엔 묻지 않고 바로 진행
 HM=$((10#$(date +%H%M)))
-if [ "${QUIET_HOURS:-1}" = 1 ] && { { [ $HM -ge 850 ] && [ $HM -lt 1200 ]; } || { [ $HM -ge 1300 ] && [ $HM -lt 1810 ]; }; }; then
+if [ "${QUIET_HOURS:-1}" = 1 ] && { { [ $HM -ge 850 ] && [ $HM -lt 1200 ]; } || { [ $HM -ge 1300 ] && [ $HM -lt 1900 ]; }; }; then
   REQ=""; for q in $(ls "$G/queue"/*.json 2>/dev/null | sort); do
     [ "$(node "$LIB" get "$q" humanRequested 2>/dev/null)" = true ] && { REQ=$q; break; }
   done
