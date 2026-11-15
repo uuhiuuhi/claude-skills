@@ -455,8 +455,11 @@ describe('[engine-e2e][기준점 없음] baseline_commit 이 없으면 스토리
     assert.equal(r.status, 0, r.out.slice(-2000))
     assert.match(r.out, /baseline_commit 없음 — 스토리 파일을 처음 추가한 커밋\([0-9a-f]{7}\)의 부모 [0-9a-f]{7} 를 기준점으로 쓴다/)
     assert.match(r.prompt, /\.\.HEAD/, 'baseline 폴백 경로여야 한다')
-    assert.match(r.reviewDiff, /deferred-work\.md/)
-    assert.match(r.reviewDiff, /이미 고친 줄/)
+    // 커밋된 라운드의 공용 기록 문서는 본문 대신 「직접 열어 확인」 표식으로 간다(73f15b9) — 그래도 리뷰 대상에서 빠지지 않는다
+    assert.match(r.reviewDiff, /\[공용 기록 문서 — [^\]]*직접 열어 확인: _bmad-output\/implementation-artifacts\/deferred-work\.md\]/)
+    assert.match(r.reviewDiff, /^diff --git a\/_bmad-output\/implementation-artifacts\/2-1-a\.md /m)
+    // 공용 기록 문서는 파일별 필수 열람이 아니다(Claude 리뷰 required 와 같은 규칙) — 스토리·diff 만 연 clean 이 통과한다
+    assert.ok(!/변경 구현 파일\(\d+건 중 0건 열람\)/.test(r.out), r.out.slice(-1500))
     assert.ok(!r.reviewDiff.includes('ledger only'), '엔진 장부(auto-pipeline-logs)는 계속 리뷰 밖')
     assert.ok(!/리뷰 대상 diff 가 비어/.test(r.out))
   })

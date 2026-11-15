@@ -1056,7 +1056,10 @@ function applyCodexReview(story, res, w) {
   // (#12) 「파일을 하나도 안 읽고 clean」을 가려내려면 열람 증거 재료를 반드시 넘겨야 한다 — 안 넘기면
   // validateReviewRun 이 명령 개수만으로 통과시키고 경고만 남긴다(호출부 배선 누락).
   const ri = w.reviewInputs ?? {};
-  const v = validateReviewRun({ json, events: res.events, diffEmpty: false, storyFile: ri.storyFile ?? "", diffFile: ri.diffFile ?? "", changedFiles: ri.changedFiles ?? [] });
+  // 공용 기록 문서(deferred-work·sprint-status 등 · isSharedDocPath)는 파일별 필수 열람에서 뺀다 — Claude 리뷰 required(2026-10-06)와 같은 규칙.
+  // 종전엔 Codex 쪽만 넣어, 바뀐 것이 기록 문서뿐인 스토리는 「변경 구현 파일 0건 열람」으로 clean 이 거부됐다(2026-11-16 1-193 기록 정리 스토리 재현).
+  const requiredImpl = (ri.changedFiles ?? []).filter((f) => !isSharedDocPath(f, ri.storyFile ?? ""));
+  const v = validateReviewRun({ json, events: res.events, diffEmpty: false, storyFile: ri.storyFile ?? "", diffFile: ri.diffFile ?? "", changedFiles: requiredImpl });
   if (!v.ok) return { ok: false, why: v.why };
   for (const msg of v.warnings) note(`⚠ [${story}] Codex 리뷰: ${msg}`);
   const storyFile = findStoryFile(story);
