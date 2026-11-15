@@ -144,7 +144,7 @@ async function accountBoundary() {
   if (!sw.switched) { if (sw.reason) console.log(`[ACCOUNT] 전환 안 함 — ${sw.reason}`); return }
   if (CFG.usageProbe === false) return
   const probed = await probeUsage({ stateDir: STATE_DIR })
-  console.log(probed.usage ? `${usageLine(probed.usage)}${probed.clears?.length ? ` → 지난 한도 해제 ${probed.clears.join(',')}` : ''}` : usageLine(null))
+  console.log(probed.usage ? `${usageLine(probed.usage)}${probed.clears?.length ? ` → 지난 한도 해제 ${probed.clears.join(',')}` : ''}` : usageLine(null, probed.reason))
 }
 /** 쓴 뒤 저장 — Claude 실행기가 끝날 때마다 CLI 가 갱신했을 토큰을 풀에 되돌려 놓는다. 실패는 경고만(밤을 세우지 않는다). */
 const accountSaveBackQuiet = () => (ACCOUNTS ? accountSaveBack({ stateDir: STATE_DIR }).then((r) => { if (!r.ok) console.log(`⚠ [ACCOUNT] 쓴 뒤 저장 실패 — ${r.reason}`) }, (e) => console.log(`⚠ [ACCOUNT] 쓴 뒤 저장 오류 — ${String(e?.message ?? e).slice(0, 200)}`)) : Promise.resolve())
@@ -967,7 +967,7 @@ async function applyOrchestrator(q, outPath) {
   if (CFG.usageProbe !== false && !process.env.AUTO_PLAN_RUNNER_STUB) {
     const probed = await probeUsage({ stateDir: STATE_DIR })
     if (probed.usage) console.log(`${usageLine(probed.usage)}${probed.blocks.length ? ` → 라우팅 제외 ${probed.blocks.map((b) => b.model).join(',')}` : ''}${probed.clears?.length ? ` → 지난 한도 해제 ${probed.clears.join(',')}` : ''}`)
-    else console.log(usageLine(null))
+    else console.log(usageLine(null, probed.reason))
   }
   const ladder = (process.env.AUTO_PLAN_RUNNER_STUB ? [ORCH.model] : ORCH.ladder)
     .filter((m) => !CFG.modelPolicy?.enabled || (!(CFG.exhaustedModels ?? []).includes(m) && !readModelHealth(STATE_DIR).blocked(m)))

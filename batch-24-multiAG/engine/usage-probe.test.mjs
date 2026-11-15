@@ -6,7 +6,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   normalizeUsage, usageBlocks, applyUsageToHealth, reclassifySpend, fetchClaudeUsage, usageLine,
-  writeUsageSnapshot, readUsageSnapshot, probeUsage, readOauthToken, CLAUDE_MODELS, usageClears, applyUsageClears,
+  writeUsageSnapshot, readUsageSnapshot, probeUsage, readOauthToken, CLAUDE_MODELS, usageClears, applyUsageClears, fetchClaudeUsageResult, refreshViaCli,
 } from './runtime/usage-probe.mjs';
 import { readModelHealth, recordModelEvent } from './runtime/model-health.mjs';
 import { StageRouter } from './runtime/stage-router.mjs';
@@ -134,7 +134,7 @@ test('probeUsage: 조회 → 스냅샷 → health 한 번에 · 비활성/실패
   assert.equal(readUsageSnapshot(stateDir, { now: NOW }).sevenDay.pct, 52);
   assert.equal(readModelHealth(stateDir, NOW + 1).blocked('fable'), true);
   assert.deepEqual(await probeUsage({ stateDir, enabled: false }), { usage: null, blocks: [], skipped: true });
-  assert.deepEqual(await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: async () => { throw new Error('offline'); } }), { usage: null, blocks: [] });
+  assert.deepEqual(await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: async () => { throw new Error('offline'); } }), { usage: null, blocks: [], reason: 'network' });
 });
 
 test('usageLine: 사람이 읽는 한 줄 — 모델별 🔴 · 크레딧 · 토큰 없음', () => {
@@ -227,7 +227,7 @@ test('clear (2): limit 뒤 측정 실패(조회 실패·값 없음) → clear �
   const stateDir = mkdtempSync(join(tmpdir(), 'usage-clear-2-'));
   await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf(FULL()), now: T0 });
   const failed = await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: async () => { throw new Error('offline'); }, now: T0 + 60_000 });
-  assert.deepEqual(failed, { usage: null, blocks: [] });
+  assert.deepEqual(failed, { usage: null, blocks: [], reason: 'network' });
   const empty = await probeUsage({ stateDir, token: FAKE_TOKEN, fetchImpl: fetchOf({ limits: [{ kind: 'weekly_all', percent: 19 }] }), now: T0 + 120_000 });
   assert.deepEqual(empty.clears, [], '세션 값이 없으면(null) 측정 실패로 본다');
   assert.equal(healthFiles(stateDir).filter((e) => e.kind === 'clear').length, 0);
@@ -287,4 +287,115 @@ test('clear (5): clear 뒤 다시 100% → limit 이 다시 막는다', async ()
 test('배선: run-night 의 [USAGE] 줄은 지난 한도 해제를 함께 적는다', () => {
   const runNight = readFileSync(join(HERE, 'run-night.mjs'), 'utf8');
   assert.match(runNight, /probed\.clears\?\.length \? ` → 지난 한도 해제 \$\{probed\.clears\.join\(','\)\}`/);
+});
+
+// ── 2026-11-14 결함 2건 — ⓐ 유휴 중 토큰 만료가 「조회 실패(토큰 없음/네트워크)」 한 문구로 접혀 원인을 알 수 없었고
+//    갱신도 하지 않았다 ⓑ 세션(5시간) 한도가 없는 계정의 실응답(five_hour: null · limits 에 session 항목 없음)을
+//    「측정 실패」로 읽어 「세션 —」이 늘 비고 usageClears 가 늘 [] 였다(지난 한도 해제가 한 번도 안 됨).
+/** 2026-11-14 실응답의 모양(필드 이름·값만 · 토큰 없음): five_hour null · session 항목 없음 · 주간 78 · Fable 36. */
+const PAYLOAD_1114 = () => ({
+  five_hour: null,
+  seven_day: { utilization: 78, resets_at: WEEKLY_RESET, limit_dollars: null, used_dollars: null, remaining_dollars: null, locked_reason: null },
+  seven_day_opus: null, seven_day_sonnet: null,
+  extra_usage: { is_enabled: false, monthly_limit: null, used_credits: null, utilization: null, user_disabled: true, spend_limit_reached: false, credits_ever_enabled: true },
+  limits: [
+    { kind: 'weekly_all', group: 'weekly', percent: 78, severity: 'warning', resets_at: WEEKLY_RESET, scope: null, is_active: true },
+    { kind: 'weekly_scoped', group: 'weekly', percent: 36, severity: 'normal', resets_at: WEEKLY_RESET, scope: { model: { id: null, display_name: 'Fable' }, surface: null }, is_active: false },
+  ],
+});
+
+test('ⓑ 세션 한도 없음(five_hour: null · session 항목 없음)은 측정 실패가 아니다 — 지난 한도를 풀고 줄에 「세션 한도 없음」', () => {
+  const u = normalizeUsage(PAYLOAD_1114(), NOW);
+  assert.equal(u.fiveHour.pct, null, '값을 0 으로 꾸미지 않는다');
+  assert.equal(u.fiveHour.none, true, '응답이 세션 칸을 null 로 명시했다 = 세션 한도 없음');
+  assert.equal(u.sevenDay.pct, 78);
+  assert.deepEqual(usageClears(u), [...CLAUDE_MODELS]);
+  assert.deepEqual(usageBlocks(u, { now: NOW }), []);
+  assert.match(usageLine(u), /세션 한도 없음/);
+  assert.doesNotMatch(usageLine(u), /세션 —/);
+  // 응답에 세션 칸 자체가 없거나(빈 응답) 세션 항목이 있는데 값이 비면 여전히 측정 실패다.
+  assert.notEqual(normalizeUsage({}).fiveHour.none, true);
+  assert.deepEqual(usageClears(normalizeUsage({ ...PAYLOAD_1114(), five_hour: undefined })), []);
+  const brokenSession = PAYLOAD_1114();
+  brokenSession.limits.unshift({ kind: 'session', percent: null, resets_at: null });
+  assert.deepEqual(usageClears(normalizeUsage(brokenSession)), [], 'session 항목이 있는데 값이 비면 풀지 않는다');
+});
+
+test('ⓑ applyUsageClears: 세션 한도 없는 계정에서도 지난 limit 을 푼다', () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'usage-none-'));
+  recordModelEvent(stateDir, { model: 'opus', kind: 'limit', now: NOW - 1000, retryAt: NOW + 3_600_000, role: 'test' });
+  const cleared = applyUsageClears(stateDir, normalizeUsage(PAYLOAD_1114(), NOW), { now: NOW });
+  assert.deepEqual(cleared.map((e) => e.model), ['opus']);
+  assert.match(cleared[0].detail, /세션 한도 없음/);
+  assert.equal(readModelHealth(stateDir, NOW + 1).blocked('opus'), false);
+});
+
+const credFile = (oauth) => {
+  const dir = mkdtempSync(join(tmpdir(), 'usage-cred-exp-'));
+  const file = join(dir, '.credentials.json');
+  writeFileSync(file, JSON.stringify({ claudeAiOauth: oauth }));
+  return file;
+};
+const FRESH_TOKEN = 'sk-ant-oat01-FRESH-TOKEN-AFTER-REFRESH-0123456789';
+
+test('ⓐ 자격 파일 토큰이 만료됐으면 조회 전에 한 번 갱신하고 새 토큰으로 읽는다', async () => {
+  const file = credFile({ accessToken: FAKE_TOKEN, expiresAt: NOW - 60_000 });
+  let refreshed = 0; let auth = null;
+  const r = await fetchClaudeUsageResult({
+    credentialsPath: file, now: NOW,
+    refresh: () => { refreshed += 1; writeFileSync(file, JSON.stringify({ claudeAiOauth: { accessToken: FRESH_TOKEN, expiresAt: NOW + 3_600_000 } })); return true; },
+    fetchImpl: async (_u, init) => { auth = init.headers.Authorization; return { status: 200, json: async () => PAYLOAD() }; },
+  });
+  assert.equal(refreshed, 1);
+  assert.equal(auth, `Bearer ${FRESH_TOKEN}`);
+  assert.equal(r.reason, null);
+  assert.equal(r.refreshed, true);
+  assert.equal(r.usage.sevenDay.pct, 52);
+});
+
+test('ⓐ 실패 사유를 나눈다 — 토큰 없음 / 만료(갱신 실패) / HTTP 코드 / 시간 초과 / 네트워크 · 사유·줄에 토큰 없음', async () => {
+  const ok = async () => ({ status: 200, json: async () => PAYLOAD() });
+  const reasonOf = async (opts) => (await fetchClaudeUsageResult({ now: NOW, ...opts })).reason;
+  assert.equal(await reasonOf({ token: null, fetchImpl: ok }), 'no-token');
+  let called = 0;
+  assert.equal(await reasonOf({ credentialsPath: credFile({ accessToken: FAKE_TOKEN, expiresAt: NOW - 1 }), refresh: () => false,
+    fetchImpl: async () => { called += 1; return ok(); } }), 'expired');
+  assert.equal(called, 0, '갱신이 안 됐으면 만료 토큰으로 조회하지 않는다');
+  assert.equal(await reasonOf({ token: FAKE_TOKEN, fetchImpl: async () => ({ status: 401, json: async () => ({}) }) }), 'http-401');
+  assert.equal(await reasonOf({ token: FAKE_TOKEN, fetchImpl: async () => ({ status: 429, json: async () => ({}) }) }), 'http-429');
+  assert.equal(await reasonOf({ token: FAKE_TOKEN, timeoutMs: 5, fetchImpl: (_u, init) => new Promise((_res, rej) => init.signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' })))) }), 'timeout');
+  assert.equal(await reasonOf({ token: FAKE_TOKEN, fetchImpl: async () => { throw new TypeError(`fetch failed ${FAKE_TOKEN}`); } }), 'network');
+  for (const reason of ['no-token', 'expired', 'http-401', 'timeout', 'network']) {
+    const line = usageLine(null, reason);
+    assert.doesNotMatch(line, /sk-ant|Bearer/);
+    assert.doesNotMatch(line, /토큰 없음\/네트워크/, '한 문구로 접지 않는다');
+  }
+  assert.match(usageLine(null, 'no-token'), /토큰 없음/);
+  assert.match(usageLine(null, 'expired'), /만료/);
+  assert.match(usageLine(null, 'http-401'), /HTTP 401/);
+  assert.match(usageLine(null, 'timeout'), /시간 초과/);
+  assert.match(usageLine(null, 'network'), /네트워크/);
+  // 명시 토큰(계정 풀의 다른 계정)은 갱신하지 않는다 — 지금 CLI 계정을 갱신해 봐야 그 토큰은 그대로다.
+  let refreshCalls = 0;
+  await fetchClaudeUsageResult({ token: FAKE_TOKEN, now: NOW, refresh: () => { refreshCalls += 1; return true; }, fetchImpl: ok });
+  assert.equal(refreshCalls, 0);
+});
+
+test('ⓐ probeUsage 는 실패 사유를 돌려주고, run-night 는 그 사유로 줄을 찍는다', async () => {
+  const r = await probeUsage({ stateDir: mkdtempSync(join(tmpdir(), 'usage-reason-')), token: FAKE_TOKEN, fetchImpl: async () => ({ status: 403, json: async () => ({}) }) });
+  assert.equal(r.usage, null);
+  assert.equal(r.reason, 'http-403');
+  const runNight = readFileSync(join(HERE, 'run-night.mjs'), 'utf8');
+  assert.doesNotMatch(runNight, /usageLine\(null\)/, '사유 없이 찍는 곳이 남지 않는다');
+  assert.match(runNight, /usageLine\(null, probed\.reason\)/);
+});
+
+test('ⓐ refreshViaCli: 가벼운 CLI 한 번 · 출력은 버린다 · 실패/예외는 false', () => {
+  let seen = null;
+  assert.equal(refreshViaCli({ claudeBin: 'claude-stub', run: (bin, args, o) => { seen = { bin, args, stdio: o.stdio }; return { status: 0 }; } }), true);
+  assert.equal(seen.bin, 'claude-stub');
+  assert.deepEqual(seen.args.slice(0, 2), ['-p', 'ok']);
+  assert.deepEqual(seen.stdio, ['ignore', 'ignore', 'ignore'], '출력(토큰이 섞일 수 있는 것)을 받지 않는다');
+  assert.equal(refreshViaCli({ run: () => ({ status: 1 }) }), false);
+  assert.equal(refreshViaCli({ run: () => { throw new Error('ENOENT'); } }), false);
 });
