@@ -148,6 +148,11 @@ export function isLogArtifactPath(p) {
   if (!u.includes('auto-pipeline-logs/')) return false
   return !LOG_LEDGER_KEEP_RE.test(u.slice(u.lastIndexOf('/') + 1))
 }
+/** 로그 폴더의 배치 매니페스트(`batch-*-manifest.json`)인가 — 장부라 보존 커밋에는 싣지만, 이름이 배치마다 새것이라
+ *  **미추적**으로 남은 것은 남의 미완 작업이 아니다(2026-11-15 실사고: 슬롯이 보존 커밋 전에 죽어 남은 매니페스트가 새로고침을 막았다). */
+export function isBatchManifestPath(p) {
+  return /(^|\/)auto-pipeline-logs\/batch-[^/]+-manifest\.json$/.test(String(p ?? '').replaceAll('\\', '/'))
+}
 
 /** 공유 장부 파일 — 거의 모든 dev 가 함께 고치는 문서. File List 겹침 판정에서 제외한다
  *  (landing 의 cherry-pick 3-way 가 줄 단위로 합치고, 충돌 나면 그 스토리만 landing 실패 폴백). */
@@ -781,6 +786,27 @@ export function blockedProviderFromExit(info) {
   if (!info || typeof info !== 'object') return null
   if (!['limit', 'auth', 'spend'].includes(info.kind)) return null
   return info.provider === 'codex' ? 'codex' : info.provider === 'claude' ? 'claude' : null
+}
+
+/** 감시자 「구현자 기록 부재」 서명을 슬롯 출력에서 되살린다(순수).
+ *  엔진은 exit 5 와 함께 exit-info.json(why: missing implementation provenance)을 남기지만 그 부기는 러너 본 폴더가 아니라
+ *  실행 폴더에 남거나 다음 스토리 부기에 덮여, 감시자는 「- **중단(exit 5)**: 마감 재검수 — <제목>」 한 줄만 서명으로 봤다 —
+ *  플레이북 정규식이 그 줄에서 원인 문구를 못 찾아 12시간 넘게 복원이 돌지 않았다(2026-11-15 4-74 실사고).
+ *  마지막 슬롯(`워크트리 기준:` 줄 이후)의 마지막 exit 5 중단 줄 바로 앞(같은 스토리 구간)에 엔진의
+ *  「⏸ [<키>] review: 실제 구현자 모델 기록이 없어 …」 줄이 있으면 그 스토리 키를 돌려준다. 없으면 null. */
+export function provenanceStopFromSlots(lines = []) {
+  const arr = Array.isArray(lines) ? lines : []
+  let from = 0
+  for (let i = arr.length - 1; i >= 0; i--) if (/^워크트리 기준: /.test(arr[i])) { from = i; break }
+  let stop = -1
+  for (let i = arr.length - 1; i >= from; i--) if (/\*\*중단\(exit \d+\)\*\*/.test(arr[i])) { stop = i; break }
+  if (stop < 0 || !/\*\*중단\(exit 5\)\*\*/.test(arr[stop])) return null
+  for (let i = stop - 1; i >= from; i--) {
+    if (/^─+ STORY /.test(arr[i]) || /\*\*중단\(exit \d+\)\*\*/.test(arr[i])) return null
+    const m = /^⏸ \[([^\]]+)\] review: 실제 구현자 모델 기록이 없어/.exec(arr[i])
+    if (m) return { story: m[1] }
+  }
+  return null
 }
 
 /** 감시자 플레이북 「구현자 기록 부재」의 state.json 복원(순수 · st 를 직접 고친다).

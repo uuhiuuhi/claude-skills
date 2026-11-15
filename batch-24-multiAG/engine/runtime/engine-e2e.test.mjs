@@ -440,6 +440,28 @@ describe('[engine-e2e][#2] baseline 폴백 diff 도 마스킹된다 — 최종 d
   })
 })
 
+// ── 2026-11-15 1-193 실사고 — 기록 정리 스토리가 baseline_commit 없이 만들어져 리뷰 대상 0(exit 4)이 매 슬롯 반복 ──────────
+describe('[engine-e2e][기준점 없음] baseline_commit 이 없으면 스토리 파일을 처음 추가한 커밋의 부모부터 리뷰한다 · 문서 전용 변경도 리뷰 대상', { timeout: 180_000 }, () => {
+  it('워킹트리 clean + baseline 없음 + 바뀐 파일이 스토리 md·deferred-work·sprint-status 뿐 → 그 문서 diff 가 codex 리뷰로 간다', () => {
+    const fx = makeFixture({ stories: {} })
+    // 스토리 등재 + 기록 정리 작업이 이미 커밋됐다(STOP 잔여물 보존 커밋과 같은 모양) — frontmatter 에 baseline_commit 이 없다
+    writeFileSync(join(fx.art, '2-1-a.md'), STORY('2-1-a', '_bmad-output/implementation-artifacts/deferred-work.md').replace('Status: ready-for-dev', 'Status: review'))
+    writeFileSync(join(fx.art, 'sprint-status.yaml'), 'last_updated: 2026-11-15\ndevelopment_status:\n  2-1-a: review\n')
+    writeFileSync(join(fx.art, 'deferred-work.md'), '# Deferred\n\n- ~~이미 고친 줄~~ — ✅ 해소(2026-11-15 · Story 2-1-a)\n')
+    writeFileSync(join(fx.art, 'auto-pipeline-logs', 'run-summary.log'), 'ledger only\n')
+    ok(git(fx.proj, ['add', '-A']), 'add')
+    ok(git(fx.proj, ['commit', '-q', '-m', 'STOP 잔여물 보존 — 2-1-a']), 'commit')
+    const r = runEngine(fx, { args: ['--stages', 'review', '--review-model', 'codex'] })
+    assert.equal(r.status, 0, r.out.slice(-2000))
+    assert.match(r.out, /baseline_commit 없음 — 스토리 파일을 처음 추가한 커밋\([0-9a-f]{7}\)의 부모 [0-9a-f]{7} 를 기준점으로 쓴다/)
+    assert.match(r.prompt, /\.\.HEAD/, 'baseline 폴백 경로여야 한다')
+    assert.match(r.reviewDiff, /deferred-work\.md/)
+    assert.match(r.reviewDiff, /이미 고친 줄/)
+    assert.ok(!r.reviewDiff.includes('ledger only'), '엔진 장부(auto-pipeline-logs)는 계속 리뷰 밖')
+    assert.ok(!/리뷰 대상 diff 가 비어/.test(r.out))
+  })
+})
+
 // ── 리뷰 diff 범위(2026-10-02 5-18·4-18 오귀속 실사고) — 같은 갈래의 다른 활성 스토리 소유 파일은 리뷰 범위 밖 ──────────
 describe('[engine-e2e][범위] baseline..HEAD 에 섞인 다른 활성 스토리의 File List 파일은 리뷰 diff 에서 빠진다', { timeout: 180_000 }, () => {
   const setup = () => {

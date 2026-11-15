@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { inheritPlan, isLogArtifactPath } from './runner-rules.mjs'
+import { inheritPlan, isBatchManifestPath, isLogArtifactPath } from './runner-rules.mjs'
 import { isProjectOwned, toolingChanged } from './runtime-pin.mjs'
 import { isDeniedPath, secretHits } from './runtime/push-guard.mjs'
 
@@ -39,7 +39,9 @@ export function refreshWorktree({ cwd = process.cwd(), branch, date, dryRun = fa
     const entries = git(['status', '--porcelain=v1', '-z', '--untracked-files=all']).stdout.split('\0').filter(Boolean)
     // (2026-10-28) 로그 폴더의 **미추적** 산출 로그(장부 제외 · runner-rules.isLogArtifactPath)는 미완 작업이 아니다 — 무인 커밋이
     // 더 이상 싣지 않으므로(러너 .git 10GB 실사고) 트리에 남는 것이 정상이고, 이걸 거부하면 모든 슬롯이 선다.
-    const dirty = entries.filter((entry) => entry !== '?? .auto-batch-worktree' && !(entry.startsWith('?? ') && isLogArtifactPath(entry.slice(3))))
+    // (2026-11-15) 미추적 배치 매니페스트도 같다 — 중단된 슬롯이 보존 커밋 전에 죽으면 남는다(이름이 배치마다 새것 · 다음 보존 커밋이 싣는다).
+    // 추적 중인 장부(state.json 등)의 **수정**은 종전대로 미완 작업으로 막는다.
+    const dirty = entries.filter((entry) => entry !== '?? .auto-batch-worktree' && !(entry.startsWith('?? ') && (isLogArtifactPath(entry.slice(3)) || isBatchManifestPath(entry.slice(3)))))
     if (dirty.length) throw new Error(`worktree refresh: unfinished changes preserved in place (${dirty.length} entries); finish or review them before restarting`)
   }
   clean()

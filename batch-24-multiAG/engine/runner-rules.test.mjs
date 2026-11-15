@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { limitNoWorkKeys, SOFT_STOP_CONTINUE_MAX, isStoryLevelStop, shouldArchiveEvidence, evidenceLogKeep, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, resolveSprintStatusConflict, SPRINT_STATUS_PATH, mergeStateJson, waitAuthMin , orchestratorLadder, shouldLadderOn, restoreDevProvenance, isLogArtifactPath, LOG_LEDGER_KEEP_RE } from './runner-rules.mjs'
+import { limitNoWorkKeys, SOFT_STOP_CONTINUE_MAX, isStoryLevelStop, shouldArchiveEvidence, evidenceLogKeep, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, resolveSprintStatusConflict, SPRINT_STATUS_PATH, mergeStateJson, waitAuthMin , orchestratorLadder, shouldLadderOn, restoreDevProvenance, provenanceStopFromSlots, isLogArtifactPath, LOG_LEDGER_KEEP_RE } from './runner-rules.mjs'
 
 const RUN_NIGHT_URL = new URL('./run-night.mjs', import.meta.url)
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -704,5 +704,25 @@ describe('isLogArtifactPath — 로그 폴더의 새 산출 로그는 무인 커
     assert.equal(isLogArtifactPath('_bmad-output/implementation-artifacts/2-1.md'), false)
     assert.equal(isLogArtifactPath(L.replaceAll('/', '\\') + '2-1-dev.log'), true, '역슬래시 경로')
     assert.ok(LOG_LEDGER_KEEP_RE.test('state.json'))
+  })
+})
+
+describe('provenanceStopFromSlots — exit-info 없이도 슬롯 출력에서 「구현자 기록 부재」를 알아본다(2026-11-15 4-74 실사고)', () => {
+  const K = '4-74-점검표-양식-편집-저장-실패-안내가-없는-단추를-가리키는-것-수리'
+  const slot = (tail) => ['워크트리 기준: auto/2026-11-15', '# 야간 배치 2026-11-15 — 라운드 1', `──────── STORY ${K} ────────`, ...tail]
+  it('마지막 exit 5 중단 줄 바로 앞의 「⏸ [키] review: 실제 구현자 모델 기록이 없어」 → 스토리 키', () => {
+    const lines = slot([`⏸ [${K}] review: 실제 구현자 모델 기록이 없어 교차 제공자 리뷰를 증명할 수 없다`, '- 배치 매니페스트: x', '- **중단(exit 5)**: 마감 재검수 — 4-74 점검표 양식 저장 실패 안내'])
+    assert.deepEqual(provenanceStopFromSlots(lines), { story: K })
+  })
+  it('마지막 중단이 다른 원인·다른 exit 이거나, 원인 줄이 다른 스토리 구간·이전 슬롯에 있으면 null', () => {
+    assert.equal(provenanceStopFromSlots(slot([`⏸ [${K}] review: 실제 구현자 모델 기록이 없어 …`, '- **중단(exit 5)**: a', '──────── STORY 1-1-x ────────', '- **중단(exit 1)**: b'])), null)
+    assert.equal(provenanceStopFromSlots(slot(['⏸ [1-1-x] review: no eligible model; shared cooldown applies', '- **중단(exit 5)**: a'])), null)
+    assert.equal(provenanceStopFromSlots([`⏸ [${K}] review: 실제 구현자 모델 기록이 없어 …`, '- **중단(exit 5)**: a', '워크트리 기준: auto/2026-11-15', '# 야간 배치 — 라운드 1']), null)
+    assert.equal(provenanceStopFromSlots([]), null)
+  })
+  it('감시자는 이 서명을 플레이북 「구현자 기록 부재」로 넘긴다(exit-info 가 없을 때 대신 쓴다)', () => {
+    const wd = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'watchdog.mjs'), 'utf8')
+    assert.match(wd, /provenanceStopFromSlots\(slots\)/)
+    assert.match(wd, /why: 'missing implementation provenance'/)
   })
 })

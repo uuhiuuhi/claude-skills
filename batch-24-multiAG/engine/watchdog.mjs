@@ -29,7 +29,7 @@ import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { lockDead, restoreDevProvenance, stopBlocked, stopWindowId, telegramCurlRequest, telegramSent } from './runner-rules.mjs'
+import { lockDead, provenanceStopFromSlots, restoreDevProvenance, stopBlocked, stopWindowId, telegramCurlRequest, telegramSent } from './runner-rules.mjs'
 import { dirtyPaths, parsePorcelainZ, preserveRunReport, preserveStopLeftovers, unstageNewLogArtifacts } from './worktree-refresh.mjs'
 
 const args = process.argv.slice(2)
@@ -102,7 +102,7 @@ function pruneEvidence() {
 const wd = readJson(WD_STATE, { repeats: {}, fixed: {}, gated: {}, lastRoundAt: null })
 const exitInfoRaw = readJson(join(LOGS, 'exit-info.json'))
 // exit 8(리뷰 대기·회수 대기)은 정지가 아니라 다음 편성의 몫 — 반복으로 세면 정상 왕복(마감 재검수↔회수)에 진단 세션을 부른다(2026-09-10 회수 대기 도입과 함께).
-const exitInfo = exitInfoRaw && Number(exitInfoRaw.code) === 8 ? null : exitInfoRaw
+const exitInfoBase = exitInfoRaw && Number(exitInfoRaw.code) === 8 ? null : exitInfoRaw
 const LOCK_PATH = join(STATE_DIR, 'runner.lock')
 /** run-night readLockInfo 와 같은 판정 — ESRCH 만 사망 · EPERM 등은 판정 불능('unknown'). */
 function readLockInfo() {
@@ -132,6 +132,13 @@ const lastHold = slots.filter((l) => /^⏸ \[|^✖ |^⚠ /.test(l)).pop() ?? ''
 const slotsMtimeMin = existsSync(join(STATE_DIR, 'slots.log')) ? (Date.now() - statSync(join(STATE_DIR, 'slots.log')).mtimeMs) / 60000 : 9999
 const taskInfo = ps(`Get-ScheduledTaskInfo -TaskName ${RUNNER_TASK} | ForEach-Object { $_.LastRunTime.ToString('s') + '|' + $_.NextRunTime.ToString('s') + '|' + $_.LastTaskResult }`).stdout.trim()
 const taskState = ps(`(Get-ScheduledTask -TaskName ${RUNNER_TASK}).State`).stdout.trim()
+// 부기가 없는데 마지막 슬롯의 exit 5 가 「구현자 기록 부재」였으면 같은 부기로 되살린다 — at = 이번 슬롯 시작(새 슬롯마다 반복 +1).
+// 종전엔 서명이 「- **중단(exit 5)**: 마감 재검수 — 제목」 줄뿐이라 플레이북이 못 잡고 반복도 늘지 않았다(2026-11-15 4-74 12시간 정지).
+const provenanceStop = exitInfoBase ? null : provenanceStopFromSlots(slots)
+const provenanceAt = provenanceStop && taskInfo ? new Date(taskInfo.split('|')[0]) : null
+const exitInfo = exitInfoBase ?? (provenanceStop && provenanceAt && !Number.isNaN(provenanceAt.getTime())
+  ? { code: 5, kind: 'routing-blocked', story: provenanceStop.story, stage: 'review', why: 'missing implementation provenance', at: provenanceAt.toISOString(), from: 'slots.log' }
+  : null)
 
 // 정지 서명 — 엔진이 부기(exit-info.json)를 남기지 못하는 정지(워크트리 새로고침 거부 · 커밋 가드 · 핀 불일치 = 엔진 진입 전)는
 // 슬롯 출력의 마지막 ✖ 줄이 서명이다(09-10 새벽 실사고: 「divergent or unrelated refs」 exit 3 이 10슬롯 반복됐는데 부기는 옛 것이라 「정상」 판정).

@@ -101,7 +101,7 @@ import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWo
 import { detectGates, parseQaChain, classifyQaFailure, repairDecision, buildVerificationManifest, escalationReport, compactQualityLedger } from "./quality-rules.mjs";
 
 import { fingerprint as qualityFingerprint, qualityRunOutcome, qualityFailureKind } from './quality-gates.mjs';
-import { readRecord } from './schema-migration.mjs';
+import { readRecord, writeFileAtomic } from './schema-migration.mjs';
 import { acquireQaMutex } from './qa-mutex.mjs';
 const SKILL_DIR = dirname(fileURLToPath(import.meta.url));
 const CODEX_REVIEW_SCHEMA = join(SKILL_DIR, "providers", "codex-review.schema.json");
@@ -317,7 +317,7 @@ function markDone(story, stage) {
     };
   }
   state.schema = "batch-24-multiag/state/1";
-  writeFileSync(stateFile, JSON.stringify(state, null, 2));
+  writeFileAtomic(stateFile, JSON.stringify(state, null, 2));
 }
 function invalidate(story, ...downstream) {
   if (dryRun) return;
@@ -328,7 +328,7 @@ function invalidate(story, ...downstream) {
   if (downstream.includes('qa')) delete state.quality?.[story];
   if (downstream.includes('review')) delete state.reviews?.[story];
   state.schema = "batch-24-multiag/state/1";
-  writeFileSync(stateFile, JSON.stringify(state, null, 2));
+  writeFileAtomic(stateFile, JSON.stringify(state, null, 2));
 }
 
 // ---- (U2) 사후조건: 스토리 산출물 확인 ----
@@ -952,7 +952,17 @@ function collectReviewDiff(story, storyFile, scoped) {
   if (!diff.trim() && storyFile) {
     // 이미 커밋된 라운드(재검수 등) — 스토리 frontmatter 의 baseline_commit 부터 HEAD 까지. 폴백 경로도 같은 규율이다
     // (종전에는 여기서 마스킹 **이후**에 원문 diff 로 덮어써 `sk-…`·URL 자격증명이 그대로 나갔다).
-    const base = /^baseline_commit:\s*([0-9a-f]{7,40})/m.exec(readFileSync(storyFile, "utf8"))?.[1];
+    // baseline_commit 이 없으면 그 스토리 파일을 처음 추가한 커밋의 부모를 쓴다 — 스토리 작업은 파일 등재 뒤에만 생기므로 그 부모..HEAD 가
+    // 이 스토리의 변경 전부를 덮는다(2026-11-15 1-193 실사고: 기록 정리 스토리가 baseline 없이 만들어져 리뷰 대상 0 → exit 4 가 매 슬롯 반복).
+    let base = /^baseline_commit:\s*([0-9a-f]{7,40})/m.exec(readFileSync(storyFile, "utf8"))?.[1];
+    if (!base) {
+      const added = splitLines(git(["log", "--diff-filter=A", "--format=%H", "--", storyFile]).out).pop();
+      const parent = added ? git(["rev-parse", "--verify", "-q", `${added}^`]) : null;
+      if (parent?.code === 0 && parent.out.trim()) {
+        base = parent.out.trim();
+        note(`⚠ [${story}] review: baseline_commit 없음 — 스토리 파일을 처음 추가한 커밋(${added.slice(0, 7)})의 부모 ${base.slice(0, 7)} 를 기준점으로 쓴다`);
+      }
+    }
     if (base && git(["cat-file", "-e", `${base}^{commit}`]).code === 0) {
       excludedByOwner = []; owners = []; // 이 단계의 범위로 다시 판정한다
       const committed = splitLines(git(["diff", "--name-only", `${base}..HEAD`, "--"]).out).filter((f) => !isLedgerPath(f));
@@ -1601,7 +1611,7 @@ function runRoutedStage(stage, story, variant) {
           state.reviews[story] = { fingerprint: codeFingerprint(), result: reviewResults[story] };
         }
         state.schema = "batch-24-multiag/state/1";
-  writeFileSync(stateFile, JSON.stringify(state, null, 2));
+  writeFileAtomic(stateFile, JSON.stringify(state, null, 2));
       }
       return;
     }

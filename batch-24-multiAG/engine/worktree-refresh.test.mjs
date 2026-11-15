@@ -670,3 +670,24 @@ test('(2026-11-01) 러너 갈래가 아니면(detached·main) 복원분 커밋�
   assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir: join(f.cwd, state), message: 'x' }), { skipped: 'not-on-runner-branch', branch: 'HEAD' })
   assert.equal(f.git('rev-parse', 'HEAD'), base)
 })
+
+test('(2026-11-15) 중단된 슬롯이 남긴 미추적 배치 매니페스트는 새로고침을 막지 않는다 — 추적 장부(state.json) 수정은 종전대로 막는다', (t) => {
+  const f = fixture(t)
+  const logDir = '_bmad-output/implementation-artifacts/auto-pipeline-logs'
+  f.write(`${logDir}/state.json`, '{"done":{}}\n')
+  f.commit('tracked ledger baseline')
+  f.git('push', '-q', 'origin', `HEAD:refs/heads/${branch}`)
+  // 슬롯이 preserveRunReport 전에 죽었다 — 배치 매니페스트(장부 형식이지만 이름이 매번 새것)만 미추적으로 남았다
+  f.write(`${logDir}/batch-2026-11-15-1794752368518-manifest.json`, '{"batch":1}\n')
+  const result = f.run()
+  assert.equal(result.ref, `origin/${branch}`)
+  assert.ok(existsSync(join(f.cwd, logDir, 'batch-2026-11-15-1794752368518-manifest.json')), '매니페스트는 지우지 않고 남는다(다음 보존 커밋이 싣는다)')
+  // 추적 중인 장부의 수정은 미완 작업이다 — 여전히 막는다
+  f.write(`${logDir}/state.json`, '{"done":{"x::dev":"1"}}\n')
+  assert.throws(() => f.run(), /unfinished changes preserved in place \(1 entries\)/)
+  // 매니페스트는 장부라 다음 보존 커밋에 실린다(산출 로그처럼 버려지지 않는다)
+  f.git('checkout', '-q', '-B', branch)
+  const r = preserveRunReport({ cwd: f.cwd, logDir })
+  assert.equal(typeof r.committed, 'string', JSON.stringify(r))
+  assert.match(f.git('show', '--name-only', '--format=', 'HEAD'), /batch-2026-11-15-1794752368518-manifest\.json/)
+})

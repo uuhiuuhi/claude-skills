@@ -241,3 +241,28 @@ describe('[engine-guards] 품질 보고서 신선도 · 판정 일치(2026-10-08
     assert.ok(!src.includes("q.policy.coverage.result !== 'pass' ? 'coverage'"))
   })
 })
+
+describe('[engine-guards] state.json 은 원자적으로 쓴다(2026-11-15 ENOSPC 로 0바이트 → 구현자 기록 소실 실사고)', () => {
+  it('state.json 직접 덮어쓰기가 남아 있지 않고 모든 쓰기가 writeFileAtomic 을 거친다', () => {
+    assert.ok(!/writeFileSync\(stateFile\b/.test(src), 'stateFile 직접 writeFileSync 가 남아 있다')
+    assert.ok((src.match(/writeFileAtomic\(stateFile, /g) ?? []).length >= 3)
+    assert.ok(has("import { readRecord, writeFileAtomic } from './schema-migration.mjs';"))
+  })
+  it('writeFileAtomic — 기존 파일을 바꿔 끼우고(Windows rename 덮어쓰기) 임시 파일을 남기지 않는다 · 쓰기 실패면 원본 그대로', async () => {
+    const { mkdtempSync, writeFileSync: wf, readdirSync, readFileSync: rf, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { writeFileAtomic } = await import('./schema-migration.mjs')
+    const dir = mkdtempSync(join(tmpdir(), 'atomic-'))
+    try {
+      const f = join(dir, 'state.json')
+      wf(f, '{"done":{"a::dev":"1"}}')
+      writeFileAtomic(f, '{"done":{"b::dev":"2"}}')
+      assert.equal(rf(f, 'utf8'), '{"done":{"b::dev":"2"}}')
+      assert.deepEqual(readdirSync(dir), ['state.json'])
+      // 임시 파일을 쓸 수 없으면(디스크 가득·경로 없음 대용) 던지고, 원본은 손대지 않는다
+      assert.throws(() => writeFileAtomic(join(dir, 'no-such-dir', 'state.json'), 'x'))
+      assert.equal(rf(f, 'utf8'), '{"done":{"b::dev":"2"}}')
+      assert.deepEqual(readdirSync(dir), ['state.json'])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
