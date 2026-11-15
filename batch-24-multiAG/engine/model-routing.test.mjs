@@ -12,6 +12,7 @@ import { asfCandidates } from './asf-resolve.mjs';
 import { buildCodexCommand } from './runtime/providers/codex.mjs';
 import { buildDag, validatePlan } from './plan-dag.mjs';
 import { parseSprint } from './story-ledger.mjs';
+import { sequentialPolicyFlags } from './runner-rules.mjs';
 
 const providers = { claude: { enabled: true, max: 3 }, codex: { enabled: true, max: 1, roles: ['dev', 'review'] } };
 test('Fable quota is shared across independent routers; Opus runs immediately; reset restores Fable', () => {
@@ -297,4 +298,28 @@ test('reviewMinTier (👤 2026-10-21 「위험도 높은 스토리 검토도 sol
   assert.equal(a.review, 'codex:gpt-5.6-sol');
   const [b] = assignWorkers({ stories: [{ key: 'x' }], providers, config: { modelPolicy: { enabled: true } } });
   assert.equal(b.review, 'codex:gpt-6-astra');
+});
+
+test('순차 경로(수동 큐)도 배치 models 지정을 라우터 선호로 넘긴다 — 2026-11-12 7-23 (sol 구현 · astra 중지 · review=opus) exit 5 회귀', () => {
+  // ① 표식 규칙: 정책이 켜져 있고 배치에 models 지정이 있을 때만 붙는다(지정 없음 = 종전 명령줄 그대로).
+  assert.deepEqual(sequentialPolicyFlags({ enabled: true }, { review: 'opus' }), ['--policy-assigned']);
+  assert.deepEqual(sequentialPolicyFlags({ enabled: true }, {}), []);
+  assert.deepEqual(sequentialPolicyFlags({ enabled: true }, { review: '' }), []);
+  assert.deepEqual(sequentialPolicyFlags({ enabled: true }, undefined), []);
+  assert.deepEqual(sequentialPolicyFlags({ enabled: false }, { review: 'opus' }), []);
+  assert.deepEqual(sequentialPolicyFlags(undefined, { review: 'opus' }), []);
+  // ② 배선: 순차 builder 가 그 표식을 붙이고, 파이프라인은 표식이 있을 때 지정 모델을 선호로 쓴다.
+  const runner = readFileSync(new URL('./run-night.mjs', import.meta.url), 'utf8');
+  assert.match(runner, /args\.push\(\.\.\.routingFlags\(\), \.\.\.sequentialPolicyFlags\(CFG\.modelPolicy, batch\.models\)\)/);
+  assert.match(runner, /a\.push\(\.\.\.routingFlags\(\), \.\.\.\(CFG\.modelPolicy\?\.enabled \? \['--policy-assigned'\] : \[\]\)\)/, '병렬 경로 불변');
+  const pipe = readFileSync(new URL('./runtime/auto-story-pipeline.mjs', import.meta.url), 'utf8');
+  assert.match(pipe, /let preferred = flag\('policy-assigned'\) \? models\[stage\] :/);
+  // ③ 실사고 재현: sol 이 구현 · astra 소진(👤 11-09 중지) · codexDev 꺼짐 — 선호가 비면 검토자 0, opus 를 넘기면 opus.
+  const stateDir = mkdtempSync(join(tmpdir(), 'routing-seq-policy-'));
+  const router = new StageRouter({ stateDir, providers, exhausted: ['codex:gpt-6-astra'], reviewMinTier: 2 });
+  for (const risk of [2, 6]) {
+    const base = { role: 'review', risk, difficulty: 5, avoid: 'codex:gpt-5.6-sol', preferProvider: 'claude' };
+    assert.equal(router.choose({ ...base, preferred: '' }), null, `위험도 ${risk}: 지정이 빠지면 고를 모델 없음(종전 증상)`);
+    assert.equal(router.choose({ ...base, preferred: 'opus' })?.model, 'opus', `위험도 ${risk}: 지정 opus 가 교차 검토자로 골라진다`);
+  }
 });

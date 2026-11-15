@@ -297,6 +297,7 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   }
 
   const judge = (r) => {
+    if (r.optOut) return exclude(r.key, 'sprint-status ⏸ 러너 편성 제외 주석 — 대화형 창 전담'), null
     const section = epicSection(epicsText, r.key)
     if (/⏸|이연 확정/.test(section)) return exclude(r.key, 'epics 이연 확정 문언(⏸) — 편성 제외(규칙 1)'), null
     const text = readIf(join(ART, r.key + '.md'))

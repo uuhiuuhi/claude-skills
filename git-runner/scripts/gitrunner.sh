@@ -25,17 +25,24 @@ if ! mkdir "$LK" 2>/dev/null; then
 fi
 echo $$ > "$LK/pid"; trap 'rm -rf "$LK"' EXIT
 
-REQ=$(ls "$G/queue"/*.json 2>/dev/null | sort | head -1); [ -n "$REQ" ] || exit 0
-# ── 배포 안 하는 시간(👤 2026-11-11): 08:50~12:00 · 13:00~18:10 — 사람이 요청한 건("humanRequested": true)만 처리 · 나머지는 미리 검사 · 배포 가능 시간엔 묻지 않고 바로 진행
+# ── 처리 순서(👤 2026-11-13): 배포 뒤 대화 창이 후속 작업을 기다리는 요청("waitingFollowUp": "<무엇을 기다리나>")을 먼저 · 그 안과 나머지는 이름 순서
+qlist() { local q; for q in $(ls "$G/queue"/*.json 2>/dev/null | sort); do [ -n "$(node "$LIB" get "$q" waitingFollowUp 2>/dev/null)" ] && echo "$q"; done
+  for q in $(ls "$G/queue"/*.json 2>/dev/null | sort); do [ -n "$(node "$LIB" get "$q" waitingFollowUp 2>/dev/null)" ] || echo "$q"; done; }
+REQ=$(qlist | head -1); [ -n "$REQ" ] || exit 0
+# ── 배포 안 하는 시간(👤 2026-11-11 · 끝 18:10→19:00 👤 2026-11-13): 평일 08:50~12:00 · 13:00~19:00 — 사람이 요청한 건("humanRequested": true)만 처리 · 나머지는 미리 검사 · 배포 가능 시간엔 묻지 않고 바로 진행
 HM=$((10#$(date +%H%M)))
-if [ "${QUIET_HOURS:-1}" = 1 ] && { { [ $HM -ge 850 ] && [ $HM -lt 1200 ]; } || { [ $HM -ge 1300 ] && [ $HM -lt 1810 ]; }; }; then
-  REQ=""; for q in $(ls "$G/queue"/*.json 2>/dev/null | sort); do
-    [ "$(node "$LIB" get "$q" humanRequested 2>/dev/null)" = true ] && { REQ=$q; break; }
+# 토·일·공휴일은 시간 지정 없이 바로 배포(👤 2026-11-14) — 공휴일 = 이 폴더 holidays.txt 의 YYYY-MM-DD 줄(대체공휴일·임시공휴일은 그 파일에 더한다)
+FREE_DAY=0; [ "$(date +%u)" -ge 6 ] && FREE_DAY=1
+tr -d "\r" < "$G/holidays.txt" 2>/dev/null | grep -qx "$(date +%F)" && FREE_DAY=1
+if [ "${QUIET_HOURS:-1}" = 1 ] && [ $FREE_DAY = 0 ] && { { [ $HM -ge 850 ] && [ $HM -lt 1200 ]; } || { [ $HM -ge 1300 ] && [ $HM -lt 1900 ]; }; }; then
+  # 사람 요청은 깃러너 창이 「배포 진행합니다」 확인 칩으로 👤 재확인을 받아 "humanConfirmed" 를 적은 것만(👤 2026-11-13 — 말이 엇갈려 원치 않은 배포가 나간 사례)
+  REQ=""; for q in $(qlist); do
+    [ "$(node "$LIB" get "$q" humanRequested 2>/dev/null)" = true ] && [ -n "$(node "$LIB" get "$q" humanConfirmed 2>/dev/null)" ] && { REQ=$q; break; }
   done
   # 미리 검사(👤 2026-11-11 「미리 검사 넣어줘」): 배포는 안 하고 합치기·판정·검사만 — 지금 main 기준 미리 검사가 안 된 요청 1건
   if [ -z "$REQ" ]; then
     git -C "$W" fetch -q origin 2>>"$LOG"; OMNOW=$(git -C "$W" rev-parse origin/main)
-    for q in $(ls "$G/queue"/*.json 2>/dev/null | sort); do
+    for q in $(qlist); do
       pc="$G/precheck/$(basename "$q" .json).ok"
       [ -f "$pc" ] && [ "$(cut -d' ' -f1,2 "$pc")" = "$OMNOW $(node "$LIB" get "$q" commit 2>/dev/null)" ] && continue
       REQ=$q; PRE=1; break
@@ -139,14 +146,16 @@ while :; do
     if [ -n "$(git diff --name-only "$OM" "$H" -- package-lock.json)" ]; then npm ci --no-audit --no-fund >>"$LOG" 2>&1 || hold "npm ci 실패"; fi
     timeout 3600 npm run -s typecheck > "$REL/typecheck.log" 2>&1 || hold "타입 검사 RED($REL/typecheck.log)"
     LINT=$(echo "$CH" | grep -E '\.(ts|tsx|js|mjs)$' | while read -r f; do [ -f "$f" ] && echo "$f"; done)
-    if [ -n "$LINT" ]; then timeout 900 npx eslint $LINT > "$REL/eslint.log" 2>&1 || hold "eslint RED($REL/eslint.log)"; fi
+    if [ -n "$LINT" ]; then echo "$LINT" | timeout 900 xargs -n 80 npx eslint > "$REL/eslint.log" 2>&1 || hold "eslint RED($REL/eslint.log)"; fi
     # 정적 시험(DB 접속 없음): 원장·마이그레이션 성질 가드 + 바뀐 시험 중 tests/db 실DB 시험이 아닌 것
     T=$( { echo tests/db/story-ledger-guard.test.ts; echo tests/db/migration-guard.test.ts; echo tests/db/migration-properties-guard.test.ts
            echo "$CH" | grep -E '^tests/.*\.test\.tsx?$' | grep -v -E '^tests/db/' ; echo "$CH" | grep -E '^tests/db/.*-guard\.test\.ts$'; } | sort -u | while read -r t; do [ -f "$t" ] && echo "$t"; done )
     # 👤 11-11 16시: tests/authz 는 개발 서버에 실제 요청을 보내는 권한 시험이라 연결 설정이 있어야 돈다 — 빼지 않고 따로 연결을 붙여 돌린다
     TA=$(echo "$T" | grep '^tests/authz/'); T=$(echo "$T" | grep -v '^tests/authz/')
     rm -f .env.local  # 👤 11-11 13시: 시험은 개발 DB 에 붙지 않는다(공용 개발 DB 를 다른 갈래가 바꾸면 거짓 RED — 실DB 부분은 건너뜀)
-    timeout 3600 npx vitest run --fileParallelism=false $T --reporter=dot > "$REL/vitest.log" 2>&1 || hold "시험 RED($REL/vitest.log)"
+    # 11-12: 화면 시험은 src/lib/supabase.ts 를 불러오기만 해도 접속값을 요구한다 — 닿지 않는 가짜 주소를 넣어 불러오기만 통과시킨다(개발 DB 연결 없음 · 실DB 시험은 연결 실패로 RED 쪽)
+    rm -rf dist  # 11-12: 앞 배포의 낡은 빌드 결과물을 시험이 읽지 않게(빌드는 배포 단계에서 새로)
+    VITE_SUPABASE_URL=http://127.0.0.1:9 VITE_SUPABASE_PUBLISHABLE_KEY=gitrunner-no-db timeout 3600 npx vitest run --fileParallelism=false $T --reporter=dot > "$REL/vitest.log" 2>&1 || hold "시험 RED($REL/vitest.log)"
     if [ -n "$TA" ]; then
       cp "$M/.env.local" .env.local || hold "권한 시험용 개발 연결 설정 복사 실패"
       timeout 1800 npx vitest run --fileParallelism=false $TA --reporter=dot > "$REL/vitest-authz.log" 2>&1; arc=$?; rm -f .env.local

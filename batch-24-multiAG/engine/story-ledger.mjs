@@ -122,7 +122,8 @@ export function parseSprint(text) {
   const rows = new Map()
   for (const line of text.split('\n')) {
     const m = /^ {2}(\d+-\d+[^:]*): *(backlog|ready-for-dev|in-progress|review|done)\b/.exec(line)
-    if (m) rows.set(m[1], { key: m[1], status: m[2], epic: Number(m[1].split('-')[0]) })
+    // 값 줄 주석의 「⏸ 러너 편성 제외」 = 대화형 창 전담(2026-11-12 1-180 실사고) — 편성기가 뺀다(있을 때만 필드를 붙인다)
+    if (m) rows.set(m[1], { key: m[1], status: m[2], epic: Number(m[1].split('-')[0]), ...(/#.*⏸\s*러너 편성 제외/.test(line) ? { optOut: true } : {}) })
   }
   return [...rows.values()]
 }
