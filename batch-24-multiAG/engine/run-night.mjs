@@ -42,6 +42,7 @@ import { loadConfig } from './plan-queue.mjs'
 import { safeGitPush } from './push-guard.mjs'
 import { preserveRunReport, preserveStopLeftovers, refreshWorktree } from './worktree-refresh.mjs'
 import { mergeStateJson } from './runner-rules.mjs'
+import { withExtraCommitPaths } from './commit-paths.mjs'
 import { assertReviewedRuntime, assertIncomingToolingStable } from './runtime-pin.mjs'
 import { verifiedLandingFingerprint } from './landing-publication.mjs'
 // 2026-09-02 「9점대 하네스」 배선 — 판정은 전부 순수 모듈이 소유하고 러너는 부르기만 한다.
@@ -63,6 +64,12 @@ const mockupCommitPaths = (cfg) => {
   const ok = dir !== '' && segs.every((s) => /^[A-Za-z0-9._-]+$/.test(s) && s !== '..' && s !== '.')
   if (!ok) console.log(`⚠ mockupGate.mockupsDir(${dir}) 형식 불가 — 목업 HTML 이 스토리 커밋에 실리지 않는다(장부만 커밋됨)`)
   return ok ? `${ENGINE_COMMIT_PATHS},${dir}` : ENGINE_COMMIT_PATHS
+}
+// 프로젝트가 더한 저장 허용 폴더(config commitPaths) — 있으면 목업 단계가 없어도 --commit-paths 를 넘긴다.
+const commitPathsArg = (cfg, hasMockup) => {
+  const base = hasMockup ? mockupCommitPaths(cfg) : ENGINE_COMMIT_PATHS
+  const full = withExtraCommitPaths(base, cfg, (m) => console.log(`⚠ ${m}`))
+  return hasMockup || full !== base ? full : null
 }
 const ART = resolve('_bmad-output/implementation-artifacts')
 const LOG_DIR = join(ART, 'auto-pipeline-logs')
@@ -1514,7 +1521,8 @@ async function runBatchParallel({ batch, defaults, workers, record }) {
     if (wt.review) a.push('--review-model', wt.review)
     if (batch.force) a.push('--force')
     if (batch.replanHint) a.push('--replan-hint', String(batch.replanHint))
-    if ((batch.stages ?? []).includes('mockup')) a.push('--commit-paths', mockupCommitPaths(CFG), '--mockups-dir', String(CFG.mockupGate?.mockupsDir ?? 'mockups'), '--mockup-verdicts', String(CFG.mockupGate?.verdictsPath ?? 'tools/dev-status/mockup-verdicts.json'))
+    { const cp = commitPathsArg(CFG, (batch.stages ?? []).includes('mockup')); if (cp) a.push('--commit-paths', cp) }
+    if ((batch.stages ?? []).includes('mockup')) a.push('--mockups-dir', String(CFG.mockupGate?.mockupsDir ?? 'mockups'), '--mockup-verdicts', String(CFG.mockupGate?.verdictsPath ?? 'tools/dev-status/mockup-verdicts.json'))
     a.push('--commit') // 브랜치·푸시 없음 — detached HEAD 커밋(엔진 기존 지원 경로). landing 은 아래 직렬.
     a.push(...engineFlagsFromConfig(PCFG)) // 설정 없으면 [] — 종전 명령줄 그대로
     a.push(...routingFlags(), ...(CFG.modelPolicy?.enabled ? ['--policy-assigned'] : []))
@@ -1891,7 +1899,8 @@ async function runQueue(queuePath, autoQueueMeta, round, roundBaseShaForLedger =
     }
     if (batch.force) args.push('--force')
     if (batch.replanHint) args.push('--replan-hint', String(batch.replanHint)) // 자율운전: 무진전 접근 변경 힌트(replan 단계)
-    if ((batch.stages ?? []).includes('mockup')) args.push('--commit-paths', mockupCommitPaths(CFG), '--mockups-dir', String(CFG.mockupGate?.mockupsDir ?? 'mockups'), '--mockup-verdicts', String(CFG.mockupGate?.verdictsPath ?? 'tools/dev-status/mockup-verdicts.json'))
+    { const cp = commitPathsArg(CFG, (batch.stages ?? []).includes('mockup')); if (cp) args.push('--commit-paths', cp) }
+    if ((batch.stages ?? []).includes('mockup')) args.push('--mockups-dir', String(CFG.mockupGate?.mockupsDir ?? 'mockups'), '--mockup-verdicts', String(CFG.mockupGate?.verdictsPath ?? 'tools/dev-status/mockup-verdicts.json'))
     if (defaults.commit || defaults.push) args.push('--commit', '--branch', BRANCH)
     // (N1) 배치 통합 게이트가 켜져 있으면 **엔진의 스토리별 push 를 보류시킨다**(`--defer-push`) —
     // 엔진이 스토리마다 즉시 밀면 합쳐진 트리가 RED 여도 원격에는 이미 RED 조합이 남는다.
