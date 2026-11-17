@@ -9,7 +9,7 @@ set -uo pipefail
 export PATH="/c/nvm4w/nodejs:$PATH"
 B=/c/Users/user/.baroos-auto; G=$B/gitrunner; M=/c/Projects/jng-os; W=/c/Projects/jng-os-gitrunner
 PROD=eubtqkueostvgmvschfa; DEV=dahsgpporxvdstqayqla; SITE=https://baro.jngsystem.co.kr
-SB="/c/Users/user/AppData/Local/npm-cache/_npx/b96a6bd565c470ce/node_modules/@supabase/cli-windows-x64/bin/supabase.exe"
+SB="/c/Users/user/.baroos-auto/bin/supabase.exe"  # 11-17: npx 임시 폴더가 지워져 멈춤 → 고정 폴더 복사본(3.1.0 · 앱 제어 허용판)
 LIB="$G/gitrunner-lib.mjs"; DRY=${GR_DRY:-0}
 SEND_EF="outbox-dispatch marketing-publish"  # 👤 11-12: 발송 담당 서버 기능은 코드 수정도 계속 👤 승인(외부 발송 · 절대 제약 1)
 mkdir -p "$G/queue" "$G/running" "$G/done" "$G/held" "$G/logs"
@@ -136,7 +136,10 @@ while :; do
     if [ $rc -ne 0 ] && [ -n "$DBOK" ] && [ "$DBOK" != false ]; then say "덧셈 아닌 DB 변경 — 👤 승인으로 진행($DBOK)"
     else [ $rc -eq 0 ] || hold "덧셈 아닌 DB 변경 — 👤 승인 필요(판정 $REL/additive-check.txt)" "additive=$rc"; fi
     UQ=$(node "$LIB" replaced $NEWM | grep '^unique ' | cut -d' ' -f2 | tr '\n' ' ')
-    [ -z "$UQ" ] || hold "유일 색인 — 기존 자료 중복 0 실측이 먼저(ⓘ · 깃러너 창 몫): $UQ"
+    # 11-17: 깃러너 창이 운영 중복 0 을 실측해 uniqueChecked 에 적었으면(👤 dbApproved 도 있을 때만) 통과
+    UQOK=$(get uniqueChecked 2>/dev/null)
+    if [ -n "$UQ" ] && [ -n "$UQOK" ] && [ "$UQOK" != false ] && [ -n "$DBOK" ] && [ "$DBOK" != false ]; then say "유일 색인 — 깃러너 창 실측으로 진행($UQOK)"
+    else [ -z "$UQ" ] || hold "유일 색인 — 기존 자료 중복 0 실측이 먼저(ⓘ · 깃러너 창 몫): $UQ"; fi
   fi
   # ── ③ 합친 판 검사(요청 창이 이미 전체 검사를 했으므로 여기선 합친 결과가 깨지지 않았는지만)
   TREE=$(git rev-parse "$H^{tree}"); PC="$G/precheck/$ID.ok"
@@ -186,9 +189,9 @@ if [ -n "$NEWM" ]; then
   VERS=$(for f in $NEWM; do basename "$f" | cut -d_ -f1; done)
   IN=$(echo "$VERS" | sed "s/.*/'&'/" | paste -sd,)
   for try in 1 2 3; do  # 👤 11-11 13:12 한 번 읽기 실패(일시 연결) — 3번까지 다시
-    QO=$(timeout 180 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD "select version from supabase_migrations.schema_migrations where version in ($IN)" 2>&1)
+    QO=$(timeout 180 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --read-only --project-ref $PROD "select version from supabase_migrations.schema_migrations where version in ($IN)" 2>&1)
     echo "$QO" | grep -qE '"rows"|^\[\]$' && break; echo "$QO" > "$REL/ledger-read-fail-$try.txt"
-    { env | grep -iE '^(SUPABASE|PG|HOME|USERPROFILE|APPDATA)' | sed 's/=.*TOKEN.*/=(값 숨김)/'; timeout 120 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD --debug "select 1" 2>&1 | tail -40; } > "$REL/ledger-read-debug-$try.txt" 2>&1; sleep 20
+    { env | grep -iE '^(SUPABASE|PG|HOME|USERPROFILE|APPDATA)' | sed 's/=.*TOKEN.*/=(값 숨김)/'; timeout 120 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --read-only --project-ref $PROD --debug "select 1" 2>&1 | tail -40; } > "$REL/ledger-read-debug-$try.txt" 2>&1; sleep 20
   done
   echo "$QO" | grep -q '"rows"\|\[\]' || hold "운영 DB 장부 읽기 실패(로그인 만료?) — main 은 올라감 · 화면 배포 전 멈춤: $(echo "$QO" | tail -1 | cut -c1-120)"
   HAVE=$(echo "$QO" | grep -oE '"version": *"[0-9]{14}"' | grep -oE '[0-9]{14}' | sort -u)
@@ -199,16 +202,17 @@ if [ -n "$NEWM" ]; then
       sch=${name%%.*}; obj=${name#*.}
       if [ "$kind" = function ]; then sql="select pg_get_functiondef(p.oid) as def from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='$sch' and p.proname='$obj'"
       else sql="select pg_get_viewdef('$sch.$obj'::regclass, true) as def where to_regclass('$sch.$obj') is not null"; fi
-      timeout 120 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD "$sql" > "$REL/before-$kind-$name.json" 2>&1
+      timeout 120 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --read-only --project-ref $PROD "$sql" > "$REL/before-$kind-$name.json" 2>&1
     done
     node "$LIB" build-apply "$REL/apply-prod.sql" "$ID" $TODO > "$REL/apply-versions.txt" || hold "적용 묶음 만들기 실패 — main 은 올라감"
     {
       echo "# 운영 DB 반영 ⓖ~ⓙ — $ID"; echo "- 파일: $(echo $TODO)"; echo "- 덧셈 판정: tools/ops/additive-check.mjs exit 0(additive-check.txt)"
-      echo "- ⓖ $(get db.compat)"; echo "- ⓗ $(get db.access)"; echo "- ⓘ 유일 색인 없음(있으면 자동 적용 안 함) · $(get db.index)"; echo "- ⓙ 교체 전 정의 = before-*.json"
+      echo "- ⓖ $(get db.compat)"; echo "- ⓗ $(get db.access)"; echo "- ⓘ ${UQ:+유일 색인 $UQ — 깃러너 창 실측 $UQOK}${UQ:-유일 색인 없음(있으면 자동 적용 안 함)} · $(get db.index)"; echo "- ⓙ 교체 전 정의 = before-*.json"
     } > "$REL/CHECKS.md"
-    AO=$(timeout 600 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD -f "$REL/apply-prod.sql" 2>&1); arc=$?
+    # 11-17: CLI 3.x 는 json 출력·무인 실행에서 확인 없이는 쓰지 않는다 → 여기(덧셈 판정 통과 또는 👤 dbApproved 뒤)만 --yes
+    AO=$(timeout 600 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD --yes -f "$REL/apply-prod.sql" 2>&1); arc=$?
     echo "$AO" > "$REL/apply-prod.out"
-    QO=$(timeout 180 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --project-ref $PROD "select version from supabase_migrations.schema_migrations where version in ($IN)" 2>&1)
+    QO=$(timeout 180 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --read-only --project-ref $PROD "select version from supabase_migrations.schema_migrations where version in ($IN)" 2>&1)
     NOW=$(echo "$QO" | grep -oE '"version": *"[0-9]{14}"' | grep -oE '[0-9]{14}' | sort -u | grep -c .)
     [ "$NOW" -eq "$(echo "$VERS" | grep -c .)" ] || hold "운영 DB 적용 실패(exit $arc · 장부 $NOW/$(echo "$VERS" | grep -c .)) — main 은 올라감 · 화면 배포 안 함 · $REL/apply-prod.out"
     APPLIED=$(cat "$REL/apply-versions.txt"); say "운영 DB 적용 $APPLIED (장부 실측 $NOW)"
