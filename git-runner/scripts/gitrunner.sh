@@ -99,6 +99,8 @@ while :; do
   H=$(git rev-parse HEAD); say "합치기 $MODE · main ${OM:0:9} → ${H:0:9}"
   CH=$(git diff --name-only "$OM" "$H")
   [ -n "$CH" ] || [ "$MODE" = already ] || hold "바뀐 파일 0"
+  # 11-18: 재시도(main 에 이미 있음)면 OM..H 가 비어 EF 배포를 건너뛰었다 — 요청 기준(base)부터 바뀐 파일을 센다
+  if [ "$MODE" = already ]; then BS0=$(get base 2>/dev/null); git cat-file -e "$BS0^{commit}" 2>/dev/null && CH=$(git diff --name-only "$BS0" "$C"); fi
   # ── ② 판정: Edge Function · DB
   EF=$(echo "$CH" | grep '^supabase/functions/' | cut -d/ -f3 | sort -u | grep -v '^_shared$' | tr '\n' ' ')
   echo "$CH" | grep -q '^supabase/functions/_shared/' && EF="$EF(공용 _shared 바뀜)"
@@ -190,10 +192,10 @@ if [ -n "$NEWM" ]; then
   IN=$(echo "$VERS" | sed "s/.*/'&'/" | paste -sd,)
   for try in 1 2 3; do  # 👤 11-11 13:12 한 번 읽기 실패(일시 연결) — 3번까지 다시
     QO=$(timeout 180 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --read-only --project-ref $PROD "select version from supabase_migrations.schema_migrations where version in ($IN)" 2>&1)
-    echo "$QO" | grep -qE '"rows"|^\[\]$' && break; echo "$QO" > "$REL/ledger-read-fail-$try.txt"
+    echo "$QO" | grep -qE '"rows"|^\[\]$|"version"' && break; echo "$QO" > "$REL/ledger-read-fail-$try.txt"
     { env | grep -iE '^(SUPABASE|PG|HOME|USERPROFILE|APPDATA)' | sed 's/=.*TOKEN.*/=(값 숨김)/'; timeout 120 env -u SUPABASE_ACCESS_TOKEN "$SB" db query --linked -o json --read-only --project-ref $PROD --debug "select 1" 2>&1 | tail -40; } > "$REL/ledger-read-debug-$try.txt" 2>&1; sleep 20
   done
-  echo "$QO" | grep -q '"rows"\|\[\]' || hold "운영 DB 장부 읽기 실패(로그인 만료?) — main 은 올라감 · 화면 배포 전 멈춤: $(echo "$QO" | tail -1 | cut -c1-120)"
+  echo "$QO" | grep -q '"rows"\|\[\]\|"version"' || hold "운영 DB 장부 읽기 실패(로그인 만료?) — main 은 올라감 · 화면 배포 전 멈춤: $(echo "$QO" | tail -1 | cut -c1-120)"
   HAVE=$(echo "$QO" | grep -oE '"version": *"[0-9]{14}"' | grep -oE '[0-9]{14}' | sort -u)
   TODO=$(for f in $NEWM; do v=$(basename "$f" | cut -d_ -f1); echo "$HAVE" | grep -qx "$v" || echo "$f"; done)
   if [ -n "$TODO" ]; then
@@ -222,14 +224,14 @@ fi
 # ── ⑤-2 Edge Function 배포(👤 efApproved 또는 기존 서버 기능 자동 조건 · 합친 main 판 그대로 · DB 다음 · 화면 전) — 익명 POST 401/403 실측
 if [ -n "${EF// /}" ] && [ -n "$EFOK" ] && [ "$EFOK" != false ]; then
   for f in $EF; do
-    PC=fail; timeout 600 env -u SUPABASE_ACCESS_TOKEN "$SB" functions deploy "$f" --project-ref $PROD --use-api >> "$REL/ef-deploy.log" 2>&1       && PC=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "https://$PROD.supabase.co/functions/v1/$f")
+    PC=fail; timeout 600 env -u SUPABASE_ACCESS_TOKEN "$SB" functions deploy "$f" --project-ref $PROD --use-api --yes >> "$REL/ef-deploy.log" 2>&1       && PC=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "https://$PROD.supabase.co/functions/v1/$f")
     echo "$f 익명 POST $PC" >> "$REL/ef-deploy.log"
     case "$PC" in
       401|403) say "EF $f 운영 배포 · 익명 POST $PC(정상 차단)";;
       *) # 👤 11-12: 실패면 직전 main 판(OM)으로 되돌린다 — 새 기능이면 되돌릴 판이 없어 멈춤만
         RB="되돌릴 판 없음(새 서버 기능)"
         if git cat-file -e "$OM:supabase/functions/$f/index.ts" 2>/dev/null; then
-          RW="$REL/ef-prev"; rm -rf "$RW"; git worktree add -f -q --detach "$RW" "$OM" >> "$REL/ef-deploy.log" 2>&1             && (cd "$RW" && timeout 600 env -u SUPABASE_ACCESS_TOKEN "$SB" functions deploy "$f" --project-ref $PROD --use-api) >> "$REL/ef-deploy.log" 2>&1             && RB="직전 main 판 ${OM:0:9} 으로 되돌림" || RB="⚠ 되돌리기도 실패 — 사람 확인 필요"
+          RW="$REL/ef-prev"; rm -rf "$RW"; git worktree add -f -q --detach "$RW" "$OM" >> "$REL/ef-deploy.log" 2>&1             && (cd "$RW" && timeout 600 env -u SUPABASE_ACCESS_TOKEN "$SB" functions deploy "$f" --project-ref $PROD --use-api --yes) >> "$REL/ef-deploy.log" 2>&1             && RB="직전 main 판 ${OM:0:9} 으로 되돌림" || RB="⚠ 되돌리기도 실패 — 사람 확인 필요"
           git worktree remove --force "$RW" >/dev/null 2>&1
         fi
         hold "EF $f 배포 실패/익명 POST $PC — $RB · main·DB 는 반영됨 · 화면 배포 안 함($REL/ef-deploy.log)";;
