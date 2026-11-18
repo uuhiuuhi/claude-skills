@@ -153,6 +153,9 @@ export function safeReviewScope(args, warn = () => {}) {
  *  열람 근거 미달(24-11 11/14 · 24-8 4/36) → 완료 차단. 프로젝트 소유 quality.config.json 은 예외(runtime-pin PROJECT_OWNED 와 같은 잣대). */
 export function isRunnerToolingPath(file) {
   const p = String(file ?? '').replace(/\\/g, '/')
+  // 2026-11-18 baroone 14-7 실사고: 실행 전용 클론 표식(.auto-batch-worktree)이 .gitignore 에 없는 프로젝트에서는 미추적 변경으로 잡혀
+  // Claude 리뷰의 필수 열람 목록에 들었다(열람 근거 미달 5/6 → 완료 차단). 표식도 러너 소유물이다(worktree-refresh·run-night 의 예외와 같은 잣대).
+  if (p === '.auto-batch-worktree') return true
   return p.startsWith('tools/auto/') && p !== 'tools/auto/quality.config.json'
 }
 

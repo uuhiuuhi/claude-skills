@@ -259,7 +259,12 @@ function crossReviewVerdict(manifest) {
   const modelName = (m) => str(m).replace(/^codex:/, '')
   const devM = modelName(manifest?.workers?.dev?.model), revM = modelName(review.model)
   const codexPair = devP === 'codex' && revP === 'codex' && Boolean(devM) && Boolean(revM) && devM !== revM
-  if (devP === revP && !codexPair) return [FAIL, '만든 쪽과 검토한 쪽이 같다 — 교차 검토가 아니다']
+  // 👤 2026-11-18 claudeCross: 매니페스트의 reviewPolicy.claudeCross 아래 Claude 구현(dev 목록) → 지정 Claude 검토 모델만 교차(completion-rules 와 같은 규칙)
+  // (이 파일은 엔진을 import 하지 않는다 — 매니페스트의 값은 엔진이 claudeCrossPolicy 로 정규화해 적은 것이라 여기서는 짝만 대조한다)
+  const cc = manifest?.reviewPolicy?.claudeCross
+  const claudePair = devP === 'claude' && revP === 'claude' && cc?.enabled === true && Boolean(devM) && Boolean(revM) && devM !== revM &&
+    revM === str(cc.review) && arr(cc.dev).map(str).includes(devM)
+  if (devP === revP && !codexPair && !claudePair) return [FAIL, '만든 쪽과 검토한 쪽이 같다 — 교차 검토가 아니다']
   const high = Number(review.counts?.high ?? 0) || 0
   if (high > 0) return [FAIL, `검토에서 높음 지적 ${high}건이 남아 있다`]
   const ev = reviewEvidenceCount(review)

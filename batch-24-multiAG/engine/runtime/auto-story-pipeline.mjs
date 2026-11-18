@@ -88,7 +88,7 @@ import { safeGitPush } from "./push-guard.mjs";
 import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes, reviewPendingOnly, recoveryPendingOnly } from "./completion-rules.mjs";
 import { StageRouter, preferredDevProvider } from './stage-router.mjs';
 import { readUsageSnapshot, reclassifySpend } from './usage-probe.mjs';
-import { policyRelief, MODEL_CATALOG, failureKind, providerOf, limitDowngradeMode, codexDevPolicy, codexDevAllowed, codexPairCross } from './model-policy.mjs';
+import { policyRelief, MODEL_CATALOG, failureKind, providerOf, limitDowngradeMode, codexDevPolicy, codexDevAllowed, codexPairCross, claudeCrossPolicy, claudePairCross } from './model-policy.mjs';
 import { storyRisk, storyDifficulty } from '../assign.mjs';
 import { readEvidenceFor } from './providers/codex.mjs';
 import { deepRedact } from './providers/redact.mjs';
@@ -584,7 +584,7 @@ const headSha = () => { const r = git(["rev-parse", "HEAD"]); return r.code === 
 const currentBranch = () => git(["rev-parse", "--abbrev-ref", "HEAD"]).out.trim();
 const stashCount = () => git(["stash", "list"]).out.split("\n").filter((l) => l.trim()).length;
 /** 워킹트리 지문 — 수리 워커의 사후조건(코드만 고쳐도 「일했다」 · F31) */
-const treeFingerprint = () => createHash("sha1").update(git(["diff", "HEAD", "--"]).out + "\n" + git(["ls-files", "--others", "--exclude-standard"]).out).digest("hex");
+const treeFingerprint = () => createHash("sha1").update(git(["diff", "HEAD", "--"]).out + "\n" + git(["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"]).out).digest("hex");
 // Content-based: committing the same code does not invalidate its QA; editing any code does.
 function codeFingerprint() { return qualityFingerprint(process.cwd()); }
 
@@ -946,8 +946,8 @@ function collectReviewDiff(story, storyFile, scoped) {
   // 리뷰 diff 에 자격증명이 실리면 그대로 외부 벤더로 나간다 — gitignore·추적 여부와 무관하게 env·키·시크릿
   // 파일은 ① pathspec 제외 ② unified diff 에서 파일 섹션째 제거 ③ 최종 확정 후 값 마스킹, 셋을 모두 건다
   // (2026-09-02 codex-review-r1 #1: 종전에는 `git diff HEAD` 본문에 추적된 `.env.production` 이 그대로 실렸다).
-  const allNames = splitLines(git(["diff", "--name-only", "HEAD", "--"]).out).filter((f) => !isLedgerPath(f));
-  const untracked = splitLines(git(["ls-files", "--others", "--exclude-standard"]).out)
+  const allNames = splitLines(git(["-c", "core.quotepath=false", "diff", "--name-only", "HEAD", "--"]).out).filter((f) => !isLedgerPath(f));
+  const untracked = splitLines(git(["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"]).out)
     .filter((f) => !f.includes("auto-pipeline-logs/") && !isSensitivePath(f));
   let keep = narrow([...allNames, ...untracked]);
   let names = allNames.filter((f) => keep.has(f));
@@ -975,7 +975,7 @@ function collectReviewDiff(story, storyFile, scoped) {
     }
     if (base && git(["cat-file", "-e", `${base}^{commit}`]).code === 0) {
       excludedByOwner = []; excludedOutside = []; owners = []; // 이 단계의 범위로 다시 판정한다
-      const committed = splitLines(git(["diff", "--name-only", `${base}..HEAD`, "--"]).out).filter((f) => !isLedgerPath(f));
+      const committed = splitLines(git(["-c", "core.quotepath=false", "diff", "--name-only", `${base}..HEAD`, "--"]).out).filter((f) => !isLedgerPath(f));
       keep = narrow(committed, true);
       names = committed.filter((f) => keep.has(f));
       // 범위 안 경로만 뽑는다 · 공용 기록 문서(sprint-status·deferred-work 등 · 자기 스토리 md 제외)는 baseline..HEAD 에
@@ -1174,7 +1174,10 @@ function prepareWorker(stage, story, variant) {
   // 👤 2026-09-26 (나): codex 구현(sol) → codex 리뷰(astra)는 **모델**이 다르면 교차로 인정(설정 modelPolicy.codexDev 가 켜진 때만). claude 끼리는 종전대로 STOP.
   const codexCrossOk = spec.provider === 'codex' && devSpecForCross.provider === 'codex' && codexDevPolicy(routingConfig.modelPolicy?.codexDev).enabled
     && codexPairCross(formatModelSpec(spec), formatModelSpec(devSpecForCross));
-  if (!dryRun && role === 'review' && spec.provider === devSpecForCross.provider && !codexCrossOk) {
+  // 👤 2026-11-18 claudeCross: Claude 구현(dev 목록) → 지정 Claude 검토 모델(fable)만 교차로 인정(설정 modelPolicy.claudeCross 가 켜진 때만 · 같은 모델·목록 밖·기록 누락은 STOP).
+  const claudeCrossOk = spec.provider === 'claude' && devSpecForCross.provider === 'claude'
+    && claudePairCross(routingConfig.modelPolicy?.claudeCross, devSpecForCross.model, spec.model);
+  if (!dryRun && role === 'review' && spec.provider === devSpecForCross.provider && !codexCrossOk && !claudeCrossOk) {
     note(`✖ REVIEW STOP — same-provider review forbidden (${spec.provider}${spec.provider === 'codex' ? `/${spec.model || 'default'} · 구현 ${devSpecForCross.model || 'default'}` : ''})`);
     writeExitInfo({ code: 1, kind: 'review', story, stage, why: 'same-provider-review' });
     process.exit(1);
@@ -1427,7 +1430,7 @@ function runClaude(stage, story, variant = null) {
     const counts = { patch: countOpenFindings(text, 'Patch'), decision: countOpenFindings(text, 'Decision'), high: (text.match(/^- \[ \](?!.*\[다른 스토리 소관:).*\[(?:high|critical)\]/gmi) ?? []).length };
     const verified = required.length > 1 && readEvidence.length === required.length;
     reviewResults[story] = { provider: 'claude', model: w.spec.model || 'cli-default', result: verified ? counts.patch + counts.decision ? 'findings' : 'clean' : 'not-run(missing read evidence)', counts, readEvidence };
-    if (!verified) note(`[${story}][CLAUDE][REVIEW] 열람 근거 미달 ${readEvidence.length}/${required.length} — 완료 차단`);
+    if (!verified) note(`[${story}][CLAUDE][REVIEW] 열람 근거 미달 ${readEvidence.length}/${required.length} — 완료 차단 · 읽지 않은 필수 파일: ${required.filter((p) => !readEvidence.includes(p)).join(', ') || '(필수 목록이 1건 이하)'}`);
   }
   if (code === 0 && postOk) return "ok";
   if (code === 0 && !postOk) {
@@ -1595,7 +1598,7 @@ function runRoutedStage(stage, story, variant) {
   if (noCodex || (!dryRun && providers.codex.available && !codexCwdInfo().ok)) providers.codex.available = false;
   const router = new StageRouter({ stateDir: modelStateDir, providers, exhausted: routingConfig.exhaustedModels ?? [],
     claudeLadder: process.env.AUTO_MODEL_LADDER ? MODEL_LADDER : null, codexDev: routingConfig.modelPolicy?.codexDev ?? null,
-    reviewMinTier: routingConfig.modelPolicy?.reviewMinTier }); // 👤 2026-10-21 reviewMinTier
+    reviewMinTier: routingConfig.modelPolicy?.reviewMinTier, claudeCross: routingConfig.modelPolicy?.claudeCross ?? null }); // 👤 2026-10-21 reviewMinTier
   const attempted = [];
   // 👤 2026-10-11 「추천안 2」: modelPolicy.recoveryDevFloor=1 이면 회수 dev 는 처음부터 하한 sonnet(한도 완화와 같은 길) — 신규 dev·review 는 불변.
   let limitRelief = policyRelief({ stage, batchKind, policy: routingConfig.modelPolicy }); // 회수 dev 가 한도를 만나면 true — choose 의 품질 하한이 sonnet 까지 내려간다
@@ -1700,7 +1703,7 @@ function workingTreeChanges() {
   // (#8) 미추적 **신규** 파일은 종전에 이름만 changes 에 들어가고 내용은 어떤 검사도 받지 않았다 —
   // 수리 워커가 `tests/new.test.ts` 를 새로 만들며 `describe.only` 를 넣으면 qa 는 일부만 돌고 무결성도 통과했다.
   // 이제 미추적 파일 본문을 무결성 diff 에 넣는다(텍스트 · 1MB 상한 · 바이너리 제외 · 민감 경로 제외).
-  for (const f of splitLines(git(["ls-files", "--others", "--exclude-standard"]).out)) {
+  for (const f of splitLines(git(["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"]).out)) {
     changes.push({ status: "A", path: f });
     if (f.includes("auto-pipeline-logs/") || isSensitivePath(f)) continue;
     const d = untrackedUnifiedDiff(f);
@@ -1872,6 +1875,8 @@ function finalizeManifest(story, commitSha) {
     // (완료 판정 강화) 매니페스트 **형태는 그대로 두고** `completion` 필드만 더한다 — 「없는 검사」를 통과로
     // 세지 않고 not-verified 로 남기는 판정기(completion-rules.mjs)를 여기 한 곳에서만 부른다.
     m.quality = q.policy ?? { verdict: 'not-verified' };
+    // 👤 2026-11-18 claudeCross: 완료 판정(T6)은 매니페스트만 본다 — 이 검토가 어떤 예외 설정 아래에서 돌았는지를 함께 남긴다(꺼져 있으면 필드 자체가 없다 = 종전 형태).
+    { const cc = claudeCrossPolicy(routingConfig.modelPolicy?.claudeCross); if (cc.enabled) m.reviewPolicy = { claudeCross: cc }; }
     m.codeFingerprint = codeFingerprint();
     m.scope = 'worker';
     for (const [check, gate] of Object.entries({ typecheck: 'typecheck', lint: 'lint', unit: 'unit', security: 'security', performance: 'performance', api: 'api', authorization: 'authorization' })) {

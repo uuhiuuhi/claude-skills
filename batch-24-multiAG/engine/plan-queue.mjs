@@ -39,6 +39,7 @@ import { buildDag, parseDependsOn, validatePlan } from './plan-dag.mjs'
 import { parallelHazardsExtended } from './conflicts.mjs'
 // 모델 배정은 홀짝이 아니라 **점수**(난이도·위험도·가용성·최근 실패)로 한다.
 import { ASSIGN_HISTORY_FILE, assignBatchModels, parseHistory } from './assign.mjs'
+import { claudeCrossPolicy } from './runtime/model-policy.mjs'
 export {
   MOCKUP_GATE_DEFAULT, openFindings, isHumanGateLine,
   readStorySignals, parseSprint, epicSection, mockupGateOk,
@@ -410,10 +411,14 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     (Array.isArray(codexCfg.roles) ? codexCfg.roles : ['review']).includes('review') &&
     (Array.isArray(codexCfg.reviewKinds) ? codexCfg.reviewKinds : ['new', 'closeout']).includes(kind) &&
     kind !== 'recovery'
+  // 👤 2026-11-18 claudeCross(Claude 구현 → 지정 Claude 모델 검토): 켜져 있으면 **내장 기본 짝**만 그 짝으로 바꾼다
+  // (구현 = dev 목록 첫 모델 · 검토 = review 모델). cfg.models 로 직접 적은 짝과 codex 검토 지정은 종전대로 그것이 이긴다.
+  const cc = claudeCrossPolicy(cfg.modelPolicy?.claudeCross)
   const modelsFor = (kind) => {
     let base =
       models && (models.new || models.recovery || models.closeout) ? (models[kind] ?? null)
         : models ? models
+          : cc.enabled ? (kind === 'closeout' ? { review: cc.review } : { dev: cc.dev[0], review: cc.review })
           : kind === 'closeout' ? { review: 'opus' }
             : kind === 'recovery' ? { dev: 'opus', review: 'fable' }
               : { dev: 'fable', review: 'opus' }
