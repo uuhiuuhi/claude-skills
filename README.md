@@ -8,10 +8,14 @@ Claude Code · Codex 스킬 백업이자 BMad 프로젝트의 현황판과 스�
 | [`batch-24-multiAG`](batch-24-multiAG/) | **현행 배치 정본(2026-09-06~)**. 수동 create→dev→review, 예약 실행, 공유 lock·모델 상태, 큐·병렬 워커, landing·QA·복구. 아래 `auto-story-finish`·`night-batch-ops` 를 대체한다. |
 | [`dev-status`](dev-status/) | BMad v6 프로젝트의 **읽기 전용** 개발 현황판. `epics.md`·`sprint-status.yaml`·스토리 md·배치 로그를 규칙만으로 판정해 진행률·단계 배지·파일 겹침·불일치·다음 할 일을 로컬 HTML 한 장으로 낸다. 외부 의존성 0, LLM 호출 0. |
 | [`screen-check`](screen-check/) | 구현이 끝난 스토리를 **실제 화면에서** 확인 — 격리 worktree + 별도 포트 dev 서버 + Playwright(playwright-core·Edge) 로 QA 계정 로그인·성공/거부 경로·모바일까지 밟고 **평가 항목 10개 × 10점 채점표**를 보고서 마지막에 낸다. 24배치(batch-24-multiAG)와 별개 스킬 · 로컬이 아닌 주소(운영·미리보기)에서는 **보기 전용 방식**만 허용한다(저장 요청을 브라우저 단계에서 차단). |
+| [`git-runner`](git-runner/) | **깃러너** — 배포·main 반영을 한 곳(예약 작업)에서만. 작업 창은 배포 요청서(JSON)만 넣고, 깃러너가 1건씩 최신 main 과 합치기 → 검사 → **main 먼저** 푸시 → 운영 DB **덧셈만** 자동 → 화면 배포 → 실측(RED 면 되돌림) → RELEASE-LOG. 배포 안 하는 시간엔 사람 요청만 · 나머지는 미리 검사만. 덧셈 아닌 DB·Edge Function·외부 발송은 멈추고 사람에게. |
+| [`last-check`](last-check/) | **라스트점검** — 계획한 스토리가 전부 끝난 프로젝트의 마지막 점검 7단계(완료 증거 → 정적 보안 `/gstack-cso` → 동적 외부 경계 실측 → 스테이징 QA `/gstack-qa-only` → 주제형 적대 검토(BMad) → 운영 정리 → 문서·회고(BMad)). BMad 최종 점검 스킬과 gstack 을 기능 겹침 없이 묶음 · 보고만 하고 고치지 않음 · 프로젝트 프로필 `.claude/last-check.profile.md` 로 맞춤. |
 | [`daily-brief`](daily-brief/) | 하루 시작 브리핑 — 지난 라운드 결과 → 현황판 신선도 → 사람이 정할 것 → 다음 작업 추천 → 「운영 반영분을 같이 확인하시겠습니까」. 재료가 없으면 「판정 불가」라고 쓴다. |
 | [`my-todo`](my-todo/) | 「내가 할 일 뭐야?」 — 러너가 스스로 풀 수 없어 남긴 사람 몫을 추천안과 함께 한 장으로 내고, 답을 받으면 그 자리에서 반영한다. |
 | [`runner-start`](runner-start/) | 24시간 러너를 지금 바로 깨우고 첫 편성을 실측해 보고한다. |
+| [`mattpocock-architecture`](mattpocock-architecture/) | 코드 구조 개선 — `/improve-codebase-architecture` 가 자주 바뀐 곳의 「얕은 모듈 → 깊은 모듈」 후보를 HTML 보고서로 내고 고른 후보를 질문으로 파고든다. 보조 스킬 3개(`codebase-design`·`domain-modeling`·`grilling`)와 함께 설치 · mattpocock/skills 원본(MIT). |
 | [`role-test-together`](role-test-together/) | 사용자와 역할별 기능 테스트를 점검표 한 행씩 선택지로 같이 진행하고, 문제 줄을 후속 스토리로 한 번에 등재한다. 스킬 폴더에는 틀만 있고 실제 점검표·결과는 프로젝트 안에 둔다. |
+| [`app-tutorial-video`](app-tutorial-video/) | 실행 중인 웹앱의 **실제 화면 조작 녹화 + 음성 해설 + 자막** 튜토리얼 영상(mp4) 제작 절차와 계약 — 탐색 → 리허설 → 녹화 → 음성 → 조립 5단계 · 안전 훅 순서(운영 거부 → 부품 사전검사 → 외부 발송 꺼짐 실측 → 녹화) · 장면 대본 JSON 계약 · 프로젝트 어댑터. v0.1 = 지침·계약 문서만(코드는 프로젝트 저장소). |
 
 ## 통합 이유와 구조
 

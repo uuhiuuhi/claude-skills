@@ -42,6 +42,12 @@ describe('[engine-guards] 하드코딩 가드레일 보존', () => {
     assert.ok(has('if (doPush && !/^auto\\//.test(branchName))'))
     assert.ok(has('if (branchName && !/^auto\\//.test(branchName))'))
     assert.ok(has('const DENY_PATH_RE ='))
+    // (2026-10-28 러너 .git 10GB 실사고) 새 산출 로그는 스토리 커밋에서 뺀다 — add 직후 · staged 집계 전
+    const commitFn = src.slice(src.indexOf('function commitStory(story, stagesDone)'))
+    const addAt = commitFn.indexOf('const add = git(["add", "-A", "--", ...paths]);')
+    const dropAt = commitFn.indexOf('const artifacts = unstageNewLogArtifacts({ cwd: process.cwd() });')
+    const stagedAt = commitFn.indexOf('const staged = git(["diff", "--cached", "--name-only"])')
+    assert.ok(addAt > 0 && dropAt > addAt && stagedAt > dropAt, '산출 로그 unstage 는 git add 뒤 · staged 집계 전이어야 한다')
     assert.ok(has('const SECRET_RES = ['))
     assert.ok(has('SECRET STOP — [${story}] 스테이징 diff 에 시크릿 패턴'))
   })
@@ -100,6 +106,9 @@ describe('[engine-guards] v3 다중 프로바이더 규율', () => {
     assert.ok(has('const guardBlocked = isGuardBlocked({ code, stderr: res.stderr }, guard);'))
     assert.ok(!/res\.stdout \|\| ""\}`\.includes\(guard\.blockedPrefix\)/.test(src), 'stdout 부분 문자열 판정이 되살아났다')
     assert.ok(has('const remoteBefore = remoteHeads();') && has('const remoteAfter = remoteHeads();'))
+    // 2026-11-11 깃러너: 원격 변화 중 워커가 낸 것만 STOP — 다른 창의 main·새 갈래 push 로 멈추지 않는다
+    assert.ok(has('const remoteChanged = remoteMoved(remoteBefore, remoteAfter);'), '문자열 전체 비교 대신 remoteMoved')
+    assert.ok(!has('remoteBefore !== remoteAfter'), '문자열 전체 비교가 되살아났다')
     assert.ok(has('guard?.cleanup();'), 'finally 에서 shim 정리')
   })
   it('무인 커밋 자리 제한(#4) — detached 또는 auto/* 에서만 · 커밋 시점에도 재확인', () => {
@@ -230,5 +239,30 @@ describe('[engine-guards] 품질 보고서 신선도 · 판정 일치(2026-10-08
   it('실패 종류는 qualityFailureKind 가 가른다(not-required 커버리지는 coverage 실패가 아니다)', () => {
     assert.ok(has('const kind = qualityFailureKind(q.policy, failedGate);'))
     assert.ok(!src.includes("q.policy.coverage.result !== 'pass' ? 'coverage'"))
+  })
+})
+
+describe('[engine-guards] state.json 은 원자적으로 쓴다(2026-11-15 ENOSPC 로 0바이트 → 구현자 기록 소실 실사고)', () => {
+  it('state.json 직접 덮어쓰기가 남아 있지 않고 모든 쓰기가 writeFileAtomic 을 거친다', () => {
+    assert.ok(!/writeFileSync\(stateFile\b/.test(src), 'stateFile 직접 writeFileSync 가 남아 있다')
+    assert.ok((src.match(/writeFileAtomic\(stateFile, /g) ?? []).length >= 3)
+    assert.ok(has("import { readRecord, writeFileAtomic } from './schema-migration.mjs';"))
+  })
+  it('writeFileAtomic — 기존 파일을 바꿔 끼우고(Windows rename 덮어쓰기) 임시 파일을 남기지 않는다 · 쓰기 실패면 원본 그대로', async () => {
+    const { mkdtempSync, writeFileSync: wf, readdirSync, readFileSync: rf, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { writeFileAtomic } = await import('./schema-migration.mjs')
+    const dir = mkdtempSync(join(tmpdir(), 'atomic-'))
+    try {
+      const f = join(dir, 'state.json')
+      wf(f, '{"done":{"a::dev":"1"}}')
+      writeFileAtomic(f, '{"done":{"b::dev":"2"}}')
+      assert.equal(rf(f, 'utf8'), '{"done":{"b::dev":"2"}}')
+      assert.deepEqual(readdirSync(dir), ['state.json'])
+      // 임시 파일을 쓸 수 없으면(디스크 가득·경로 없음 대용) 던지고, 원본은 손대지 않는다
+      assert.throws(() => writeFileAtomic(join(dir, 'no-such-dir', 'state.json'), 'x'))
+      assert.equal(rf(f, 'utf8'), '{"done":{"b::dev":"2"}}')
+      assert.deepEqual(readdirSync(dir), ['state.json'])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })

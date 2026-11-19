@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { limitNoWorkKeys, SOFT_STOP_CONTINUE_MAX, isStoryLevelStop, shouldArchiveEvidence, evidenceLogKeep, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, waitAuthMin , orchestratorLadder, shouldLadderOn, restoreDevProvenance } from './runner-rules.mjs'
+import { limitNoWorkKeys, SOFT_STOP_CONTINUE_MAX, isStoryLevelStop, shouldArchiveEvidence, evidenceLogKeep, REVIEW_PENDING_EXIT, isReviewPendingExit, worseExit, CHAIN_MAX_AGE_DAYS, GATE_EXECUTABLES, LOCK_HB_STALE_MS, PARALLEL_MAX, SLOT_WAIT_AUTH_MIN, allowNewUnderChain, conflictFingerprint, downSyncDecision, fileListConflicts, inheritPlan, integrationGateInvocation, landingResolution, limitRefundKeys, lockAction, nextStops, notifyChannel, parallelPlan, parseFileList, progressedStoryKeys, refundUnrun, roundDidRealWork, shouldContinueLoop, spendBlockNotice, stopBlocked, stopRecord, stopWindowId, stripConflictMarkers, resolveSprintStatusConflict, SPRINT_STATUS_PATH, mergeStateJson, waitAuthMin , orchestratorLadder, shouldLadderOn, restoreDevProvenance, provenanceStopFromSlots, isLogArtifactPath, LOG_LEDGER_KEEP_RE } from './runner-rules.mjs'
 
 const RUN_NIGHT_URL = new URL('./run-night.mjs', import.meta.url)
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -103,14 +103,14 @@ describe('[OPS-2] 러너 판정 규칙', () => {
   it('landing 자동 해소 판정 — 로그 union·state ours·공유 장부 union, 그 외 1건이라도 섞이면 null (2026-08-28 11-4∥11-7 실사고)', () => {
     const LOGS = '_bmad-output/implementation-artifacts/auto-pipeline-logs'
     assert.deepEqual(landingResolution([`${LOGS}/run-summary.log`]), { [`${LOGS}/run-summary.log`]: 'union' })
-    assert.deepEqual(landingResolution([`${LOGS}/state.json`]), { [`${LOGS}/state.json`]: 'ours' })
+    assert.deepEqual(landingResolution([`${LOGS}/state.json`]), { [`${LOGS}/state.json`]: 'state' }) // 2026-10-29: ours → state(스토리 키 단위 · Astra #2)
     assert.deepEqual(landingResolution(['_bmad-output/implementation-artifacts/DECISIONS-INBOX.md']),
       { '_bmad-output/implementation-artifacts/DECISIONS-INBOX.md': 'union' })
     // 실사고 재현 — 세 파일 혼합은 전부 해소 가능
     assert.deepEqual(landingResolution([`${LOGS}/run-summary.log`, `${LOGS}/state.json`, '_bmad-output/implementation-artifacts/DECISIONS-INBOX.md']),
       {
         [`${LOGS}/run-summary.log`]: 'union',
-        [`${LOGS}/state.json`]: 'ours',
+        [`${LOGS}/state.json`]: 'state',
         '_bmad-output/implementation-artifacts/DECISIONS-INBOX.md': 'union',
       })
     // 코드 파일이 하나라도 섞이면 전체 null — 자동으로 뭉개지 않는다(보존 폴백)
@@ -187,6 +187,40 @@ describe('[OPS-2] 러너 판정 규칙', () => {
     // 처리 후에도 7연속 마커가 남는 비정형은 null — 호출부 보존 폴백
     assert.notEqual(stripConflictMarkers('<<<<<<< a\n<<<<<<<< 여덟개는 내용\n=======\nB\n>>>>>>> x\n'), null)
     assert.equal(stripConflictMarkers('내용\n======= 뒤에 말 붙은 줄은 마커 아님\n'), '내용\n======= 뒤에 말 붙은 줄은 마커 아님\n')
+  })
+  it('sprint-status 키 단위 병합 — 이웃 줄 충돌에서 착지 스토리 키만 theirs · 중복 키 0 · 새 키는 추가 (2026-09-25 d389a72f8 병렬 착지 중복 키 실사고)', () => {
+    assert.equal(landingResolution([SPRINT_STATUS_PATH])[SPRINT_STATUS_PATH], 'sprint')
+    // 본 트리(ours)는 2-1-a 를 review 로 바꿔 둔 채, 워크트리(theirs)는 2-2-b 를 review 로 바꿨다 — 같은 hunk 로 충돌
+    const c = 'development_status:\n<<<<<<< HEAD\n  2-1-a: review\n  2-2-b: ready-for-dev\n=======\n  2-1-a: ready-for-dev\n  2-2-b: review\n>>>>>>> pick\n  2-3-c: done\n'
+    assert.equal(resolveSprintStatusConflict(c, { preferKeys: ['2-2-b'] }), 'development_status:\n  2-1-a: review\n  2-2-b: review\n  2-3-c: done\n')
+    // union 이었다면 2-1-a·2-2-b 가 두 번씩 남았다
+    assert.equal((stripConflictMarkers(c).match(/^  2-1-a:/gm) ?? []).length, 2, '전제: union 은 중복 키를 만든다')
+    // 짧은 키(2-2)도 긴 슬러그(2-2-b-제목)에 매칭 · 2-20 은 매칭하지 않는다 · prefer 아닌 키는 ours 유지
+    const d = '<<<<<<< HEAD\n  2-2-b-제목: in-progress\n  2-20-x: review\n=======\n  2-2-b-제목: done\n  2-20-x: done\n  2-9-새키: backlog\n>>>>>>> pick\n'
+    assert.equal(resolveSprintStatusConflict(d, { preferKeys: ['2-2'] }), '  2-2-b-제목: done\n  2-20-x: review\n  2-9-새키: backlog\n')
+    // diff3 base 구간 폐기 · 충돌 없는 본문은 그대로 · 마커 잔존(비정형)은 null
+    assert.equal(resolveSprintStatusConflict('<<<<<<< HEAD\n  a: 1\n||||||| base\n  a: 0\n=======\n  a: 2\n>>>>>>> x\n', { preferKeys: ['a'] }), '  a: 2\n')
+    assert.equal(resolveSprintStatusConflict('  a: 1\n'), '  a: 1\n')
+    assert.equal(resolveSprintStatusConflict('<<<<<<< HEAD\n  a: 1\n'), null)
+    // (Astra 10-29 #7) 최상위 last_updated 도 키(ours 유지 · 두 번 안 남김) · 콜론 앞 공백은 같은 키 · 충돌 구간 키가 파일 다른 곳에 또 있으면 null
+    assert.equal(resolveSprintStatusConflict('<<<<<<< HEAD\nlast_updated: 2026-09-29\n=======\nlast_updated: 2026-09-30\n>>>>>>> x\n'), 'last_updated: 2026-09-29\n')
+    assert.equal(resolveSprintStatusConflict('<<<<<<< HEAD\n  2-1-a : in-progress\n=======\n  2-1-a: review\n>>>>>>> x\n', { preferKeys: ['2-1-a'] }), '  2-1-a: review\n')
+    assert.equal(resolveSprintStatusConflict('  2-1-a: done\n<<<<<<< HEAD\n  2-1-a: in-progress\n=======\n  2-1-a: review\n>>>>>>> x\n', { preferKeys: ['2-1-a'] }), null, '기존 중복 키 위에 병합하지 않는다')
+  })
+  it('state.json 스토리 키 단위 병합 — ours 바탕 · 착지 스토리(<키>::<단계> · <키>)만 theirs · 다른 스토리 기록 보존 (Astra 10-29 #2)', () => {
+    const LOGS = '_bmad-output/implementation-artifacts/auto-pipeline-logs'
+    assert.equal(landingResolution([`${LOGS}/state.json`])[`${LOGS}/state.json`], 'state')
+    assert.equal(landingResolution([`${LOGS}/2-1-verification.json`])[`${LOGS}/2-1-verification.json`], 'ours')
+    const ours = JSON.stringify({ done: { '2-1-a::dev': 't1', '2-1-a::qa': 't1', '2-2-b::dev': 'stale' }, workers: { '2-1-a::dev': { model: 'opus' } }, quality: { '2-1-a': { fingerprint: 'f1' } }, holds: { '2-2-b': 1 } })
+    const theirs = JSON.stringify({ done: { '2-2-b::dev': 't2', '2-2-b::qa': 't2' }, workers: { '2-2-b::dev': { model: 'sol' }, '2-1-a::dev': { model: 'WRONG' } }, quality: { '2-2-b': { fingerprint: 'f2' } }, reviews: { '2-2-b': { result: 'clean' } }, holds: {} })
+    const m = JSON.parse(mergeStateJson(ours, theirs, { preferKeys: ['2-2-b'] }))
+    assert.deepEqual(m.done, { '2-1-a::dev': 't1', '2-1-a::qa': 't1', '2-2-b::dev': 't2', '2-2-b::qa': 't2' })
+    assert.deepEqual(m.workers, { '2-1-a::dev': { model: 'opus' }, '2-2-b::dev': { model: 'sol' } }, '다른 스토리 항목은 ours 가 이긴다')
+    assert.deepEqual(m.quality, { '2-1-a': { fingerprint: 'f1' }, '2-2-b': { fingerprint: 'f2' } })
+    assert.deepEqual(m.reviews, { '2-2-b': { result: 'clean' } }, 'theirs 에만 있는 섹션은 더한다')
+    assert.deepEqual(m.holds, {}, '착지 스토리의 항목이 theirs 에 없으면(invalidate) 지운다')
+    assert.equal(mergeStateJson('{broken', theirs, { preferKeys: ['2-2-b'] }), null)
+    assert.equal(mergeStateJson('[]', theirs, { preferKeys: ['2-2-b'] }), null)
   })
 })
 
@@ -649,10 +683,46 @@ describe('restoreDevProvenance — 감시자 구현자 기록 복원은 workers 
   })
   it('배선: 감시자 플레이북이 이 함수를 쓰고 반환 문구에 workers+done 을 적는다', () => {
     const wd = readFileSync(join(HERE, 'watchdog.mjs'), 'utf8')
-    assert.match(wd, /import \{ restoreDevProvenance, stopBlocked, stopWindowId \} from '\.\/runner-rules\.mjs'/)
+    assert.match(wd, /import \{ [^}]*\brestoreDevProvenance\b[^}]* \} from '\.\/runner-rules\.mjs'/)
     assert.match(wd, /restoreDevProvenance\(st, story, who, now\(\)\.toISOString\(\)\)/)
     assert.match(wd, /state\.json workers\+done\[\$\{K\}\]/)
     // 수리 결과 문구가 「미해소」로 오인되지 않는다(감시자 unresolved 판정 어휘)
     assert.doesNotMatch('state.json workers+done[2-31-x::dev] 확인 — 새로 적은 칸 done · 구현자 claude/opus', /미해결|사람 몫|실패|unfixed|skipped/)
+  })
+})
+
+describe('isLogArtifactPath — 로그 폴더의 새 산출 로그는 무인 커밋에 싣지 않는다(2026-10-28 러너 .git 10GB 실사고)', () => {
+  const L = '_bmad-output/implementation-artifacts/auto-pipeline-logs/'
+  it('산출 로그·워커 스크래치·하위 폴더는 산출물이다', () => {
+    for (const f of ['2-129-콘텐츠-후보-dev.log', '1-122-flip.log', '3-26-quality.json', '1-21-repair1-probe.mjs', 'x-diff.txt', 'quality-cache/abc.json', '13-19/round.log', 'engine-drift-2026.patch'])
+      assert.equal(isLogArtifactPath(L + f), true, f)
+  })
+  it('장부(검증 매니페스트·배치 매니페스트·계측·state·라운드 파일)는 산출물이 아니다 · 로그 폴더 밖은 항상 false', () => {
+    for (const f of ['2-129-콘텐츠-후보-verification.json', '7-5-verification.rollback-AUTO-3.json', 'batch-2026-10-28-123-manifest.json', 'metrics-AUTO-3.json', 'state.json', 'exit-info.json', 'run-summary.log', 'night-last-run.md', 'integration-gate.log', 'landing-quality.json'])
+      assert.equal(isLogArtifactPath(L + f), false, f)
+    assert.equal(isLogArtifactPath('src/a.log'), false)
+    assert.equal(isLogArtifactPath('_bmad-output/implementation-artifacts/2-1.md'), false)
+    assert.equal(isLogArtifactPath(L.replaceAll('/', '\\') + '2-1-dev.log'), true, '역슬래시 경로')
+    assert.ok(LOG_LEDGER_KEEP_RE.test('state.json'))
+  })
+})
+
+describe('provenanceStopFromSlots — exit-info 없이도 슬롯 출력에서 「구현자 기록 부재」를 알아본다(2026-11-15 4-74 실사고)', () => {
+  const K = '4-74-점검표-양식-편집-저장-실패-안내가-없는-단추를-가리키는-것-수리'
+  const slot = (tail) => ['워크트리 기준: auto/2026-11-15', '# 야간 배치 2026-11-15 — 라운드 1', `──────── STORY ${K} ────────`, ...tail]
+  it('마지막 exit 5 중단 줄 바로 앞의 「⏸ [키] review: 실제 구현자 모델 기록이 없어」 → 스토리 키', () => {
+    const lines = slot([`⏸ [${K}] review: 실제 구현자 모델 기록이 없어 교차 제공자 리뷰를 증명할 수 없다`, '- 배치 매니페스트: x', '- **중단(exit 5)**: 마감 재검수 — 4-74 점검표 양식 저장 실패 안내'])
+    assert.deepEqual(provenanceStopFromSlots(lines), { story: K })
+  })
+  it('마지막 중단이 다른 원인·다른 exit 이거나, 원인 줄이 다른 스토리 구간·이전 슬롯에 있으면 null', () => {
+    assert.equal(provenanceStopFromSlots(slot([`⏸ [${K}] review: 실제 구현자 모델 기록이 없어 …`, '- **중단(exit 5)**: a', '──────── STORY 1-1-x ────────', '- **중단(exit 1)**: b'])), null)
+    assert.equal(provenanceStopFromSlots(slot(['⏸ [1-1-x] review: no eligible model; shared cooldown applies', '- **중단(exit 5)**: a'])), null)
+    assert.equal(provenanceStopFromSlots([`⏸ [${K}] review: 실제 구현자 모델 기록이 없어 …`, '- **중단(exit 5)**: a', '워크트리 기준: auto/2026-11-15', '# 야간 배치 — 라운드 1']), null)
+    assert.equal(provenanceStopFromSlots([]), null)
+  })
+  it('감시자는 이 서명을 플레이북 「구현자 기록 부재」로 넘긴다(exit-info 가 없을 때 대신 쓴다)', () => {
+    const wd = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'watchdog.mjs'), 'utf8')
+    assert.match(wd, /provenanceStopFromSlots\(slots\)/)
+    assert.match(wd, /why: 'missing implementation provenance'/)
   })
 })

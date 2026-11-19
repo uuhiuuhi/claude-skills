@@ -78,6 +78,26 @@ if (m) {
   if (process.env.E2E_DUMP_ENV === '1') writeFileSync(join(process.env.E2E_STATE, 'worker-env.json'), JSON.stringify({ keys: Object.keys(process.env), allowProtocol: process.env.GIT_ALLOW_PROTOCOL || null, sshCommand: process.env.GIT_SSH_COMMAND || null }))
   if (action === 'push') runGit('push origin HEAD:main')
   if (action === 'commit-reset') { runGit('commit -q -am "worker sneak"'); runGit('reset --hard HEAD~1') }
+  if (action === 'foreign-push') {
+    // 2026-11-11 깃러너: **다른 창**이 워커 실행 중에 main 과 새 갈래를 올린다(따로 복제한 폴더 · 이 클론에 없는 새 커밋)
+    const url = absGit(['remote', 'get-url', 'origin']).stdout.trim()
+    const other = join(process.env.E2E_STATE, 'other-window')
+    absGit(['clone', '-q', url, other])
+    const og = (a) => { const r = spawnSync(process.env.E2E_REAL_GIT, ['-C', other, ...a], { encoding: 'utf8', env: { ...process.env, GIT_ALLOW_PROTOCOL: 'file:https:ssh', GIT_TERMINAL_PROMPT: '0' } }); log('othergit[' + a.join(' ') + '] exit=' + r.status + (r.status ? ' ' + String(r.stderr).trim().split('\n').slice(-2).join(' / ') : '')); return r }
+    // 픽스처 러너는 main 위에서 돈다(실제 러너는 auto/<날짜>) — 다른 창은 러너 자기 갈래가 아닌 기존 갈래 release 와 새 갈래를 올린다
+    og(['checkout', '-q', '-B', 'w', 'origin/release'])
+    writeFileSync(join(other, 'other.txt'), 'y\n')
+    og(['add', '-A']); og(['-c', 'user.email=o@x', '-c', 'user.name=o', 'commit', '-q', '-m', 'other window'])
+    og(['push', 'origin', 'HEAD:refs/heads/release', 'HEAD:refs/heads/auto/other-window'])
+  }
+  if (action === 'foreign-branch-at-known') {
+    // 2026-11-11 낮: 다른 창이 **새 커밋 없이** main 위에 새 갈래만 올린다(이 클론에도 그 커밋이 있다)
+    const url = absGit(['remote', 'get-url', 'origin']).stdout.trim()
+    const other = join(process.env.E2E_STATE, 'other-window2')
+    absGit(['clone', '-q', url, other])
+    const r = spawnSync(process.env.E2E_REAL_GIT, ['-C', other, 'push', 'origin', 'refs/remotes/origin/release:refs/heads/auto/deploy-at-main'], { encoding: 'utf8', env: { ...process.env, GIT_ALLOW_PROTOCOL: 'file:https:ssh', GIT_TERMINAL_PROMPT: '0' } })
+    log('othergit2[push auto/deploy-at-main] exit=' + r.status)
+  }
   if (action === 'abs-push') {
     writeFileSync(join(cwd, 'sneak.txt'), 'x\n')
     absGit(['add', '-A']); absGit(['-c', 'user.email=w@x', '-c', 'user.name=w', 'commit', '-q', '-m', 'sneak'])
@@ -420,6 +440,31 @@ describe('[engine-e2e][#2] baseline 폴백 diff 도 마스킹된다 — 최종 d
   })
 })
 
+// ── 2026-11-15 1-193 실사고 — 기록 정리 스토리가 baseline_commit 없이 만들어져 리뷰 대상 0(exit 4)이 매 슬롯 반복 ──────────
+describe('[engine-e2e][기준점 없음] baseline_commit 이 없으면 스토리 파일을 처음 추가한 커밋의 부모부터 리뷰한다 · 문서 전용 변경도 리뷰 대상', { timeout: 180_000 }, () => {
+  it('워킹트리 clean + baseline 없음 + 바뀐 파일이 스토리 md·deferred-work·sprint-status 뿐 → 그 문서 diff 가 codex 리뷰로 간다', () => {
+    const fx = makeFixture({ stories: {} })
+    // 스토리 등재 + 기록 정리 작업이 이미 커밋됐다(STOP 잔여물 보존 커밋과 같은 모양) — frontmatter 에 baseline_commit 이 없다
+    writeFileSync(join(fx.art, '2-1-a.md'), STORY('2-1-a', '_bmad-output/implementation-artifacts/deferred-work.md').replace('Status: ready-for-dev', 'Status: review'))
+    writeFileSync(join(fx.art, 'sprint-status.yaml'), 'last_updated: 2026-11-15\ndevelopment_status:\n  2-1-a: review\n')
+    writeFileSync(join(fx.art, 'deferred-work.md'), '# Deferred\n\n- ~~이미 고친 줄~~ — ✅ 해소(2026-11-15 · Story 2-1-a)\n')
+    writeFileSync(join(fx.art, 'auto-pipeline-logs', 'run-summary.log'), 'ledger only\n')
+    ok(git(fx.proj, ['add', '-A']), 'add')
+    ok(git(fx.proj, ['commit', '-q', '-m', 'STOP 잔여물 보존 — 2-1-a']), 'commit')
+    const r = runEngine(fx, { args: ['--stages', 'review', '--review-model', 'codex'] })
+    assert.equal(r.status, 0, r.out.slice(-2000))
+    assert.match(r.out, /baseline_commit 없음 — 스토리 파일을 처음 추가한 커밋\([0-9a-f]{7}\)의 부모 [0-9a-f]{7} 를 기준점으로 쓴다/)
+    assert.match(r.prompt, /\.\.HEAD/, 'baseline 폴백 경로여야 한다')
+    // 커밋된 라운드의 공용 기록 문서는 본문 대신 「직접 열어 확인」 표식으로 간다(73f15b9) — 그래도 리뷰 대상에서 빠지지 않는다
+    assert.match(r.reviewDiff, /\[공용 기록 문서 — [^\]]*직접 열어 확인: _bmad-output\/implementation-artifacts\/deferred-work\.md\]/)
+    assert.match(r.reviewDiff, /^diff --git a\/_bmad-output\/implementation-artifacts\/2-1-a\.md /m)
+    // 공용 기록 문서는 파일별 필수 열람이 아니다(Claude 리뷰 required 와 같은 규칙) — 스토리·diff 만 연 clean 이 통과한다
+    assert.ok(!/변경 구현 파일\(\d+건 중 0건 열람\)/.test(r.out), r.out.slice(-1500))
+    assert.ok(!r.reviewDiff.includes('ledger only'), '엔진 장부(auto-pipeline-logs)는 계속 리뷰 밖')
+    assert.ok(!/리뷰 대상 diff 가 비어/.test(r.out))
+  })
+})
+
 // ── 리뷰 diff 범위(2026-10-02 5-18·4-18 오귀속 실사고) — 같은 갈래의 다른 활성 스토리 소유 파일은 리뷰 범위 밖 ──────────
 describe('[engine-e2e][범위] baseline..HEAD 에 섞인 다른 활성 스토리의 File List 파일은 리뷰 diff 에서 빠진다', { timeout: 180_000 }, () => {
   const setup = () => {
@@ -439,15 +484,38 @@ describe('[engine-e2e][범위] baseline..HEAD 에 섞인 다른 활성 스토리
     const r = runEngine(fx, { args: ['--stages', 'review', '--review-model', 'codex'] })
     assert.equal(r.status, 0, r.out.slice(-2000))
     assert.match(r.reviewDiff, /^diff --git a\/src\/a\.ts b\/src\/a\.ts$/m)
-    assert.match(r.reviewDiff, /^diff --git a\/src\/c\.ts b\/src\/c\.ts$/m, '소유 불분명 파일은 남겨야 한다(보수적)')
+    // 커밋된 라운드(baseline..HEAD)는 자기 File List 로 한정 — 소유 불분명 파일도 표식만(2026-11-12 7-23 · 251파일 → 열람 근거 5/251)
+    assert.ok(!/^diff --git a\/src\/c\.ts/m.test(r.reviewDiff), '커밋된 라운드에서 File List 밖 파일 본문이 실렸다')
+    assert.match(r.reviewDiff, /\[리뷰 범위 밖 — 커밋된 라운드: File List 밖 1건 · 다른 활성 스토리 소유 1건 본문 생략\]/)
+    assert.match(r.log('run-summary.log'), /커밋된 라운드 — 이 스토리 File List 밖 1건 범위 제외\(src\/c\.ts\)/)
     assert.ok(!/^diff --git a\/src\/b\.ts/m.test(r.reviewDiff), '다른 활성 스토리 소유 파일 본문이 실렸다')
     assert.ok(!r.reviewDiff.includes('export const b = 2'), '다른 스토리 본문이 실렸다')
-    assert.match(r.reviewDiff, /\[리뷰 범위 밖 — 다른 활성 스토리\(2-2-b\) 소유: src\/b\.ts\]/)
     const list = r.prompt.slice(r.prompt.indexOf('- 변경 파일:'), r.prompt.indexOf('## 방법'))
     assert.ok(!list.includes('src/b.ts'), list)
     assert.match(r.prompt, /\[다른 스토리 소관: <경로>\]/)
     assert.match(r.prompt, /제외된 파일 목록: src\/b\.ts\(2-2-b\)/)
     assert.match(r.log('run-summary.log'), /리뷰 범위 밖 1건 — 다른 활성 스토리 소유: src\/b\.ts\(2-2-b\)/)
+  })
+  // 2026-11-12 7-23 후속 — 덤프에 표식 줄 수백 개 + 공용 기록 문서 본문이 남아 343KB(검토자가 Read 못 함 → 열람 근거 5/6)
+  it('커밋된 라운드 덤프 = 범위 안 경로만(pathspec) · 한글 이름 이웃 파일 본문 0 · 공용 기록 문서는 표식만', () => {
+    const fx = makeFixture({ stories: { '2-1-a': 'src/a.ts', '2-2-b': 'src/b.ts' } })
+    const base = git(fx.proj, ['rev-parse', 'HEAD']).stdout.trim()
+    writeFileSync(join(fx.proj, 'src', 'a.ts'), 'export const a = 2\n')
+    writeFileSync(join(fx.art, '9-9-한글-이웃-스토리.md'), '# 이웃\n\nKOREAN_NEIGHBOR_BODY\n') // 소유 불분명 · 한글 경로
+    writeFileSync(join(fx.art, 'deferred-work.md'), '# Deferred\n\nOTHER_STORY_LEDGER_LINE\n') // 공용 기록 문서(File List 에 있음)
+    const md = join(fx.art, '2-1-a.md')
+    writeFileSync(md, readFileSync(md, 'utf8')
+      .replace('# Story 2-1-a', `# Story 2-1-a\nbaseline_commit: ${base}`)
+      .replace('- `src/a.ts`', '- `src/a.ts`\n- `_bmad-output/implementation-artifacts/deferred-work.md`'))
+    ok(git(fx.proj, ['add', '-A']), 'add')
+    ok(git(fx.proj, ['commit', '-q', '-m', 'round 1 + 이웃']), 'commit')
+    const r = runEngine(fx, { args: ['--stages', 'review', '--review-model', 'codex'] })
+    assert.equal(r.status, 0, r.out.slice(-2000))
+    assert.match(r.reviewDiff, /^diff --git a\/src\/a\.ts b\/src\/a\.ts$/m)
+    assert.ok(!r.reviewDiff.includes('KOREAN_NEIGHBOR_BODY'), '한글 경로 이웃 파일 본문이 덤프에 실렸다')
+    assert.ok(!r.reviewDiff.includes('OTHER_STORY_LEDGER_LINE'), '공용 기록 문서 본문이 덤프에 실렸다')
+    assert.match(r.reviewDiff, /\[공용 기록 문서 — 커밋된 라운드라 .*: _bmad-output\/implementation-artifacts\/deferred-work\.md\]/)
+    assert.ok(!/^diff --git .*deferred-work\.md/m.test(r.reviewDiff))
   })
   it('리뷰어가 [다른 스토리 소관] 지적(high)을 내면 이 스토리 Patch 로 세지 않고 닫아 deferred-work 로 이관 → done', () => {
     const fx = setup()
@@ -471,6 +539,7 @@ describe('[engine-e2e][범위] baseline..HEAD 에 섞인 다른 활성 스토리
     assert.match(prompt, /\[다른 스토리 소관: <경로>\]/)
     assert.match(prompt, /제외된 파일 목록: src\/b\.ts\(2-2-b\)/)
     assert.ok(!/REVIEW_INPUTS_JSON:.*src\/b\.ts/.test(prompt), '제외 파일이 필수 열람 목록에 남았다')
+    assert.ok(!/REVIEW_INPUTS_JSON:.*src\/c\.ts/.test(prompt), '커밋된 라운드의 File List 밖 파일이 필수 열람 목록에 남았다(2026-11-12 7-23 5/251)')
     const md = readFileSync(join(fx.art, '2-1-a.md'), 'utf8')
     assert.match(md, /^- \[x\] ~~\[Review\]\[Patch\]\[medium\] \[다른 스토리 소관: src\/b\.ts\] 이웃 화면 정렬 .*~~ — ⏭️ 다른 스토리 소관: src\/b\.ts\(이관 · 소유 2-2-b · \d{4}-\d{2}-\d{2}\)$/m)
     assert.match(readFileSync(join(fx.art, 'deferred-work.md'), 'utf8'), /^## Deferred from: bmad-code-review of 2-1-a \(\d{4}-\d{2}-\d{2}\) — 다른 스토리 소관\(소유 = 2-2-b\)$/m)
@@ -549,6 +618,19 @@ describe('[engine-e2e][#6] `--commit` 은 auto/* 또는 detached 에서만', { t
     assert.equal(r.status, 0, r.out.slice(-2000))
     assert.match(git(fx.proj, ['rev-parse', '--abbrev-ref', 'HEAD']).stdout, /^auto\/2026-09-02/)
     assert.equal(commitsAhead(fx.proj).length, 1, '스토리 커밋 1건')
+  })
+  it('(2026-10-28) 스토리 커밋에 새 산출 로그(dev.log 등)는 싣지 않고 장부(verification.json·state.json)만 싣는다 · 로그는 트리에 미추적으로 남는다', () => {
+    const fx = makeFixture()
+    const r = runEngine(fx, { args: ['--stages', 'dev,review', '--commit', '--branch', 'auto/2026-10-28'] })
+    assert.equal(r.status, 0, r.out.slice(-2000))
+    assert.match(r.out, /산출 로그 \d+건은 커밋에서 제외/)
+    const files = git(fx.proj, ['-c', 'core.quotePath=false', 'show', '--name-only', '--format=', 'HEAD']).stdout
+    assert.match(files, /auto-pipeline-logs\/2-1-a-verification\.json/, '검증 매니페스트가 커밋에 없다: ' + files)
+    assert.match(files, /auto-pipeline-logs\/state\.json/, 'state.json 이 커밋에 없다: ' + files)
+    assert.ok(!/-dev\.log|-review\.log|-quality\.json/.test(files), '산출 로그가 커밋에 실렸다: ' + files)
+    assert.ok(existsSync(join(fx.art, 'auto-pipeline-logs', '2-1-a-dev.log')), 'dev.log 는 트리에 남아야 한다')
+    const status = git(fx.proj, ['-c', 'core.quotePath=false', 'status', '--porcelain', '--untracked-files=all']).stdout
+    assert.match(status, /^\?\? .*auto-pipeline-logs\/2-1-a-dev\.log/m, '미추적으로 남아야 한다: ' + status)
   })
   it('detached 워크트리(러너 landing 모드) → 종전대로 커밋된다', () => {
     const fx = makeFixture()
@@ -777,6 +859,26 @@ describe('[engine-e2e][N2] shim 우회(절대경로 git + GIT_ALLOW_PROTOCOL 재
     assert.equal(r.status, 6, r.out.slice(-3000))
     assert.match(r.out, /원격 ref 가 실행 전후로 달라졌다/)
     assert.ok(originHeads(fx.proj).length > before.length, '전제: 원격이 실제로 늘었다(차단이 아니라 탐지다)')
+  })
+  it('(2026-11-11 깃러너) 다른 창이 워커 실행 중 다른 갈래·새 갈래를 올려도 STOP 하지 않는다', { skip: REAL_GIT ? false : 'git 없음' }, () => {
+    const fx = makeFixture()
+    git(fx.proj, ['push', '-q', 'origin', 'HEAD:refs/heads/release'])
+    const before = originHeads(fx.proj)
+    const r = runEngine(fx, { args: ['--stages', 'dev'], env: { E2E_DEV_ACTION: 'foreign-push' } })
+    assert.match(r.calls, /othergit\[push origin HEAD:refs\/heads\/release HEAD:refs\/heads\/auto\/other-window\] exit=0/, '전제: 다른 창 push 가 실제로 성공했다')
+    assert.ok(originHeads(fx.proj).length > before.length, '전제: 원격이 실제로 바뀌었다')
+    assert.doesNotMatch(r.out, /원격 ref 가 실행 전후로 달라졌다/)
+    assert.notEqual(r.status, 6, r.out.slice(-3000))
+  })
+  it('(2026-11-11 낮) 다른 창이 커밋 없이 기존 커밋 위에 새 갈래만 올려도 STOP 하지 않는다', { skip: REAL_GIT ? false : 'git 없음' }, () => {
+    const fx = makeFixture()
+    git(fx.proj, ['push', '-q', 'origin', 'HEAD:refs/heads/release'])
+    const before = originHeads(fx.proj)
+    const r = runEngine(fx, { args: ['--stages', 'dev'], env: { E2E_DEV_ACTION: 'foreign-branch-at-known' } })
+    assert.match(r.calls, /othergit2\[push auto\/deploy-at-main\] exit=0/, '전제: 다른 창 push 가 실제로 성공했다')
+    assert.ok(originHeads(fx.proj).length > before.length, '전제: 원격에 새 갈래가 생겼다')
+    assert.doesNotMatch(r.out, /원격 ref 가 실행 전후로 달라졌다/)
+    assert.notEqual(r.status, 6, r.out.slice(-3000))
   })
   it('워커가 절대경로 git 으로 commit→reset 하면 HEAD 는 같아도 reflog 지문 변화로 exit 6', { skip: REAL_GIT ? false : 'git 없음' }, () => {
     const fx = makeFixture()

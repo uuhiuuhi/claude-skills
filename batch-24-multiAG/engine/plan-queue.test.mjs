@@ -179,6 +179,20 @@ describe('[OPS-1] 편성 규칙 8종', () => {
     assert.equal((queue.validation?.errors ?? []).length, 0, '검증기 ④ 가 review 전용 배치의 겹침을 충돌로 세면 안 된다')
   })
 
+  it('규칙 5 — **다른 에픽**이라도 같은 종류·같은 단계면 한 배치로 묶는다 (2026-10-29 👤 「병렬 2폭인데 배치가 1건씩」 · 에픽마다 하나씩이면 순차로 돌던 실사고)', () => {
+    // 마감 재검수(review 전용) 2-1-a(에픽 2) + 3-1-c(에픽 3) → 한 배치 · 회수(dev) 2-2-b + 3-2-d(File List 서로소) → 한 배치 · 종류가 다르면 섞지 않는다
+    const rec = story({ findings: '- [ ] [Review][Patch] a' })
+    const { queue } = run({
+      sprint: '  2-1-a: review\n  3-1-c: review\n  2-2-b: review\n  3-2-d: review\n',
+      stories: { '2-1-a': story(), '3-1-c': story(), '2-2-b': rec, '3-2-d': rec.replace('`src/a.ts`', '`src/d.ts`') },
+    })
+    const byStages = (st) => queue.batches.filter((b) => b.stages.join() === st)
+    assert.equal(queue.batches.length, 2, JSON.stringify(queue.batches))
+    assert.deepEqual(byStages('review')[0].stories.sort(), ['2-1-a', '3-1-c'])
+    assert.deepEqual(byStages('dev')[0].stories.sort(), ['2-2-b', '3-2-d'])
+    assert.equal((queue.validation?.errors ?? []).length, 0, JSON.stringify(queue.validation))
+  })
+
   it('규칙 6 — 부정문 「새 화면 0 이므로 목업 선행 대상이 아니다(UX-DR-27 단서)」 는 게이트 대상이 아니다 (2026-09-04 2.23 NO-OP STOP 실사고)', () => {
     const epics = '### Story 2.1: a\n**Then** 새 화면 0 이므로 목업 선행 대상이 아니다(UX-DR-27 단서) — 대신 스크린샷으로 잘림 0 을 확인한다.\n## 끝'
     const r = run({ sprint: '  2-1-a: backlog\n', epics })

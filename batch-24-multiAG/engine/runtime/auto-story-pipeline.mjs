@@ -88,19 +88,21 @@ import { safeGitPush } from "./push-guard.mjs";
 import { newTestsFromDiff, strengthenCompletion, renderCompletionNotes, reviewPendingOnly, recoveryPendingOnly } from "./completion-rules.mjs";
 import { StageRouter, preferredDevProvider } from './stage-router.mjs';
 import { readUsageSnapshot, reclassifySpend } from './usage-probe.mjs';
-import { policyRelief, MODEL_CATALOG, failureKind, providerOf, limitDowngradeMode, codexDevPolicy, codexDevAllowed, codexPairCross } from './model-policy.mjs';
+import { policyRelief, MODEL_CATALOG, failureKind, providerOf, limitDowngradeMode, codexDevPolicy, codexDevAllowed, codexPairCross, claudeCrossPolicy, claudePairCross } from './model-policy.mjs';
 import { storyRisk, storyDifficulty } from '../assign.mjs';
 import { readEvidenceFor } from './providers/codex.mjs';
 import { deepRedact } from './providers/redact.mjs';
 import { parseFileList, REVIEW_PENDING_EXIT } from '../runner-rules.mjs';
+import { unstageNewLogArtifacts } from '../worktree-refresh.mjs';
 import { countReviewRounds } from '../story-ledger.mjs';
 import { applyReviewTail, applyReviewTailBlock, routeForeignFindings } from './review-tail.mjs';
 import { safeReviewScope, dropFileSections, foreignScopeBrief, ownerOfPath, summarizeExcluded, isRunnerToolingPath, isSharedDocPath } from './review-scope.mjs';
 import { insertReviewFindings, setStoryStatus, setSprintStatus, appendDeferredWork, appendForeignDeferred, appendDecisionsInbox, appendCompletionNotes, countOpenFindings } from "./story-writes.mjs";
-import { detectGates, parseQaChain, classifyQaFailure, repairDecision, buildVerificationManifest, escalationReport } from "./quality-rules.mjs";
+import { detectGates, parseQaChain, classifyQaFailure, repairDecision, buildVerificationManifest, escalationReport, compactQualityLedger } from "./quality-rules.mjs";
 
 import { fingerprint as qualityFingerprint, qualityRunOutcome, qualityFailureKind } from './quality-gates.mjs';
-import { readRecord } from './schema-migration.mjs';
+import { readRecord, writeFileAtomic } from './schema-migration.mjs';
+import { acquireQaMutex } from './qa-mutex.mjs';
 const SKILL_DIR = dirname(fileURLToPath(import.meta.url));
 const CODEX_REVIEW_SCHEMA = join(SKILL_DIR, "providers", "codex-review.schema.json");
 
@@ -304,16 +306,18 @@ function markDone(story, stage) {
     }
   }
   if (stage === 'qa' && !dryRun) {
-    state.quality ??= {};
+    const fp = codeFingerprint();
+    // 지금 지문이 아닌 항목은 편성 판정 2칸만 남긴다 — 상세가 영구히 쌓이면 state.json 이 깃허브 100MB 한도를 넘어 체인 push 가 막힌다(2026-10-19)
+    state.quality = compactQualityLedger(state.quality, fp);
     const current = qualityLog[story] ?? {};
     const { diff = '', ...summary } = current;
     state.quality[story] = {
-      fingerprint: codeFingerprint(),
+      fingerprint: fp,
       result: deepRedact({ ...summary, testEvidence: newTestsFromDiff(diff) }),
     };
   }
   state.schema = "batch-24-multiag/state/1";
-  writeFileSync(stateFile, JSON.stringify(state, null, 2));
+  writeFileAtomic(stateFile, JSON.stringify(state, null, 2));
 }
 function invalidate(story, ...downstream) {
   if (dryRun) return;
@@ -324,7 +328,7 @@ function invalidate(story, ...downstream) {
   if (downstream.includes('qa')) delete state.quality?.[story];
   if (downstream.includes('review')) delete state.reviews?.[story];
   state.schema = "batch-24-multiag/state/1";
-  writeFileSync(stateFile, JSON.stringify(state, null, 2));
+  writeFileAtomic(stateFile, JSON.stringify(state, null, 2));
 }
 
 // ---- (U2) 사후조건: 스토리 산출물 확인 ----
@@ -580,7 +584,7 @@ const headSha = () => { const r = git(["rev-parse", "HEAD"]); return r.code === 
 const currentBranch = () => git(["rev-parse", "--abbrev-ref", "HEAD"]).out.trim();
 const stashCount = () => git(["stash", "list"]).out.split("\n").filter((l) => l.trim()).length;
 /** 워킹트리 지문 — 수리 워커의 사후조건(코드만 고쳐도 「일했다」 · F31) */
-const treeFingerprint = () => createHash("sha1").update(git(["diff", "HEAD", "--"]).out + "\n" + git(["ls-files", "--others", "--exclude-standard"]).out).digest("hex");
+const treeFingerprint = () => createHash("sha1").update(git(["diff", "HEAD", "--"]).out + "\n" + git(["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"]).out).digest("hex");
 // Content-based: committing the same code does not invalidate its QA; editing any code does.
 function codeFingerprint() { return qualityFingerprint(process.cwd()); }
 
@@ -594,12 +598,36 @@ const scrubLog = (t) => redactSecrets(t);
 function remoteHeads() {
   const names = git(["remote"]).out.split("\n").map((l) => l.trim()).filter(Boolean);
   if (!names.length) return "";
-  const parts = [];
+  const parts = [`remotes ${names.join(",")}`];
   for (const n of names) {
     const r = git(["ls-remote", "--heads", n], { timeout: 20000 });
-    if (r.code === 0) parts.push(`${n}\n${r.out.trim()}`);
+    if (r.code === 0) parts.push(...r.out.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => `${n} ${l.replace(/\s+/, " ")}`));
   }
   return parts.join("\n");
+}
+/** (2026-11-11 깃러너) 원격 변화 중 **워커가 낸 것**만 가린다 — 종전엔 문자열 전체 비교라 다른 창·깃러너가
+ *  main 이나 새 갈래를 올릴 때마다 워커가 STOP(exit 6)했다. 의심 = ① 원격 이름 목록 변화(sneak remote)
+ *  ② 러너 자기 갈래(--branch · 현재 갈래)의 변화 ③ **새로 생긴** 원격 ref 가 이 클론에 이미 있는 커밋을 가리킴
+ *  (워커는 로컬 커밋만 올릴 수 있다 · 다른 창의 새 갈래 커밋은 워커 실행 중엔 가져오지 않아 이 클론에 없다). */
+function remoteMoved(before, after) {
+  if (before === after) return false;
+  const split = (s) => { const [head, ...rest] = s.split("\n"); return { head, refs: new Map(rest.map((l) => { const [rem, sha, ref] = l.split(" "); return [`${rem} ${ref}`, sha]; })) }; };
+  const a = split(before), b = split(after);
+  if (a.head !== b.head) return true;
+  const cur = currentBranch();
+  const own = new Set([branchName, cur === "HEAD" ? "" : cur].filter(Boolean).map((x) => `refs/heads/${x}`));
+  // (2026-11-11 낮) 실행 전부터 원격에 공개돼 있던 커밋은 워커가 만든 것이 아니다 — 다른 창이 main 위에 커밋 없이
+  //   새 갈래만 만들면(예: auto/…-deploy-… = main 커밋 그대로) 이 클론에도 그 커밋이 있어 종전엔 STOP 했다(1-178 실사고).
+  const known = [...new Set([...a.refs.values()])].filter((x) => git(["cat-file", "-e", `${x}^{commit}`]).code === 0);
+  const workerMade = (sha) => git(["cat-file", "-e", `${sha}^{commit}`]).code === 0
+    && git(["rev-list", "-n", "1", sha, ...(known.length ? ["--not", ...known] : [])]).out.trim() !== "";
+  for (const [k, sha] of b.refs) {
+    const ref = k.slice(k.indexOf(" ") + 1);
+    if (own.has(ref) && a.refs.get(k) !== sha) return true;
+    if (!a.refs.has(k) && workerMade(sha)) return true;
+  }
+  for (const k of a.refs.keys()) if (own.has(k.slice(k.indexOf(" ") + 1)) && !b.refs.has(k)) return true;
+  return false;
 }
 /** (N2) 로컬 git 이동의 흔적 — HEAD reflog 엔트리 수 + 모든 로컬 ref.
  *  절대경로 git 우회로 `commit → reset` 을 해도 **reflog 는 자란다**(HEAD 값은 원상복구돼도 기록은 남는다).
@@ -639,7 +667,8 @@ function discardPartialWork(stage, story) {
   git(["clean", "-fdq", "-e", "_bmad-output/implementation-artifacts/auto-pipeline-logs"]);
   note(`   ↺ [${story}] 벤더 전환 — 이전 워커의 부분 산출물 폐기(HEAD 로 되돌림 · 이어받기 금지)`);
 }
-// 커밋 금지 경로(스테이징 후 검출 → 전체 unstage + STOP). auto-pipeline-logs/ 의 .log 는 정식 산출물이라 허용.
+// 커밋 금지 경로(스테이징 후 검출 → 전체 unstage + STOP). auto-pipeline-logs/ 의 **추적 중인** .log 변경은 정식 산출물이라 허용 —
+// 단 **새** 산출 로그는 commitStory 가 스테이징에서 뺀다(2026-10-28 러너 .git 10GB 실사고 · worktree-refresh.unstageNewLogArtifacts · 장부만 추적).
 const DENY_PATH_RE = /(^|\/)(\.env(\..*)?$|.*\.local\.[^/]+$|scratch-[^/]*$|.*\.(pem|key|p12|pfx)$|.*secrets?\.(json|ya?ml)$)/i;
 const DENY_LOG_RE = /\.log$/i;
 // 스테이징 diff 추가 줄의 시크릿 패턴(값이 실제로 붙은 형태만 — 이름·정규식 정의는 통과)
@@ -739,6 +768,11 @@ function commitStory(story, stagesDone) {
   if (paths.length === 0) { note(`ℹ [${story}] 커밋 화이트리스트 경로가 하나도 없음 — 커밋 생략.`); return null; }
   const add = git(["add", "-A", "--", ...paths]);
   if (add.code !== 0) note(`⚠ [${story}] git add 경고: ${add.err.trim().split("\n")[0]}`);
+  // (2026-10-28 러너 .git 10GB 실사고) 화이트리스트가 `_bmad-output` 전체를 담아 라운드마다 수 MB 의 새 .log/.json 이 스토리 커밋에 쓸려 왔다 —
+  // 새 산출 로그(장부 제외)는 뺀다. 실패하면 종전대로 실린다(저장소가 붓는 문제일 뿐 커밋의 안전 검사와는 무관 · 경고만).
+  const artifacts = unstageNewLogArtifacts({ cwd: process.cwd() });
+  if (artifacts.failed) note(`⚠ [${story}] 산출 로그 unstage 실패(종전대로 커밋에 실림): ${artifacts.failed}`);
+  else if (artifacts.dropped.length) note(`   ℹ [${story}] 산출 로그 ${artifacts.dropped.length}건은 커밋에서 제외(auto-pipeline-logs/ 새 파일 · 장부만 추적)`);
   const staged = git(["diff", "--cached", "--name-only"]).out.split("\n").map((l) => l.trim()).filter(Boolean);
   if (staged.length === 0) { note(`ℹ [${story}] 커밋할 변경 없음(스테이징 0).`); return null; }
   const denied = staged.filter((f) => DENY_PATH_RE.test(f) || (DENY_LOG_RE.test(f) && !f.includes("auto-pipeline-logs/")));
@@ -863,10 +897,18 @@ function trackedDiffExcludingSensitive(names, ref) {
   const base = ref ? [ref] : ["HEAD"];
   return git(["diff", ...base, "--", ":(top)", ...excl]).out;
 }
+/** 커밋된 라운드(ownOnly 가 실제로 적용된 경우) 전용 — 범위 안 경로만 pathspec 으로 뽑는다(2026-11-12 7-23 후속).
+ *  종전엔 baseline..HEAD 전체를 뽑은 뒤 본문 단계에서 빼서 표식 줄 수백 개 + 공용 기록 문서 본문(sprint-status 85KB·deferred-work 49KB —
+ *  대부분 다른 스토리 변경)이 남아 덤프가 343KB → 검토자가 Read 로 못 열고 Bash 로만 봄 → 열람 근거 5/6. quotepath=false = 한글 경로 표기 보호. */
+function trackedDiffForPaths(paths, ref) {
+  const keep = paths.filter((f) => !isSensitivePath(f) && !isLedgerPath(f)).map((f) => `:(top,literal)${f}`);
+  if (!keep.length) return "";
+  return git(["-c", "core.quotepath=false", "diff", ref, "--", ...keep]).out;
+}
 
 // (2026-10-02 5-18·4-18 오귀속 실사고) 리뷰 범위 좁히기 — 「이 스토리 File List 밖 + 경로에 스토리 키 없음 + 다른 활성 스토리 File List 소유」만 뺀다.
 // 순수 판정은 review-scope.mjs · 여기는 파일 읽기와 fail-open 만 한다(어떤 오류도 리뷰를 막지 않는다 — 종전 전체 범위 + 경고 1줄).
-function scopeReviewFiles(story, storyFile, files) {
+function scopeReviewFiles(story, storyFile, files, ownOnly = false) {
   const warn = (m) => note(`⚠ [${story}] review: ${m}`);
   try {
     const readStory = (key) => { const f = findStoryFile(key); return f ? { key: basename(f, ".md"), file: rel(f), text: readFileSync(f, "utf8") } : null; };
@@ -874,36 +916,38 @@ function scopeReviewFiles(story, storyFile, files) {
       files, story, ownKey: storyFile ? basename(storyFile, ".md") : story,
       ownText: storyFile ? readFileSync(storyFile, "utf8") : null,
       sprintText: existsSync(sprintStatusFile) ? readFileSync(sprintStatusFile, "utf8") : null,
-      readStory,
+      readStory, ownOnly,
     }, warn);
     if (s.fallback && s.fallback !== "오류") warn(`리뷰 범위를 좁히지 않았다(${s.fallback}) — 종전 전체 범위로 리뷰한다`);
     return s;
   } catch (e) {
     warn(`리뷰 범위 좁히기 실패(${e?.message ?? e}) — 종전 전체 범위로 리뷰한다`);
-    return { kept: [...files], excludedByOwner: [], owners: [], fallback: "오류" };
+    return { kept: [...files], excludedByOwner: [], excludedOutside: [], owners: [], fallback: "오류" };
   }
 }
 
 function collectReviewDiff(story, storyFile, scoped) {
-  let excludedByOwner = [], owners = [];
-  // 이번 단계의 변경 파일 → 남길 집합(scoped=false 면 전부)
-  const narrow = (list) => {
+  let excludedByOwner = [], excludedOutside = [], owners = [], strict = false;
+  // 이번 단계의 변경 파일 → 남길 집합(scoped=false 면 전부) · ownOnly = 커밋된 라운드(baseline..HEAD)는 자기 File List 로 한정(2026-11-12 7-23)
+  const narrow = (list, ownOnly = false) => {
     if (!scoped || !list.length) return new Set(list);
-    const s = scopeReviewFiles(story, storyFile, list);
-    excludedByOwner = s.excludedByOwner; owners = s.owners;
+    const s = scopeReviewFiles(story, storyFile, list, ownOnly);
+    excludedByOwner = s.excludedByOwner; excludedOutside = s.excludedOutside ?? []; owners = s.owners; strict = Boolean(s.strict);
     return new Set(s.kept);
   };
   // 뺀 파일은 pathspec 이 아니라 diff 본문 단계에서 절째 들어낸다(파일 수가 많아도 명령줄 길이와 무관)
   const dropOwned = (diff) => {
-    if (!excludedByOwner.length) return diff;
+    if (!excludedByOwner.length && !excludedOutside.length) return diff;
     const dropped = new Map(excludedByOwner.map((e) => [e.file.replace(/\\/g, "/"), e.owner]));
-    return dropFileSections(diff, (p) => dropped.has(p), (p) => `[리뷰 범위 밖 — 다른 활성 스토리(${dropped.get(p) ?? "?"}) 소유: ${p}]`);
+    const outside = new Set(excludedOutside.map((f) => f.replace(/\\/g, "/")));
+    return dropFileSections(diff, (p) => dropped.has(p) || outside.has(p),
+      (p) => dropped.has(p) ? `[리뷰 범위 밖 — 다른 활성 스토리(${dropped.get(p) ?? "?"}) 소유: ${p}]` : `[리뷰 범위 밖 — 이 스토리 File List 밖(커밋된 라운드): ${p}]`);
   };
   // 리뷰 diff 에 자격증명이 실리면 그대로 외부 벤더로 나간다 — gitignore·추적 여부와 무관하게 env·키·시크릿
   // 파일은 ① pathspec 제외 ② unified diff 에서 파일 섹션째 제거 ③ 최종 확정 후 값 마스킹, 셋을 모두 건다
   // (2026-09-02 codex-review-r1 #1: 종전에는 `git diff HEAD` 본문에 추적된 `.env.production` 이 그대로 실렸다).
-  const allNames = splitLines(git(["diff", "--name-only", "HEAD", "--"]).out).filter((f) => !isLedgerPath(f));
-  const untracked = splitLines(git(["ls-files", "--others", "--exclude-standard"]).out)
+  const allNames = splitLines(git(["-c", "core.quotepath=false", "diff", "--name-only", "HEAD", "--"]).out).filter((f) => !isLedgerPath(f));
+  const untracked = splitLines(git(["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"]).out)
     .filter((f) => !f.includes("auto-pipeline-logs/") && !isSensitivePath(f));
   let keep = narrow([...allNames, ...untracked]);
   let names = allNames.filter((f) => keep.has(f));
@@ -918,30 +962,56 @@ function collectReviewDiff(story, storyFile, scoped) {
   if (!diff.trim() && storyFile) {
     // 이미 커밋된 라운드(재검수 등) — 스토리 frontmatter 의 baseline_commit 부터 HEAD 까지. 폴백 경로도 같은 규율이다
     // (종전에는 여기서 마스킹 **이후**에 원문 diff 로 덮어써 `sk-…`·URL 자격증명이 그대로 나갔다).
-    const base = /^baseline_commit:\s*([0-9a-f]{7,40})/m.exec(readFileSync(storyFile, "utf8"))?.[1];
+    // baseline_commit 이 없으면 그 스토리 파일을 처음 추가한 커밋의 부모를 쓴다 — 스토리 작업은 파일 등재 뒤에만 생기므로 그 부모..HEAD 가
+    // 이 스토리의 변경 전부를 덮는다(2026-11-15 1-193 실사고: 기록 정리 스토리가 baseline 없이 만들어져 리뷰 대상 0 → exit 4 가 매 슬롯 반복).
+    let base = /^baseline_commit:\s*([0-9a-f]{7,40})/m.exec(readFileSync(storyFile, "utf8"))?.[1];
+    if (!base) {
+      const added = splitLines(git(["log", "--diff-filter=A", "--format=%H", "--", storyFile]).out).pop();
+      const parent = added ? git(["rev-parse", "--verify", "-q", `${added}^`]) : null;
+      if (parent?.code === 0 && parent.out.trim()) {
+        base = parent.out.trim();
+        note(`⚠ [${story}] review: baseline_commit 없음 — 스토리 파일을 처음 추가한 커밋(${added.slice(0, 7)})의 부모 ${base.slice(0, 7)} 를 기준점으로 쓴다`);
+      }
+    }
     if (base && git(["cat-file", "-e", `${base}^{commit}`]).code === 0) {
-      excludedByOwner = []; owners = []; // 이 단계의 범위로 다시 판정한다
-      const committed = splitLines(git(["diff", "--name-only", `${base}..HEAD`, "--"]).out).filter((f) => !isLedgerPath(f));
-      keep = narrow(committed);
+      excludedByOwner = []; excludedOutside = []; owners = []; // 이 단계의 범위로 다시 판정한다
+      const committed = splitLines(git(["-c", "core.quotepath=false", "diff", "--name-only", `${base}..HEAD`, "--"]).out).filter((f) => !isLedgerPath(f));
+      keep = narrow(committed, true);
       names = committed.filter((f) => keep.has(f));
-      diff = !scoped || names.length ? dropOwned(trackedDiffExcludingSensitive(committed, `${base}..HEAD`)) : "";
+      // 범위 안 경로만 뽑는다 · 공용 기록 문서(sprint-status·deferred-work 등 · 자기 스토리 md 제외)는 baseline..HEAD 에
+      // 다른 스토리 변경이 대부분이라 본문을 싣지 않고 표식만 — 필수 열람 대상도 아니다(isSharedDocPath · 직접 열어 확인).
+      // 범위 안 본문이 비면(공용 문서만 남음 등) 종전 경로로 — 리뷰 대상 없음 STOP 을 새로 만들지 않는다.
+      const own = storyFile ? rel(storyFile) : "";
+      const scopedDiff = strict ? trackedDiffForPaths(names.filter((f) => !isSharedDocPath(f, own)), `${base}..HEAD`) : "";
+      if (scopedDiff.trim()) {
+        const shared = names.filter((f) => isSharedDocPath(f, own));
+        diff = scopedDiff;
+        const marks = [
+          ...shared.map((f) => `[공용 기록 문서 — 커밋된 라운드라 다른 스토리 변경이 섞여 본문 생략 · 필요하면 직접 열어 확인: ${f}]`),
+          ...(excludedOutside.length || excludedByOwner.length ? [`[리뷰 범위 밖 — 커밋된 라운드: File List 밖 ${excludedOutside.length}건 · 다른 활성 스토리 소유 ${excludedByOwner.length}건 본문 생략]`] : []),
+        ];
+        if (marks.length) diff = `${marks.join("\n")}\n${diff}`;
+      } else {
+        diff = !scoped || names.length ? dropOwned(trackedDiffExcludingSensitive(committed, `${base}..HEAD`)) : "";
+      }
       files = names.filter((f) => !isSensitivePath(f));
       targetRef = `${base.slice(0, 7)}..HEAD`;
     }
   }
-  return { diff, files, targetRef, excludedByOwner, owners };
+  return { diff, files, targetRef, excludedByOwner, excludedOutside, owners };
 }
 
 function prepareReviewDiff(story) {
   const storyFile = findStoryFile(story);
   const diffFile = resolve(logDir, `codex-${hash8(story)}-review-diff.txt`);
   let r = collectReviewDiff(story, storyFile, true);
-  if (!r.diff.trim() && r.excludedByOwner.length) {
+  if (!r.diff.trim() && (r.excludedByOwner.length || r.excludedOutside.length)) {
     // 좁힌 결과가 비면 리뷰 대상 없음 STOP(exit 4)·전환이 나므로 종전 전체 범위로 되돌린다(fail-open)
-    note(`⚠ [${story}] review: 범위를 좁히자 리뷰 대상이 비었다(다른 활성 스토리 소유 ${r.excludedByOwner.length}건) — 종전 전체 범위로 리뷰한다`);
+    note(`⚠ [${story}] review: 범위를 좁히자 리뷰 대상이 비었다(다른 활성 스토리 소유 ${r.excludedByOwner.length}건 · File List 밖 ${r.excludedOutside.length}건) — 종전 전체 범위로 리뷰한다`);
     r = collectReviewDiff(story, storyFile, false);
   }
   if (r.excludedByOwner.length) note(`[${story}] review: ${summarizeExcluded(r.excludedByOwner)}`);
+  if (r.excludedOutside.length) note(`[${story}] review: 커밋된 라운드 — 이 스토리 File List 밖 ${r.excludedOutside.length}건 범위 제외(${r.excludedOutside.slice(0, 20).join(", ")}${r.excludedOutside.length > 20 ? ` 외 ${r.excludedOutside.length - 20}건` : ""})`);
   let { diff, files } = r;
   const { targetRef, excludedByOwner, owners } = r;
   files = files.filter((f) => !f.includes("auto-pipeline-logs/"));
@@ -986,7 +1056,10 @@ function applyCodexReview(story, res, w) {
   // (#12) 「파일을 하나도 안 읽고 clean」을 가려내려면 열람 증거 재료를 반드시 넘겨야 한다 — 안 넘기면
   // validateReviewRun 이 명령 개수만으로 통과시키고 경고만 남긴다(호출부 배선 누락).
   const ri = w.reviewInputs ?? {};
-  const v = validateReviewRun({ json, events: res.events, diffEmpty: false, storyFile: ri.storyFile ?? "", diffFile: ri.diffFile ?? "", changedFiles: ri.changedFiles ?? [] });
+  // 공용 기록 문서(deferred-work·sprint-status 등 · isSharedDocPath)는 파일별 필수 열람에서 뺀다 — Claude 리뷰 required(2026-10-06)와 같은 규칙.
+  // 종전엔 Codex 쪽만 넣어, 바뀐 것이 기록 문서뿐인 스토리는 「변경 구현 파일 0건 열람」으로 clean 이 거부됐다(2026-11-16 1-193 기록 정리 스토리 재현).
+  const requiredImpl = (ri.changedFiles ?? []).filter((f) => !isSharedDocPath(f, ri.storyFile ?? ""));
+  const v = validateReviewRun({ json, events: res.events, diffEmpty: false, storyFile: ri.storyFile ?? "", diffFile: ri.diffFile ?? "", changedFiles: requiredImpl });
   if (!v.ok) return { ok: false, why: v.why };
   for (const msg of v.warnings) note(`⚠ [${story}] Codex 리뷰: ${msg}`);
   const storyFile = findStoryFile(story);
@@ -1101,7 +1174,10 @@ function prepareWorker(stage, story, variant) {
   // 👤 2026-09-26 (나): codex 구현(sol) → codex 리뷰(astra)는 **모델**이 다르면 교차로 인정(설정 modelPolicy.codexDev 가 켜진 때만). claude 끼리는 종전대로 STOP.
   const codexCrossOk = spec.provider === 'codex' && devSpecForCross.provider === 'codex' && codexDevPolicy(routingConfig.modelPolicy?.codexDev).enabled
     && codexPairCross(formatModelSpec(spec), formatModelSpec(devSpecForCross));
-  if (!dryRun && role === 'review' && spec.provider === devSpecForCross.provider && !codexCrossOk) {
+  // 👤 2026-11-18 claudeCross: Claude 구현(dev 목록) → 지정 Claude 검토 모델(fable)만 교차로 인정(설정 modelPolicy.claudeCross 가 켜진 때만 · 같은 모델·목록 밖·기록 누락은 STOP).
+  const claudeCrossOk = spec.provider === 'claude' && devSpecForCross.provider === 'claude'
+    && claudePairCross(routingConfig.modelPolicy?.claudeCross, devSpecForCross.model, spec.model);
+  if (!dryRun && role === 'review' && spec.provider === devSpecForCross.provider && !codexCrossOk && !claudeCrossOk) {
     note(`✖ REVIEW STOP — same-provider review forbidden (${spec.provider}${spec.provider === 'codex' ? `/${spec.model || 'default'} · 구현 ${devSpecForCross.model || 'default'}` : ''})`);
     writeExitInfo({ code: 1, kind: 'review', story, stage, why: 'same-provider-review' });
     process.exit(1);
@@ -1265,10 +1341,11 @@ function runClaude(stage, story, variant = null) {
   const guardBlocked = isGuardBlocked({ code, stderr: res.stderr }, guard);
   const remoteAfter = remoteHeads();
   const localAfter = localGitFingerprint();
-  if (guardBlocked || remoteBefore !== remoteAfter || localBefore !== localAfter) {
+  const remoteChanged = remoteMoved(remoteBefore, remoteAfter);
+  if (guardBlocked || remoteChanged || localBefore !== localAfter) {
     const why = [
       guardBlocked ? `워커가 금지된 git 명령을 실행하려다 차단됨(${guard.blockedPrefix} · exit ${guard.exitCode})` : "",
-      remoteBefore !== remoteAfter ? "원격 ref 가 실행 전후로 달라졌다(push 의심 — 절대경로 git 우회)" : "",
+      remoteChanged ? "원격 ref 가 실행 전후로 달라졌다(push 의심 — 절대경로 git 우회)" : "",
       localBefore !== localAfter ? "로컬 reflog/ref 지문이 달라졌다(commit·reset·branch 우회 의심 — HEAD 가 원상복구돼도 reflog 는 남는다)" : "",
     ].filter(Boolean).join(" · ");
     note(`✖ COMMIT GUARD STOP — [${story}] ${w.stageLabel}: ${why}. 워커의 commit/push/stash/reset 은 금지다(엔진만 커밋한다) — **사람 확인 후 재개**. log=${logFile}`);
@@ -1353,7 +1430,7 @@ function runClaude(stage, story, variant = null) {
     const counts = { patch: countOpenFindings(text, 'Patch'), decision: countOpenFindings(text, 'Decision'), high: (text.match(/^- \[ \](?!.*\[다른 스토리 소관:).*\[(?:high|critical)\]/gmi) ?? []).length };
     const verified = required.length > 1 && readEvidence.length === required.length;
     reviewResults[story] = { provider: 'claude', model: w.spec.model || 'cli-default', result: verified ? counts.patch + counts.decision ? 'findings' : 'clean' : 'not-run(missing read evidence)', counts, readEvidence };
-    if (!verified) note(`[${story}][CLAUDE][REVIEW] 열람 근거 미달 ${readEvidence.length}/${required.length} — 완료 차단`);
+    if (!verified) note(`[${story}][CLAUDE][REVIEW] 열람 근거 미달 ${readEvidence.length}/${required.length} — 완료 차단 · 읽지 않은 필수 파일: ${required.filter((p) => !readEvidence.includes(p)).join(', ') || '(필수 목록이 1건 이하)'}`);
   }
   if (code === 0 && postOk) return "ok";
   if (code === 0 && !postOk) {
@@ -1520,7 +1597,8 @@ function runRoutedStage(stage, story, variant) {
   }]));
   if (noCodex || (!dryRun && providers.codex.available && !codexCwdInfo().ok)) providers.codex.available = false;
   const router = new StageRouter({ stateDir: modelStateDir, providers, exhausted: routingConfig.exhaustedModels ?? [],
-    claudeLadder: process.env.AUTO_MODEL_LADDER ? MODEL_LADDER : null, codexDev: routingConfig.modelPolicy?.codexDev ?? null });
+    claudeLadder: process.env.AUTO_MODEL_LADDER ? MODEL_LADDER : null, codexDev: routingConfig.modelPolicy?.codexDev ?? null,
+    reviewMinTier: routingConfig.modelPolicy?.reviewMinTier, claudeCross: routingConfig.modelPolicy?.claudeCross ?? null }); // 👤 2026-10-21 reviewMinTier
   const attempted = [];
   // 👤 2026-10-11 「추천안 2」: modelPolicy.recoveryDevFloor=1 이면 회수 dev 는 처음부터 하한 sonnet(한도 완화와 같은 길) — 신규 dev·review 는 불변.
   let limitRelief = policyRelief({ stage, batchKind, policy: routingConfig.modelPolicy }); // 회수 dev 가 한도를 만나면 true — choose 의 품질 하한이 sonnet 까지 내려간다
@@ -1565,7 +1643,7 @@ function runRoutedStage(stage, story, variant) {
           state.reviews[story] = { fingerprint: codeFingerprint(), result: reviewResults[story] };
         }
         state.schema = "batch-24-multiag/state/1";
-  writeFileSync(stateFile, JSON.stringify(state, null, 2));
+  writeFileAtomic(stateFile, JSON.stringify(state, null, 2));
       }
       return;
     }
@@ -1625,7 +1703,7 @@ function workingTreeChanges() {
   // (#8) 미추적 **신규** 파일은 종전에 이름만 changes 에 들어가고 내용은 어떤 검사도 받지 않았다 —
   // 수리 워커가 `tests/new.test.ts` 를 새로 만들며 `describe.only` 를 넣으면 qa 는 일부만 돌고 무결성도 통과했다.
   // 이제 미추적 파일 본문을 무결성 diff 에 넣는다(텍스트 · 1MB 상한 · 바이너리 제외 · 민감 경로 제외).
-  for (const f of splitLines(git(["ls-files", "--others", "--exclude-standard"]).out)) {
+  for (const f of splitLines(git(["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"]).out)) {
     changes.push({ status: "A", path: f });
     if (f.includes("auto-pipeline-logs/") || isSensitivePath(f)) continue;
     const d = untrackedUnifiedDiff(f);
@@ -1652,7 +1730,19 @@ function runQualityLoop(story) {
       // `coverage::ready` 로 3회 수리 뒤 STOP 했다(2026-10-08 2-18·1-54·4-22). 지우지 못하면 수정 시각으로 신선도를 가른다.
       let staleMtime = null;
       try { unlinkSync(policyFile); } catch (e) { if (e?.code !== 'ENOENT') { try { staleMtime = statSync(policyFile).mtimeMs; } catch { /* gone */ } } }
-      const policyRun = spawnSync(process.execPath, [join(SKILL_DIR, 'quality-gates.mjs'), '--base', opt('quality-base', 'HEAD'), '--out', policyFile], { encoding: 'utf8', timeout: stageTimeoutMs, windowsHide: true });
+      // 병렬 워크트리 간 qa 직렬 잠금(AUTO_QA_MUTEX · 러너가 넣는다 · runtime/qa-mutex.mjs) — 게이트 프로세스 **밖에서** 기다려 대기가 stage 타임아웃을 먹지 않는다.
+      // 시한을 넘기면 qa 를 돌리지 않고 STOP(fail-closed · 잠금 없는 동시 qa 는 공유 개발 DB 를 어지럽혀 결과를 믿을 수 없다).
+      const mutex = process.env.AUTO_QA_MUTEX ? acquireQaMutex({ path: process.env.AUTO_QA_MUTEX, log: (m) => note(`[${story}][QUALITY] ${m}`) }) : null;
+      if (mutex?.timedOut) {
+        note(`✖ STOP — [${story}] qa 직렬 잠금을 시한 안에 얻지 못했다(${process.env.AUTO_QA_MUTEX}). 다른 워커의 qa 가 멈춘 것으로 본다 — 사람/감시자가 lock 을 확인할 것.`);
+        holdStory(story); finalizeManifest(story, null);
+        writeExitInfo({ code: 1, kind: "qa", provider: parseModelSpec(models.dev).provider, story, stage: "qa", why: "qa-mutex-timeout" });
+        process.exit(1);
+      }
+      if (mutex?.waitedMs > 0) note(`[${story}][QUALITY] qa 잠금 ${Math.round(mutex.waitedMs / 1000)}s 대기 뒤 획득`);
+      let policyRun;
+      try { policyRun = spawnSync(process.execPath, [join(SKILL_DIR, 'quality-gates.mjs'), '--base', opt('quality-base', 'HEAD'), '--out', policyFile], { encoding: 'utf8', timeout: stageTimeoutMs, windowsHide: true }); }
+      finally { mutex?.release(); }
       let report = null;
       try { if (staleMtime === null || statSync(policyFile).mtimeMs !== staleMtime) report = JSON.parse(readFileSync(policyFile, 'utf8')); } catch { report = null; }
       const outcome = qualityRunOutcome({ status: policyRun.status, report, stderr: policyRun.stderr });
@@ -1785,6 +1875,8 @@ function finalizeManifest(story, commitSha) {
     // (완료 판정 강화) 매니페스트 **형태는 그대로 두고** `completion` 필드만 더한다 — 「없는 검사」를 통과로
     // 세지 않고 not-verified 로 남기는 판정기(completion-rules.mjs)를 여기 한 곳에서만 부른다.
     m.quality = q.policy ?? { verdict: 'not-verified' };
+    // 👤 2026-11-18 claudeCross: 완료 판정(T6)은 매니페스트만 본다 — 이 검토가 어떤 예외 설정 아래에서 돌았는지를 함께 남긴다(꺼져 있으면 필드 자체가 없다 = 종전 형태).
+    { const cc = claudeCrossPolicy(routingConfig.modelPolicy?.claudeCross); if (cc.enabled) m.reviewPolicy = { claudeCross: cc }; }
     m.codeFingerprint = codeFingerprint();
     m.scope = 'worker';
     for (const [check, gate] of Object.entries({ typecheck: 'typecheck', lint: 'lint', unit: 'unit', security: 'security', performance: 'performance', api: 'api', authorization: 'authorization' })) {

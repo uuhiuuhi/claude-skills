@@ -62,6 +62,21 @@ describe('[DAG] 위상 순서 · 간선', () => {
     assert.deepEqual(parseDependsOn('선행: 없음'), [])
     assert.equal(shortKey('2-16-티켓목록'), '2-16')
   })
+
+  it('선행 줄은 첫 문장만 읽는다 — 2026-10-22 의존 사이클 실사고', () => {
+    assert.deepEqual(parseDependsOn('**선행**: 1.83 완료 뒤. 러너가 도는 1.83·2.118·3.18 과 파일이 겹치지 않는다'), ['1-83'])
+    assert.deepEqual(parseDependsOn('선행: 2.118 · 3.18 완료 뒤'), ['2-118', '3-18']) // 키 안의 마침표는 문장 끝이 아니다
+    assert.deepEqual(parseDependsOn('선행: 4.2。 5.1 참고'), ['4-2'])
+    assert.deepEqual(parseDependsOn('선행: 4-2; 5-1 은 참고만'), ['4-2'])
+  })
+
+  it('공용 장부만 겹치면 같은 파일 간선이 없고 · 실제 소스를 겹치면 간선이 있다', () => {
+    const ledger = ['_bmad-output/implementation-artifacts/sprint-status.yaml', '_bmad-output/implementation-artifacts/deferred-work.md']
+    const none = buildDag({ stories: [S('2-1-a', { files: ledger }), S('2-2-b', { files: ledger })], epicOrder: [2] })
+    assert.equal(none.edges.length, 0)
+    const real = buildDag({ stories: [S('2-1-a', { files: [...ledger, 'src/a.ts'] }), S('2-2-b', { files: [...ledger, 'src/a.ts'] })], epicOrder: [2] })
+    assert.deepEqual(real.edges.map((e) => e.why), ['같은 파일(src/a.ts)'])
+  })
 })
 
 describe('[DAG] 검증기 — 무엇을 거부하는가', () => {

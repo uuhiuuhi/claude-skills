@@ -271,11 +271,12 @@ export function assignPolicyWorkers({ stories = [], roles = ['dev', 'review'], p
       Boolean(config.blocked?.(m)) || providerFailStreak(history, specProvider(m), { story, role }) >= FAIL_STREAK_MAX
     const cd = codexDevPolicy(config.codexDev ?? config.modelPolicy?.codexDev)
     const codexDevOk = cd.enabled && risk <= cd.maxRisk // 👤 2026-09-26 (나) sol 구현 허용 범위
-    const dev = wantDev ? selectModel({ role: 'dev', risk, difficulty, providers, codexDev: cd,
+    const claudeCross = config.claudeCross ?? config.modelPolicy?.claudeCross ?? null // 👤 2026-11-18 Claude 구현 → fable 검토 예외(없으면 종전)
+    const dev = wantDev ? selectModel({ role: 'dev', risk, difficulty, providers, codexDev: cd, claudeCross,
       preferred: codexDevOk ? cd.models[0] : risk >= HIGH_RISK_MIN ? 'fable' : '', preferProvider: codexDevOk ? 'codex' : preferredDevProvider(story), blocked: (m) => blocked(m, 'dev') })
       : null
     // Review-only work is rechecked against persisted actual implementation provenance by the engine.
-    const review = wantReview ? selectModel({ role: 'review', risk, difficulty, providers, codexDev: cd,
+    const review = wantReview ? selectModel({ role: 'review', risk, difficulty, providers, codexDev: cd, claudeCross, reviewMinTier: config.modelPolicy?.reviewMinTier, // 👤 2026-10-21
       avoid: roles.includes('dev') ? dev?.model : '', preferProvider: dev?.provider === 'codex' ? 'claude' : 'codex', blocked: (m) => blocked(m, 'review') })
       : null
     return { story, dev: dev?.model ?? '', review: review?.model ?? '',

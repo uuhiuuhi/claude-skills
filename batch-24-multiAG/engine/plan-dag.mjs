@@ -8,7 +8,9 @@
 //
 // 이 파일의 모든 함수는 순수·결정적이다(같은 입력 → 같은 출력 · 파일·시계·난수 없음).
 
-import { parallelHazardsExtended } from './conflicts.mjs'
+import { parallelHazardsExtended, SHARED_BOOKKEEPING_DEFAULT } from './conflicts.mjs'
+
+const SHARED_BASENAMES = new Set(SHARED_BOOKKEEPING_DEFAULT.map((p) => p.split('/').pop()))
 
 // ── 모델 스펙 ─────────────────────────────────────────────────────────────
 /** 허용 = `opus` · `fable` · `codex` · `codex:gpt-5.6-sol` · `claude:opus`. 그 외 문자는 전부 거부.
@@ -33,13 +35,18 @@ export function isValidModelSpec(spec) {
 const DEP_LINE_RE = /^[ \t>*+_-]*(?:선행(?:\s*(?:조건|스토리))?|depends[-\s]?on)[*_]{0,2}\s*[:：]\s*(.+)$/gim
 const KEY_IN_TEXT_RE = /(?<![\d.-])(\d{1,3})[-.](\d{1,3})(?![\d.]|-\d)/g // 2026-10-08: `5-1-직출-…md` 같은 **파일 전체 이름**도 키로 읽는다(뒤에 「-글자」는 허용 · 「-숫자」는 날짜·3단 번호라 거부) // 에픽·번호 1~3자리 · 날짜(2026-10-03)·버전(1.2.3)은 키가 아니다(2026-10-07 4-22 「선행: … (2026-10-03)」 오독 실사고)
 
+// 2026-10-22 실사고: 「선행: 1.83 완료 뒤. 러너가 도는 1.83·2.118·3.18 과 파일이 겹치지 않는다」의
+// 둘째 문장 키까지 선행으로 읽어 의존 사이클이 났다 — **첫 문장만** 본다. 문장 끝 = 공백·줄끝 앞의
+// 마침표 · 。 · ; (`1.83` 처럼 숫자 사이 마침표는 끝이 아니다). 「 — 」는 기존 표기가 키를 이어 적어 끊지 않는다.
+const SENTENCE_END_RE = /\.(?=\s|$)|。|;/
+
 /** "선행: 2.1, 11-3" → ['2-1','11-3'] (짧은 키 = epic-번호). 없으면 []. */
 export function parseDependsOn(md) {
   const text = String(md ?? '')
   const out = []
   DEP_LINE_RE.lastIndex = 0
   for (const m of text.matchAll(DEP_LINE_RE)) {
-    const body = m[1]
+    const body = m[1].split(SENTENCE_END_RE)[0]
     if (/없음|none|N\/A/i.test(body)) continue
     for (const k of body.matchAll(KEY_IN_TEXT_RE)) out.push(`${k[1]}-${k[2]}`)
   }
@@ -94,8 +101,10 @@ export function buildDag({ stories = [], epicOrder = [] } = {}) {
     }
   }
   // ② 같은 파일 — 앞선 순위가 먼저(자동 뭉개기 금지 · 순차화의 근거)
+  //    공유 장부(sprint-status.yaml 등)는 거의 모든 스토리가 적어 가짜 순서·사이클을 만든다 — 파일 이름으로 뺀다(2026-10-22 실사고)
   const owners = new Map()
   for (const n of nodes) for (const f of n.files) {
+    if (SHARED_BASENAMES.has(f.replace(/\\/g, '/').split('/').pop())) continue
     const list = owners.get(f) ?? []
     list.push(n.key)
     owners.set(f, list)

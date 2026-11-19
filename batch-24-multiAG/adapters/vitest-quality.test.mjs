@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { affectedModules, GENERATED_CHANGE, inside, readConfig, capabilities, assertRunEvidence, selectAffected, runAdapter, validateSkipPolicy, evaluateSkip, withProjectEnvFile, loadTypeScript, analyzeSource, resolvesImport, testTouched, diffHunks, touchedByDiff } from './vitest-quality.mjs';
+import { affectedModules, GENERATED_CHANGE, inside, readConfig, capabilities, assertRunEvidence, selectAffected, runAdapter, validateSkipPolicy, evaluateSkip, withProjectEnvFile, loadTypeScript, analyzeSource, resolvesImport, testTouched, diffHunks, touchedByDiff, newFilesVsBase } from './vitest-quality.mjs';
 
 const dependencies = { vitest: '4.1.10', '@vitest/coverage-v8': '4.1.10' };
 const adapter = fileURLToPath(new URL('./vitest-quality.mjs', import.meta.url));
@@ -281,6 +281,119 @@ test('skip decisions: unlisted, required, unknown change scope, affected module,
   assert.match(evaluateSkip(at('fixture env', { note: 'different' }), policy, ctx()).reason, /note does not match/);
   assert.equal(evaluateSkip(at('fixture env', { note: 'no vault item provisioned' }), policy, ctx()).verdict, 'approved');
   assert.match(evaluateSkip(at('unarmed probe', { state: 'failed' }), policy, ctx()).reason, /failed/);
+});
+
+// 2026-10-12 실사고(스토리 2-48): 소스만 고쳤는데 그 소스를 import 하는 공용 실DB 모듈이 전이 영향을 받아, 승인된 구조적
+// 건너뛰기 8건이 전부 block 됐다. 전이적으로만 영향받은 모듈에서는 구조적 종류 + 같은 실행에서 성립한 증거일 때만 approved.
+test('structural skips in a transitively affected module are approved only when their evidence holds; static-guard kinds and edited blocks still block', () => {
+  const policy = POLICY([
+    optionalEntry(),
+    optionalEntry({ test: 'anon duplicate', kind: 'duplicate-of-anon-baseline', evidence: { coveredBy: { file: 'tests/db/anon.test.js', test: 'anon baseline' } } }),
+    optionalEntry({ test: 'fixture env', kind: 'fixture-env', evidence: { envMissing: ['QA_SECRET_ID'] } }),
+    optionalEntry({ test: 'layer limit', kind: 'not-verifiable-at-layer', evidence: { coveredBy: { file: 'tests/db/anon.test.js', test: 'anon baseline' }, documented: { reference: 'docs/x.md' } } }),
+    optionalEntry({ test: 'static guarded', kind: 'stale-static-skip', evidence: { coveredBy: { file: 'tests/db/anon.test.js', test: 'anon baseline' } } }),
+    optionalEntry({ test: 'fixture gone', kind: 'fixture-missing', evidence: { coveredBy: { file: 'tests/db/anon.test.js', test: 'anon baseline' } } }),
+  ]);
+  const live = 'tests/db/live.test.js';
+  const transitive = { modules: new Set([live]), all: false, reasons: [], direct: new Set(), transitive: new Set([live]) };
+  const passed = new Set(['tests/db/anon.test.js\0anon suite > anon baseline']);
+  const ctx = (over = {}) => ({ env: {}, passed, affected: transitive, ...over });
+  const at = (name) => ({ file: live, name, state: 'skipped' });
+  // (1) duplicate-of-anon-baseline + covering test passed → approved, distinguishable in the log
+  const dup = evaluateSkip(at('anon duplicate'), policy, ctx());
+  assert.equal(dup.verdict, 'approved');
+  assert.match(dup.reason, /module affected but structural skip \(duplicate-of-anon-baseline\) — evidence held/);
+  // (2) same, covering test did not pass → blocking
+  assert.match(evaluateSkip(at('anon duplicate'), policy, ctx({ passed: new Set() })).reason, /covering test did not pass/);
+  // (3) armed-write-probe: unarmed → approved · armed → blocking
+  assert.match(evaluateSkip(at('unarmed probe'), policy, ctx()).reason, /structural skip \(armed-write-probe\) — evidence held/);
+  assert.equal(evaluateSkip(at('unarmed probe'), policy, ctx({ env: { QA_PROBE_ARMED: '1' } })).verdict, 'blocking');
+  assert.match(evaluateSkip(at('unarmed probe'), policy, ctx({ env: { QA_PROBE_ARMED: '1' } })).reason, /is armed/);
+  // (4) fixture-env: variable absent → approved · present → blocking
+  assert.match(evaluateSkip(at('fixture env'), policy, ctx()).reason, /structural skip \(fixture-env\) — evidence held/);
+  assert.match(evaluateSkip(at('fixture env'), policy, ctx({ env: { QA_SECRET_ID: 'x' } })).reason, /environment provides QA_SECRET_ID/);
+  // (5) static-guard kinds stay blocked even with holding evidence — a changed source may break the guard's premise
+  for (const name of ['static guarded', 'fixture gone']) assert.match(evaluateSkip(at(name), policy, ctx()).reason, /affected by the change/, name);
+  // (6) 4.16: the module was edited directly and the skipped block itself lies in the edited lines → still blocking,
+  //     also when the module is transitively affected at the same time; unknown direct/transitive scope stays blocking
+  const edited = { modules: new Set([live]), all: false, reasons: [], direct: new Set([live]), transitive: new Set(), touched: () => true };
+  assert.match(evaluateSkip(at('anon duplicate'), policy, ctx({ affected: edited })).reason, /lies in the edited lines/);
+  assert.match(evaluateSkip(at('anon duplicate'), policy, ctx({ affected: { ...edited, transitive: new Set([live]) } })).reason, /affected by the change/);
+  assert.match(evaluateSkip(at('anon duplicate'), policy, ctx({ affected: { modules: new Set([live]), all: false, reasons: [] } })).reason, /affected by the change/);
+  assert.match(evaluateSkip(at('anon duplicate'), policy, ctx({ affected: { ...transitive, all: true, reasons: ['x.sql'] } })).reason, /cannot be mapped/);
+  // (7) not-verifiable-at-layer + covering test passed → approved · covering test missing → blocking
+  assert.match(evaluateSkip(at('layer limit'), policy, ctx()).reason, /structural skip \(not-verifiable-at-layer\) — evidence held/);
+  assert.match(evaluateSkip(at('layer limit'), policy, ctx({ passed: new Set() })).reason, /covering test did not pass/);
+  // A structural kind without mechanical evidence (unvalidated policy) is never relaxed.
+  assert.match(evaluateSkip(at('bare'), POLICY([optionalEntry({ test: 'bare', kind: 'fixture-env', evidence: { documented: { reference: 'r' } } })]), ctx()).reason, /affected by the change/);
+});
+
+// 2026-10-16 실사고(스토리 3-14 · 릴리스 열차 T2): 체인에서 새로 생긴 검사 파일은 base 기준 diff 전체가 「바뀐 줄」이라 승인된
+// 구조적 건너뛰기까지 전부 「고친 블록 안」으로 block 됐다. 신규 파일은 전이 영향 모듈과 같은 완화 경로를 탄다(4.16 규칙은 기존 파일에 그대로).
+test('a test module new vs the base takes the structural relaxation; existing edited modules (4.16) and non-structural kinds still block', () => {
+  const live = 'tests/db/live.test.js';
+  const policy = POLICY([
+    optionalEntry({ file: live, test: 'anon duplicate', kind: 'duplicate-of-anon-baseline', evidence: { coveredBy: { file: 'tests/db/anon.test.js', test: 'anon baseline' } } }),
+    optionalEntry({ file: live, test: 'unarmed probe' }),
+    optionalEntry({ file: live, test: 'fixture env', kind: 'fixture-env', evidence: { envMissing: ['QA_SECRET_ID'] } }),
+    optionalEntry({ file: live, test: 'static covered', kind: 'fixture-absent-covered-by-static', evidence: { coveredBy: { file: 'tests/db/anon.test.js', test: 'anon baseline' }, documented: { reference: 'r' } } }),
+    optionalEntry({ file: live, test: 'static env only', kind: 'fixture-absent-covered-by-static', evidence: { envMissing: ['QA_SECRET_ID'] } }),
+    optionalEntry({ file: live, test: 'static guarded', kind: 'stale-static-skip', evidence: { coveredBy: { file: 'tests/db/anon.test.js', test: 'anon baseline' } } }),
+  ]);
+  const passed = new Set(['tests/db/anon.test.js\0anon suite > anon baseline']);
+  // the whole new file is the diff: touched() is true for every block; direct, and also transitive when it imports changed source
+  const created = (over = {}) => ({ modules: new Set([live]), all: false, reasons: [], direct: new Set([live]), transitive: new Set(), touched: () => true, newFiles: new Set([live]), ...over });
+  const ctx = (over = {}) => ({ env: {}, passed, affected: created(), ...over });
+  const at = name => ({ file: live, name, state: 'skipped' });
+  // (1) new file + structural kind + evidence held -> approved, marked in the reason (direct-only and direct+transitive alike)
+  for (const affected of [created(), created({ transitive: new Set([live]) })]) {
+    for (const name of ['anon duplicate', 'unarmed probe', 'fixture env']) {
+      const d = evaluateSkip(at(name), policy, ctx({ affected }));
+      assert.equal(d.verdict, 'approved', name);
+      assert.match(d.reason, /\(new file vs base — structural skip with mechanical evidence\)/, name);
+    }
+  }
+  //     evidence still decides: covering test missing / fixture env present / probe armed -> blocking
+  assert.match(evaluateSkip(at('anon duplicate'), policy, ctx({ passed: new Set() })).reason, /covering test did not pass/);
+  assert.match(evaluateSkip(at('fixture env'), policy, ctx({ env: { QA_SECRET_ID: 'x' } })).reason, /environment provides QA_SECRET_ID/);
+  assert.match(evaluateSkip(at('unarmed probe'), policy, ctx({ env: { QA_PROBE_ARMED: '1' } })).reason, /is armed/);
+  // (2) new file + non-structural kind -> blocking as before
+  assert.match(evaluateSkip(at('static guarded'), policy, ctx()).reason, /lies in the edited lines/);
+  assert.match(evaluateSkip(at('static guarded'), policy, ctx({ affected: created({ transitive: new Set([live]) }) })).reason, /affected by the change/);
+  //     a structural kind without mechanical evidence (unvalidated policy) is never relaxed, new file or not
+  assert.match(evaluateSkip(at('bare'), POLICY([optionalEntry({ file: live, test: 'bare', kind: 'fixture-env', evidence: { documented: { reference: 'r' } } })]), ctx()).reason, /lies in the edited lines/);
+  // (3) 4.16 regression: an EXISTING module edited directly with the skipped block in the diff -> blocking (newFiles empty / unknown)
+  for (const newFiles of [new Set(), null, undefined]) {
+    assert.match(evaluateSkip(at('anon duplicate'), policy, ctx({ affected: created({ newFiles }) })).reason, /lies in the edited lines/, String(newFiles));
+    assert.match(evaluateSkip(at('static covered'), policy, ctx({ affected: created({ newFiles }) })).reason, /lies in the edited lines/, String(newFiles));
+  }
+  //     another module being new does not relax this one
+  assert.match(evaluateSkip(at('anon duplicate'), policy, ctx({ affected: created({ newFiles: new Set(['tests/db/other.test.js']) }) })).reason, /lies in the edited lines/);
+  // (4) fixture-absent-covered-by-static in a new file: coveredBy passed -> approved · not passed -> blocking · no coveredBy -> blocking
+  const sc = evaluateSkip(at('static covered'), policy, ctx({ affected: created({ transitive: new Set([live]) }) }));
+  assert.equal(sc.verdict, 'approved');
+  assert.match(sc.reason, /new file vs base/);
+  assert.match(evaluateSkip(at('static covered'), policy, ctx({ passed: new Set() })).reason, /covering test did not pass/);
+  assert.match(evaluateSkip(at('static env only'), policy, ctx()).reason, /lies in the edited lines/);
+  //     `all` (unmappable change) still denies everything
+  assert.match(evaluateSkip(at('anon duplicate'), policy, ctx({ affected: created({ all: true, reasons: ['x.sql'] }) })).reason, /cannot be mapped/);
+});
+
+test('files absent at the base are found with one cat-file batch — committed, untracked and unknown base', t => {
+  const root = fixture(t);
+  const git = (...args) => { const r = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true }); assert.equal(r.status, 0, r.stderr); return r.stdout; };
+  git('init', '-q'); git('config', 'user.email', 'x@y'); git('config', 'user.name', 'x'); git('config', 'commit.gpgsign', 'false');
+  mkdirSync(join(root, 'tests/db'), { recursive: true });
+  writeFileSync(join(root, 'tests/db/old.test.js'), "it('a', () => {});\n");
+  git('add', '.'); git('commit', '-q', '-m', 'base');
+  const base = git('rev-parse', 'HEAD').trim();
+  writeFileSync(join(root, 'tests/db/old.test.js'), "it('a', () => {});\nit('b', () => {});\n");
+  writeFileSync(join(root, 'tests/db/added in chain.test.js'), "it('c', () => {});\n");
+  git('add', '.'); git('commit', '-q', '-m', 'chain');
+  writeFileSync(join(root, 'tests/db/untracked.test.js'), "it('d', () => {});\n");
+  assert.deepEqual([...newFilesVsBase(root, base, new Set(['tests/db/old.test.js', 'tests/db/added in chain.test.js', 'tests/db/untracked.test.js']))].sort(), ['tests/db/added in chain.test.js', 'tests/db/untracked.test.js']);
+  assert.deepEqual([...newFilesVsBase(root, base, [])], []);
+  assert.equal(newFilesVsBase(root, 'no-such-base', ['tests/db/old.test.js']), null); // unknown base must not mark everything new
 });
 
 test('execution evidence with a policy tolerates only approved optional skips and reports both lists exactly', t => {

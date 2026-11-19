@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { literalPathspec, parsePorcelainZ, preserveRunReport, preserveStopLeftovers, refreshWorktree } from './worktree-refresh.mjs'
+import { dirtyPaths, literalPathspec, parsePorcelainZ, preserveRunReport, preserveStopLeftovers, refreshWorktree, unstageNewLogArtifacts } from './worktree-refresh.mjs'
 
 const branch = 'auto/2026-09-06'
 function fixture(t) {
@@ -320,7 +320,8 @@ test('preserveRunReport commits only the engine log directory so the next refres
   assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir }), { skipped: 'not-on-runner-branch', branch: 'main' })
   assert.equal(f.git('rev-parse', 'HEAD'), base)
   f.git('checkout', '-qb', branch)
-  // a real run leaves: modified tracked report + untracked manifests + an ignored qa log — and unfinished user work elsewhere
+  // a real run leaves: modified tracked report + untracked manifests + an ignored qa log — and unfinished user work elsewhere.
+  // (2026-10-28) quality-cache/abc.json is a *new* log artifact (not a ledger) — it must stay untracked, not be committed.
   f.write(`${logDir}/run-summary.log`, 'earlier\nappended by run\n')
   f.write(`${logDir}/night-last-run.md`, '# report\n')
   f.write(`${logDir}/batch-x-manifest.json`, '{}\n')
@@ -330,18 +331,60 @@ test('preserveRunReport commits only the engine log directory so the next refres
   const runGit = (file, args, opts) => { f.calls.push(args.slice(2)); return spawnSync(file, args, opts) }
   const r = preserveRunReport({ cwd: f.cwd, logDir, label: '2026-09-06 라운드 1', runGit })
   assert.equal(typeof r.committed, 'string', JSON.stringify(r))
-  assert.equal(r.entries, 4)
+  assert.equal(r.entries, 3)
+  assert.equal(r.skippedLogs, 1)
   assert.notEqual(r.committed, base)
   assert.equal(f.git('rev-parse', 'HEAD'), r.committed)
   assert.match(f.git('log', '-1', '--format=%s'), /^chore\(batch\): 실행 보고·게이트 로그 보존 \(2026-09-06 라운드 1\)$/)
   // only the log directory was committed — the story work is still unfinished and still blocks the refresh
-  assert.equal(f.git('status', '--porcelain=v1', '--untracked-files=all', '--', '_bmad-output'), '')
+  assert.equal(f.git('status', '--porcelain=v1', '--untracked-files=all', '--', '_bmad-output'), `?? ${logDir}/quality-cache/abc.json`)
   assert.equal(f.git('status', '--porcelain=v1', '--', 'source.txt').trim(), 'M source.txt')
   assert.equal(f.git('ls-files', '--', 'ignored.log'), '')
   assert.throws(() => f.run(), /unfinished changes preserved in place \(1 entries\)/)
-  // second call on a clean log directory is a no-op — no empty commit
-  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir, runGit }), { skipped: 'clean' })
+  // second call — only the untracked log artifact is left: a no-op, no empty commit
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir, runGit }), { skipped: 'only-log-artifacts', skippedLogs: 1 })
   assert.equal(f.git('rev-parse', 'HEAD'), r.committed)
+})
+
+test('(2026-10-28) untracked log artifacts are not unfinished work: refresh proceeds, leftovers/report commits skip them, ledgers still land', (t) => {
+  const f = fixture(t)
+  const logDir = '_bmad-output/implementation-artifacts/auto-pipeline-logs'
+  f.write(`${logDir}/run-summary.log`, 'earlier\n')
+  f.write(`${logDir}/3-4-old-dev.log`, 'tracked before the rule\n')
+  f.commit('tracked log baseline')
+  f.git('push', '-q', 'origin', `HEAD:refs/heads/${branch}`)
+  // ① refreshWorktree: only untracked artifacts in the tree → not "unfinished changes"
+  f.write(`${logDir}/3-4-dev.log`, 'worker log\n')
+  f.write(`${logDir}/quality-cache/abc.json`, '{}\n')
+  const result = f.run()
+  assert.equal(result.ref, `origin/${branch}`)
+  assert.ok(existsSync(join(f.cwd, logDir, '3-4-dev.log')), 'the artifact stays on disk')
+  // ② a story md next to it is still unfinished work — the protection is unchanged for everything else
+  f.write('_bmad-output/implementation-artifacts/3-4-story.md', '# 3.4\n')
+  assert.throws(() => f.run(), /unfinished changes preserved in place \(1 entries\)/)
+  // ③ preserveStopLeftovers: ledger (new verification.json) + tracked log change + story md land; new dev.log does not
+  f.git('checkout', '-q', '-B', branch)
+  f.write(`${logDir}/3-4-verification.json`, '{"completion":{}}\n')
+  f.write(`${logDir}/3-4-old-dev.log`, 'tracked before the rule\nappended\n')
+  f.write(`${logDir}/run-summary.log`, 'earlier\nmore\n')
+  const r = preserveStopLeftovers({ cwd: f.cwd, label: 'AUTO-1: 3-4', exitCode: 1 })
+  assert.equal(typeof r.committed, 'string', JSON.stringify(r))
+  assert.equal(r.entries, 4)
+  assert.equal(r.skippedLogs, 2)
+  const files = f.git('show', '--name-only', '--format=', 'HEAD').split('\n').sort()
+  assert.deepEqual(files, ['_bmad-output/implementation-artifacts/3-4-story.md', `${logDir}/3-4-old-dev.log`, `${logDir}/3-4-verification.json`, `${logDir}/run-summary.log`])
+  assert.equal(f.git('status', '--porcelain=v1', '--untracked-files=all').split('\n').filter((l) => l && l !== '?? .auto-batch-worktree').sort().join('\n'), `?? ${logDir}/3-4-dev.log\n?? ${logDir}/quality-cache/abc.json`)
+  // ④ nothing but artifacts left → both housekeeping commits are no-ops with an explicit reason
+  assert.deepEqual(preserveStopLeftovers({ cwd: f.cwd, label: 'x', exitCode: 1 }), { skipped: 'only-log-artifacts', denied: [], skippedLogs: 2 })
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir }), { skipped: 'only-log-artifacts', skippedLogs: 2 })
+  // ⑤ unstageNewLogArtifacts after a blanket `git add -A`: new artifacts leave the index, ledgers and tracked changes stay
+  f.write(`${logDir}/batch-1-manifest.json`, '{}\n')
+  f.write(`${logDir}/3-4-old-dev.log`, 'tracked before the rule\nappended\nagain\n')
+  f.git('add', '-A', '--', '_bmad-output')
+  const u = unstageNewLogArtifacts({ cwd: f.cwd })
+  assert.deepEqual(u.dropped.sort(), [`${logDir}/3-4-dev.log`, `${logDir}/quality-cache/abc.json`])
+  assert.deepEqual(f.git('diff', '--cached', '--name-only').split('\n').sort(), [`${logDir}/3-4-old-dev.log`, `${logDir}/batch-1-manifest.json`])
+  assert.deepEqual(unstageNewLogArtifacts({ cwd: f.cwd }), { dropped: [] })
 })
 
 test('preserveRunReport never commits in a dry run, without the execution marker, or outside the worktree', (t) => {
@@ -581,4 +624,70 @@ test('preserveStopLeftovers names the exit code even when git fails with an empt
     return spawnSync(file, args, opts)
   }
   assert.equal(preserveStopLeftovers({ cwd: f.cwd, label: 'x', exitCode: 6, runGit }).failed, 'add: (exit null error EPERM)')
+})
+
+test('(2026-11-01) 감시자 구현자 기록 복원 — state.json 한 파일만 러너 갈래에 보존 커밋하고, 새로고침이 다시 시작된다', (t) => {
+  const f = fixture(t)
+  const state = '_bmad-output/implementation-artifacts/auto-pipeline-logs/state.json'
+  f.write(state, '{"done":{},"workers":{}}\n')
+  f.commit('state baseline')
+  f.git('checkout', '-qb', branch)
+  f.git('branch', '-u', `origin/${branch}`)
+  f.git('reset', '-q', '--hard', `origin/${branch}`) // 러너 갈래 = 원격 갈래(새로고침이 앞선 HEAD 를 거부하지 않게)
+  f.write(state, '{"done":{},"workers":{}}\n')
+  const base = f.commit('state baseline on runner branch')
+  f.git('push', '-q', 'origin', `HEAD:refs/heads/${branch}`)
+  // 감시자가 복원한 직후 — 추적 파일 1건만 수정(` M` 로 시작하는 줄 1개 · 11-01 00:50 실사고 모양)
+  f.write(state, '{"done":{"1-132::dev":{}},"workers":{"1-132::dev":{"model":"opus"}}}\n')
+  // 회귀: .trim() 으로 읽던 옛 판정은 이 경로를 `ad-output/…` 로 읽어 「소스 잔여물」로 오판했다
+  assert.deepEqual(dirtyPaths({ cwd: f.cwd }), [state])
+  assert.throws(() => f.run(), /unfinished changes preserved in place \(1 entries\)/)
+  const r = preserveRunReport({ cwd: f.cwd, logDir: join(f.cwd, state), message: 'chore(batch): 감시자 복원분 보존 — 1-132 구현자 기록(claude/opus)' })
+  assert.equal(typeof r.committed, 'string', JSON.stringify(r))
+  assert.equal(r.entries, 1)
+  assert.notEqual(r.committed, base)
+  assert.equal(f.git('log', '-1', '--format=%s'), 'chore(batch): 감시자 복원분 보존 — 1-132 구현자 기록(claude/opus)')
+  assert.deepEqual(f.git('show', '--name-only', '--format=', 'HEAD').split('\n'), [state])
+  assert.deepEqual(dirtyPaths({ cwd: f.cwd }), []) // 클론이 깨끗하다
+  f.run() // 깨끗해진 클론 — 새로고침이 거부하지 않는다(새로고침은 detach 한다 — 러너처럼 갈래로 되돌아간다)
+  f.git('checkout', '-q', branch)
+  // 다른 미완 변경이 함께 있으면 state.json 만 커밋하고 나머지는 그대로 둔다(사람 몫 판단은 dirty 플레이북이 한다)
+  f.write(state, '{"done":{"1-133::dev":{}},"workers":{}}\n')
+  f.write('source.txt', 'unfinished\n')
+  const r2 = preserveRunReport({ cwd: f.cwd, logDir: join(f.cwd, state), message: 'chore(batch): 감시자 복원분 보존 — 1-133' })
+  assert.equal(r2.entries, 1, JSON.stringify(r2))
+  assert.deepEqual(f.git('show', '--name-only', '--format=', 'HEAD').split('\n'), [state])
+  assert.deepEqual(dirtyPaths({ cwd: f.cwd }), ['source.txt'])
+})
+
+test('(2026-11-01) 러너 갈래가 아니면(detached·main) 복원분 커밋을 하지 않는다 — 버려지는 커밋 방지', (t) => {
+  const f = fixture(t)
+  const state = '_bmad-output/implementation-artifacts/auto-pipeline-logs/state.json'
+  f.write(state, '{}\n'); const base = f.commit('state baseline')
+  f.write(state, '{"done":{}}\n')
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir: join(f.cwd, state), message: 'x' }), { skipped: 'not-on-runner-branch', branch: 'main' })
+  f.git('checkout', '-q', '--detach')
+  assert.deepEqual(preserveRunReport({ cwd: f.cwd, logDir: join(f.cwd, state), message: 'x' }), { skipped: 'not-on-runner-branch', branch: 'HEAD' })
+  assert.equal(f.git('rev-parse', 'HEAD'), base)
+})
+
+test('(2026-11-15) 중단된 슬롯이 남긴 미추적 배치 매니페스트는 새로고침을 막지 않는다 — 추적 장부(state.json) 수정은 종전대로 막는다', (t) => {
+  const f = fixture(t)
+  const logDir = '_bmad-output/implementation-artifacts/auto-pipeline-logs'
+  f.write(`${logDir}/state.json`, '{"done":{}}\n')
+  f.commit('tracked ledger baseline')
+  f.git('push', '-q', 'origin', `HEAD:refs/heads/${branch}`)
+  // 슬롯이 preserveRunReport 전에 죽었다 — 배치 매니페스트(장부 형식이지만 이름이 매번 새것)만 미추적으로 남았다
+  f.write(`${logDir}/batch-2026-11-15-1794752368518-manifest.json`, '{"batch":1}\n')
+  const result = f.run()
+  assert.equal(result.ref, `origin/${branch}`)
+  assert.ok(existsSync(join(f.cwd, logDir, 'batch-2026-11-15-1794752368518-manifest.json')), '매니페스트는 지우지 않고 남는다(다음 보존 커밋이 싣는다)')
+  // 추적 중인 장부의 수정은 미완 작업이다 — 여전히 막는다
+  f.write(`${logDir}/state.json`, '{"done":{"x::dev":"1"}}\n')
+  assert.throws(() => f.run(), /unfinished changes preserved in place \(1 entries\)/)
+  // 매니페스트는 장부라 다음 보존 커밋에 실린다(산출 로그처럼 버려지지 않는다)
+  f.git('checkout', '-q', '-B', branch)
+  const r = preserveRunReport({ cwd: f.cwd, logDir })
+  assert.equal(typeof r.committed, 'string', JSON.stringify(r))
+  assert.match(f.git('show', '--name-only', '--format=', 'HEAD'), /batch-2026-11-15-1794752368518-manifest\.json/)
 })

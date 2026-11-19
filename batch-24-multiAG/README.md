@@ -14,3 +14,5 @@ Codex에서도 같은 스킬 설명을 사용하려면 동일 폴더를 `$env:US
 정책과 운영 경계는 [SKILL.md](SKILL.md), 라우팅의 상세 근거는 [references/MODEL-ROUTING.md](references/MODEL-ROUTING.md)에 있다.
 
 운영 중인 러너를 지켜보고 끼어드는 도구와 백그라운드 표기 규칙은 [ops/README.md](ops/README.md) 와 SKILL.md 의 「백그라운드 작업 표기 규칙」에 있다. 프로젝트 고유값은 전부 `tools/auto/auto.config.json` 에서 읽는다.
+
+새 컴퓨터에 처음 설치할 때(준비물 · 러너 복사본 · 계정 풀 등록 · 예약 작업 · 체크리스트)는 [INSTALL-NEW-PC.md](INSTALL-NEW-PC.md) 한 장을 따른다.

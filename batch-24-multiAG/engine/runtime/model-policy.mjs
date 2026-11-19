@@ -31,23 +31,55 @@ export const codexDevAllowed = (risk, policy = null) => { const p = codexDevPoli
 /** codex 끼리의 교차 — 제공자가 같아도 **모델**이 다르면(sol ≠ astra) 다른 눈으로 인정한다. */
 export const codexPairCross = (a, b) => providerOf(canonicalModel(a)) === 'codex' && providerOf(canonicalModel(b)) === 'codex' && canonicalModel(a) !== canonicalModel(b);
 
-export function modelCandidates({ role = 'dev', risk = 0, difficulty = 5, preferProvider = 'claude', limitRelief = false, codexDev = null, avoid = '' } = {}) {
+/** Claude 끼리의 교차 — 👤 2026-11-18 「코덱스 주간 한도 소진 · 코덱스 사용은 중단하고 fable 로 대체」.
+ *  설정 `modelPolicy.claudeCross = { enabled, review, dev }` 가 켜져 있을 때만, **구현 모델이 dev 목록의 Claude 모델이고
+ *  검토 모델이 review 에 적힌 Claude 모델**인 짝을 「만든 쪽과 다른 쪽」으로 인정한다(좁은 예외 · 기본 꺼짐 = 종전 그대로).
+ *  review = 검토 전담 Claude 모델(예 fable) · dev = 그 검토를 받을 수 있는 구현 모델 목록(예 opus·sonnet).
+ *  dev 목록에는 **review 보다 등급(tier)이 낮은** Claude 모델만 남긴다 — 같은 모델·같거나 높은 등급은 걸러진다(자기 검토·하향 검토 금지).
+ *  켜져 있는 동안 Claude 구현은 dev 목록 안에서만 고른다(review 모델이 구현하면 그 스토리를 검토할 눈이 없어진다).
+ *  열람 증거 요건은 그대로다 — Claude 검토는 stream-json Read 추적으로 스토리·diff·변경 파일 열람을 증명해야 한다. */
+export const CLAUDE_CROSS_DEFAULT = Object.freeze({ enabled: false, review: '', dev: Object.freeze([]) });
+export function claudeCrossPolicy(policy = null) {
+  const p = policy && typeof policy === 'object' ? policy : {};
+  const wanted = canonicalModel(p.review ?? '');
+  const review = MODEL_CATALOG[wanted]?.provider === 'claude' ? wanted : '';
+  const dev = review ? [...new Set((Array.isArray(p.dev) ? p.dev : []).map(canonicalModel))]
+    .filter((m) => MODEL_CATALOG[m]?.provider === 'claude' && MODEL_CATALOG[m].tier < MODEL_CATALOG[review].tier) : [];
+  return { enabled: p.enabled === true && Boolean(review) && dev.length > 0, review, dev };
+}
+/** 이 (구현, 검토) 짝이 claudeCross 예외에 드는가 — 모델 기록이 한쪽이라도 비면 거짓. */
+export const claudePairCross = (policy, devModel, reviewModel) => {
+  const p = claudeCrossPolicy(policy), d = canonicalModel(devModel), r = canonicalModel(reviewModel);
+  return p.enabled && Boolean(d) && Boolean(r) && d !== r && r === p.review && p.dev.includes(d);
+};
+
+/** 👤 2026-10-21 reviewMinTier 「검토 하한 규칙을 바꿔서 위험도 높은 스토리 검토도 sol로 해줘」(코덱스 사용량 60% 초과).
+ *  설정 `modelPolicy.reviewMinTier`(1~3)가 위험도 4 이상 **검토**의 품질 하한이다 — 없으면 3(astra 만 · 종전과 동일).
+ *  2 이면 후보 = sol → astra(선호 모델이 먼저 · 막히면 astra). 위험도 4 미만·교차검증·5범주 판정은 불변.
+ *  되돌리기 = auto.config.json 에서 `modelPolicy.reviewMinTier` 키 삭제. */
+export const reviewMinTierOf = (value) => { const n = Number(value); return Number.isInteger(n) && n >= 1 && n <= 3 ? n : 3; };
+
+export function modelCandidates({ role = 'dev', risk = 0, difficulty = 5, preferProvider = 'claude', limitRelief = false, codexDev = null, avoid = '', reviewMinTier = 3, claudeCross = null } = {}) {
   if (['orchestrate', 'create', 'replan', 'mockup'].includes(role)) return ['fable', 'opus', 'codex:gpt-6-astra', 'codex:gpt-5.6-sol'];
   const low = risk < 4 && difficulty <= 3;
   const claude = risk >= 4 ? ['fable', 'opus'] : low ? ['sonnet', 'opus', 'fable'] : ['opus', 'fable'];
-  const codex = risk >= 4 && role === 'review' ? ['codex:gpt-6-astra'] : low ? ['codex:gpt-5.6-terra', 'codex:gpt-5.6-sol', 'codex:gpt-6-astra'] : ['codex:gpt-5.6-sol', 'codex:gpt-6-astra'];
+  const highReview = ['codex:gpt-5.6-terra', 'codex:gpt-5.6-sol', 'codex:gpt-6-astra'].slice(reviewMinTierOf(reviewMinTier) - 1);
+  const codex = risk >= 4 && role === 'review' ? highReview : low ? ['codex:gpt-5.6-terra', 'codex:gpt-5.6-sol', 'codex:gpt-6-astra'] : ['codex:gpt-5.6-sol', 'codex:gpt-6-astra'];
   // The verifiable pairing is Claude implementation + Codex review (Claude review carries read evidence only
   // through the stream-json trace — providers/claude.mjs parseClaudeTrace — which the review stage enables).
   // 👤 2026-09-07 「1 추천대로」: 사용량 한도(exit 5) 때 **회수 dev 만** sonnet 까지 강등을 허용한다(limitRelief).
   // 👤 2026-09-26 (나): modelPolicy.codexDev 가 켜져 있으면 dev 후보에 Codex 구현 모델이 든다 — 리뷰는 codexDev.review(Claude · 예 opus) 또는 codex 의 다른 모델.
   const cd = codexDevPolicy(codexDev);
+  const cc = claudeCrossPolicy(claudeCross); // 👤 2026-11-18 claudeCross — 꺼져 있으면 아래 두 갈래 모두 종전 그대로
   if (role === 'dev') {
-    const base = limitRelief && !claude.includes('sonnet') ? [...claude, 'sonnet'] : claude;
+    const relief = limitRelief && !claude.includes('sonnet') ? [...claude, 'sonnet'] : claude;
+    const base = cc.enabled ? relief.filter((m) => cc.dev.includes(m)) : relief;
     if (!codexDevAllowed(risk, codexDev)) return base;
     return preferProvider === 'codex' ? [...cd.models, ...base] : [...base, ...cd.models];
   }
   if (role === 'review') {
     if (cd.enabled && cd.review && providerOf(canonicalModel(avoid)) === 'codex') return [cd.review, ...codex];
+    if (claudePairCross(claudeCross, avoid, cc.review)) return [cc.review, ...codex];
     return codex;
   }
   return preferProvider === 'codex' ? [...codex, ...claude] : [...claude, ...codex];
@@ -59,14 +91,15 @@ export function policyRelief({ stage = '', batchKind = '', policy = null } = {})
   return stage === 'dev' && batchKind === 'recovery' && Number(policy?.recoveryDevFloor) === 1;
 }
 
-export function selectModel({ role = 'dev', risk = 0, difficulty = 5, preferred = '', avoid = '', providers = {}, blocked = () => false, preferProvider = 'claude', crossProvider = true, exclude = [], candidates = null, limitRelief = false, codexDev = null } = {}) {
+export function selectModel({ role = 'dev', risk = 0, difficulty = 5, preferred = '', avoid = '', providers = {}, blocked = () => false, preferProvider = 'claude', crossProvider = true, exclude = [], candidates = null, limitRelief = false, codexDev = null, reviewMinTier = 3, claudeCross = null } = {}) {
   const initial = canonicalModel(preferred);
   const previous = canonicalModel(avoid);
   const cd = codexDevPolicy(codexDev);
-  const pool = [...new Set([initial, ...(candidates ?? modelCandidates({ role, risk, difficulty, preferProvider, limitRelief, codexDev, avoid }))].filter(Boolean))];
-  // limitRelief 는 dev 에서만 하한을 1(sonnet)로 내린다 — review 하한(3/2)은 어떤 사유로도 내려가지 않는다.
+  const cc = claudeCrossPolicy(claudeCross);
+  const pool = [...new Set([initial, ...(candidates ?? modelCandidates({ role, risk, difficulty, preferProvider, limitRelief, codexDev, avoid, reviewMinTier, claudeCross }))].filter(Boolean))];
+  // limitRelief 는 dev 에서만 하한을 1(sonnet)로 내린다 — review 하한(3/2)은 한도 사유로 내려가지 않는다(설정 reviewMinTier 만 예외 · 👤 2026-10-21).
   // 예외(👤 2026-09-26 20:5x 「astra 하던 일을 opus 가」): Codex 구현 스토리의 리뷰를 codexDev.review(Claude) 가 맡을 때만 그 모델의 tier 까지.
-  const minimumTier = limitRelief && role === 'dev' ? 1 : risk >= 4 && role === 'review' ? 3 : ['orchestrate', 'create', 'replan', 'mockup'].includes(role) || difficulty > 3 || risk >= 4 ? 2 : 1;
+  const minimumTier = limitRelief && role === 'dev' ? 1 : risk >= 4 && role === 'review' ? reviewMinTierOf(reviewMinTier) : ['orchestrate', 'create', 'replan', 'mockup'].includes(role) || difficulty > 3 || risk >= 4 ? 2 : 1;
   const claudeReviewAfterCodex = role === 'review' && cd.enabled && Boolean(cd.review) && previous && providerOf(previous) === 'codex';
   const floorFor = (model) => claudeReviewAfterCodex && model === cd.review ? Math.min(minimumTier, MODEL_CATALOG[model].tier) : minimumTier;
   for (const model of pool) {
@@ -79,8 +112,12 @@ export function selectModel({ role = 'dev', risk = 0, difficulty = 5, preferred 
     // Keep the existing project boundary: high-risk implementation stays on Claude —
     // unless modelPolicy.codexDev opens Codex implementation up to its maxRisk (and only for its listed models).
     if (role === 'dev' && meta.provider === 'codex' && !(cd.enabled ? (risk <= cd.maxRisk && cd.models.includes(model)) : risk < 4)) continue;
-    // Review must be a different eye: a different provider, or — when Codex implements (codexDev) — a different Codex model.
-    if (role === 'review' && previous && (model === previous || (crossProvider && meta.provider === providerOf(previous) && !(cd.enabled && codexPairCross(model, previous))))) continue;
+    // 👤 2026-11-18 claudeCross: while on, Claude implementation stays inside its dev list (the review model never implements —
+    // otherwise no eye is left to review that story). Preferred/explicit models outside the list are skipped, not honoured.
+    if (role === 'dev' && cc.enabled && meta.provider === 'claude' && !cc.dev.includes(model)) continue;
+    // Review must be a different eye: a different provider, or — when Codex implements (codexDev) — a different Codex model,
+    // or — when modelPolicy.claudeCross is on — its review model over a Claude model from its dev list (never the same model).
+    if (role === 'review' && previous && (model === previous || (crossProvider && meta.provider === providerOf(previous) && !(cd.enabled && codexPairCross(model, previous)) && !claudePairCross(claudeCross, previous, model)))) continue;
     return { model, ...meta, reason: model === initial ? 'requested-and-eligible' : 'policy-selection' };
   }
   return null; // Never silently lower the required quality or invent an available model.

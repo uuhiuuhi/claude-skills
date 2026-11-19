@@ -298,3 +298,19 @@ export function escalationReport({ story, stage, situation, cause, tried = [], o
     `6) 위험도: ${risk}`,
   ].join('\n')
 }
+
+/** 엔진 원장(state.json)의 quality 압축 — 지문이 `keepFingerprint`(지금 코드)와 다른 항목은 다시 재사용되지 않는다
+ *  (재사용은 같은 지문일 때만). 그런 항목은 편성기(plan-queue 리뷰 대기 판정)가 읽는 qaExit·policy.verdict 만 남기고
+ *  지문과 상세(게이트·보안 원문)는 버린다 — 지문이 없으니 어떤 재사용 비교도 걸리지 않는다.
+ *  (2026-10-19 실사고) 끝난 스토리 264건의 상세가 영구히 쌓여 state.json 이 170MB → 깃허브 파일 100MB 한도로
+ *  10-15부터 체인 push 가 매 배치 실패(원격에 auto/2026-10-16~19 없음 · 미푸시 393 커밋). 순수 함수 — 새 객체를 돌려준다. */
+export function compactQualityLedger(quality = {}, keepFingerprint) {
+  const out = {}
+  for (const [k, v] of Object.entries(quality ?? {})) {
+    if (!v || typeof v !== 'object') continue
+    if (v.compacted || (keepFingerprint && v.fingerprint === keepFingerprint)) { out[k] = v; continue }
+    const verdict = v.result?.policy?.verdict
+    out[k] = { compacted: true, result: { qaExit: v.result?.qaExit ?? null, ...(verdict !== undefined ? { policy: { verdict } } : {}) } }
+  }
+  return out
+}

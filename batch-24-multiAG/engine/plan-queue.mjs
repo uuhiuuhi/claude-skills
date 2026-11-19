@@ -39,6 +39,7 @@ import { buildDag, parseDependsOn, validatePlan } from './plan-dag.mjs'
 import { parallelHazardsExtended } from './conflicts.mjs'
 // 모델 배정은 홀짝이 아니라 **점수**(난이도·위험도·가용성·최근 실패)로 한다.
 import { ASSIGN_HISTORY_FILE, assignBatchModels, parseHistory } from './assign.mjs'
+import { claudeCrossPolicy } from './runtime/model-policy.mjs'
 export {
   MOCKUP_GATE_DEFAULT, openFindings, isHumanGateLine,
   readStorySignals, parseSprint, epicSection, mockupGateOk,
@@ -297,6 +298,7 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
   }
 
   const judge = (r) => {
+    if (r.optOut) return exclude(r.key, 'sprint-status ⏸ 러너 편성 제외 주석 — 대화형 창 전담'), null
     const section = epicSection(epicsText, r.key)
     if (/⏸|이연 확정/.test(section)) return exclude(r.key, 'epics 이연 확정 문언(⏸) — 편성 제외(규칙 1)'), null
     const text = readIf(join(ART, r.key + '.md'))
@@ -409,10 +411,14 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
     (Array.isArray(codexCfg.roles) ? codexCfg.roles : ['review']).includes('review') &&
     (Array.isArray(codexCfg.reviewKinds) ? codexCfg.reviewKinds : ['new', 'closeout']).includes(kind) &&
     kind !== 'recovery'
+  // 👤 2026-11-18 claudeCross(Claude 구현 → 지정 Claude 모델 검토): 켜져 있으면 **내장 기본 짝**만 그 짝으로 바꾼다
+  // (구현 = dev 목록 첫 모델 · 검토 = review 모델). cfg.models 로 직접 적은 짝과 codex 검토 지정은 종전대로 그것이 이긴다.
+  const cc = claudeCrossPolicy(cfg.modelPolicy?.claudeCross)
   const modelsFor = (kind) => {
     let base =
       models && (models.new || models.recovery || models.closeout) ? (models[kind] ?? null)
         : models ? models
+          : cc.enabled ? (kind === 'closeout' ? { review: cc.review } : { dev: cc.dev[0], review: cc.review })
           : kind === 'closeout' ? { review: 'opus' }
             : kind === 'recovery' ? { dev: 'opus', review: 'fable' }
               : { dev: 'fable', review: 'opus' }
@@ -465,7 +471,10 @@ export function plan({ root, stateDir, max, today = todayStr(), config }) {
         const used = batch.flatMap(realFiles)
         const mateIdx = pool.findIndex((c) => {
           const mateFiles = realFiles(c)
-          const sameShape = c.kind === head.kind && c.epic === head.epic &&
+          // 2026-10-29(👤 「병렬 2폭인데 배치가 1건씩 — 계획기 묶음 수리」): **같은 에픽** 조건을 뺐다 — 마감 재검수·회수가 에픽마다 하나씩이면
+          // 전부 단독 배치가 되어 parallel 이 켜져도 순차로 돌았다(11:27 실측 · review 1건 · review 1건). 병렬 안전은 에픽이 아니라
+          // 같은 종류·같은 단계 서명 + File List 서로소 + 확장 충돌 판정(아래)이 지킨다. 에픽 순서 규칙(규칙 1)은 신규 착수에만 걸리고 후보 단계에서 이미 적용됐다.
+          const sameShape = c.kind === head.kind &&
             (c.stages ?? []).join() === (head.stages ?? []).join() && (c.replanHint ?? '') === (head.replanHint ?? '') // 단계 서명이 같은 것끼리만(replan 유무)
           if (reviewOnly) return sameShape
           return sameShape && mateFiles.length > 0 &&

@@ -47,6 +47,18 @@
 - 한도·실패: sol 이 한도(limit)면 라우터가 Claude 후보로 내려간다(배치가 서지 않는다). 같은 스토리에서 codex dev 가 연속 2회 실패하면 배정기가 claude 로 피한다(assign-history). 마감 재검수(closeout · review 만)는 구현자 기록(sol)을 보고 astra 를 고른다.
 - 되돌리기: `enabled: false`(또는 키 삭제) + `models.*.dev` 를 `opus` 로(+ `models.*.review` 를 codex 로 · `reviewKinds` 복원). 엔진 재설치 없이 설정만으로 종전 경계로 돌아간다.
 
+### Claude 끼리 교차 — opus·sonnet 구현 → fable 검토 (👤 2026-11-18 「코덱스 주간 한도 소진 · 코덱스 사용은 중단하고 fable 로 대체」)
+
+```json
+"modelPolicy": { "claudeCross": { "enabled": true, "review": "fable", "dev": ["opus", "sonnet"] } }
+```
+
+- 켜져 있을 때만, **구현 모델이 `dev` 목록의 Claude 모델이고 검토 모델이 `review` 에 적힌 Claude 모델**인 짝을 「만든 쪽과 다른 쪽」으로 인정한다(위 「claude 끼리는 미달」의 유일한 예외). 같은 모델끼리·목록 밖 구현 모델·모델 기록 누락은 여전히 미달이고, `dev` 목록에는 `review` 보다 등급이 낮은 Claude 모델만 남는다(fable = tier 3 이라 고위험 검토 하한도 그대로 만족 — 하한을 내리지 않는다).
+- 열람 증거는 `codexDev.review` 와 같은 길이다: Claude 검토는 `--output-format stream-json` 추적의 Read 기록으로 스토리·diff·변경 파일을 전부 읽었음을 증명해야 하고, 못 하면 `not-run(missing read evidence)` 로 완료가 막힌다.
+- 켜져 있는 동안 Claude 구현은 `dev` 목록 안에서만 고른다(`review` 모델은 구현하지 않는다 — 고위험 dev 의 fable 선호도 opus 로 간다). 편성기 내장 기본 짝도 `dev[0]`/`review` 로 바뀐다(`cfg.models` 를 직접 적었으면 그것이 이긴다).
+- `review` 모델이 한도·장애·`exhaustedModels` 로 못 쓰이면 **다른 Claude 모델로 내려가지 않는다** — 「검토 가용 모델 없음」(exit 5 · 리뷰 대기)로 남는다. 환경값 `AUTO_MODEL_LADDER` 가 그 모델을 빼 두었어도 review 역할에 한해서는 쓴다(구현·계획 단계는 사다리 그대로).
+- 같은 잣대: `model-policy.claudePairCross`(선택·배정기·편성기·라우터) · 파이프라인 `REVIEW STOP — same-provider` · `completion-rules.crossReviewResult` · `readiness.crossReviewVerdict`(뒤 둘은 엔진이 매니페스트에 적는 `reviewPolicy.claudeCross` 를 본다). 라우팅(`modelPolicy.enabled`)이 꺼진 옛 경로에는 적용되지 않는다. 되돌리기 = `enabled: false` + `providers.codex.enabled: true`.
+
 ### 리뷰 비용 상한 (👤 2026-09-07 「2 예」)
 
 편성기 `autonomy.maxReviewRoundsPerStory`(기본 2). 스토리 파일에서 **마지막 replan 표식(`### Replan <날짜>` · `### 회수 라운드 <날짜>`) 뒤의** Codex 교차리뷰 헤딩(`### Review Findings — Codex 교차리뷰`)을 센다. 상한에 닿은 스토리에 review 를 편성해야 하면 `replan` 을 먼저 세운다 — 마감 재검수는 `replan → dev → review`(replan 이 연 Task 를 dev 가 반영한 뒤에만 리뷰), 그 외는 `replan` 을 앞에 붙인다. replan 은 표식을 남기므로 그 뒤로 다시 상한만큼 리뷰할 수 있다(무한 replan 방지). 회수(dev 만) 배치는 review 단계가 없어 대상이 아니다. `0` 이면 끈다.

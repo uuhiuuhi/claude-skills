@@ -14,7 +14,7 @@ import {
   CODEX_SLOT_STALE_MS, acquireCodexSlot, buildCodexCommand, collectEnvFiles, collectSensitiveFiles,
   hideEnvFiles, hideSensitiveFiles, isSensitivePath, isSlotStale, parseCodexEvents,
   redactSecrets, releaseCodexSlot, restoreEnvFiles, runCodexWorker, slotStaleMsFor, startSlotHeartbeat,
-  stripSensitiveFileSections, unquoteGitPath, validateReviewRun, withCodexSlot,
+  readEvidenceFor, stripSensitiveFileSections, unquoteGitPath, validateReviewRun, withCodexSlot,
 } from './providers/codex.mjs'
 import { buildClaudeCommand, runClaudeWorker } from './providers/claude.mjs'
 import { defaultExec, parseModelSpec } from './providers/index.mjs'
@@ -546,6 +546,34 @@ describe('[15] 「파일을 읽지 않은 clean」은 무효 — 명령 개수�
       })
       assert.equal(v.ok, true, v.why)
       assert.deepEqual(v.warnings, [])
+    })
+  })
+  // 2026-10-17 2-89 실사고 — 한글 긴 파일명을 PowerShell 에 적기 어려워 와일드카드로 찾아 읽었다(리뷰가 「스토리 파일:212」 인용).
+  // 명령에 파일명이 없어 「스토리 미열람 clean」 NO-OP STOP(exit 4) 이 두 번 연속 났다.
+  describe('와일드카드 패턴으로 찾아 읽은 명령도 열람 증거로 인정한다(고정 글자 4자+ · 읽기 동사 필수)', () => {
+    const S89 = '_bmad-output/implementation-artifacts/2-89-보고서-지면-pdf-관찰-묶음-4-05-표-행-높이-기준-열-폭-미리보기-pdf-줄바꿈-한-장-보기-칸-폭-합본-표시.md'
+    const REAL = `powershell.exe -Command '$p=Get-ChildItem _bmad-output/implementation-artifacts -Filter '"'2-89-*.md' | Select-Object -First 1; "'$n=0; Get-Content -Encoding utf8 -LiteralPath $p.FullName | ForEach-Object { $n++; "{0}: {1}" -f $n, $_ }'`
+    it('① 실측 명령 꼴(-Filter 2-89-*.md + Get-Content) → 인정 · validateReviewRun 도 통과', () => {
+      assert.equal(readEvidenceFor(S89, { commands: [REAL] }), true)
+      assert.equal(readEvidenceFor(S89, { commands: ['cat _bmad-output/implementation-artifacts/2-89-*'] }), true, '경로 끝부분 패턴')
+      const v = validateReviewRun({ json: { findings: [] }, events: ev([REAL, `cat ${DIFF}`, 'sed -n 1,80p src/a.ts']), storyFile: S89, diffFile: DIFF, changedFiles: [S89, 'src/a.ts'] })
+      assert.equal(v.ok, true, v.why)
+    })
+    it('② 고정 글자 부족(*.md · * 단독) → 불인정', () => {
+      assert.equal(readEvidenceFor(S89, { commands: ["Get-ChildItem -Filter '*.md' | Get-Content"] }), false)
+      assert.equal(readEvidenceFor(S89, { commands: ['cat *'] }), false)
+      assert.equal(readEvidenceFor(S89, { commands: ['cat implementation-artifacts/*/*.md'] }), false, '구분자는 고정 글자로 세지 않는다')
+    })
+    it('③ 패턴은 맞지만 읽기 동사 없음 → 불인정', () => {
+      assert.equal(readEvidenceFor(S89, { commands: ["Get-ChildItem -Filter '2-89-*.md'"] }), false)
+    })
+    it('④ 다른 스토리 패턴(2-88-*.md) → 불인정', () => {
+      assert.equal(readEvidenceFor(S89, { commands: [REAL.replace('2-89-*', '2-88-*')] }), false)
+    })
+    it('⑤ 기존 전체 경로·파일명 인정은 그대로', () => {
+      assert.equal(readEvidenceFor(S89, { commands: [`cat ${S89}`] }), true)
+      assert.equal(readEvidenceFor(S89, { commands: [`cd x && cat ${S89.split('/').pop()}`] }), true)
+      assert.equal(readEvidenceFor(S89, { commands: ['pwd'] }), false)
     })
   })
 })

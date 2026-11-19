@@ -549,7 +549,19 @@ export function readEvidenceFor(path, { commands = [], filePaths = [] } = {}) {
   if (!p) return false
   const base = p.split('/').pop()
   const hay = [...commands.map(normPath), ...filePaths.map(normPath)]
-  return hay.some((h) => h.includes(p) || (base.length >= 4 && h.includes(base)))
+  if (hay.some((h) => h.includes(p) || (base.length >= 4 && h.includes(base)))) return true
+  // (2026-10-17 2-89 실사고) 한글 긴 파일명을 셸에 적기 어려워 `Get-ChildItem -Filter '2-89-*.md' … Get-Content` 처럼
+  // 와일드카드로 찾아 읽는 형태도 증거로 인정한다 — 단 고정 글자 4자 이상 + 같은 명령 안에 내용 읽기 동사가 있을 때만.
+  return commands.map(normPath).some((c) => READ_VERB_RE.test(c) && c.split(GLOB_SPLIT_RE).some((t) => globMatchesPath(t, p)))
+}
+
+const READ_VERB_RE = /\b(?:get-content|cat|type|sed|head|tail|less|rg|select-string|gc)\b/i
+const GLOB_SPLIT_RE = /[\s'"`|;,()=<>]+/
+function globMatchesPath(token, p) {
+  const t = token.replace(/^\.\//, '')
+  if (!/[*?]/.test(t) || t.replace(/[*?/]/g, '').length < 4) return false
+  const re = t.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]')
+  return new RegExp(`(?:^|/)${re}$`).test(p)
 }
 
 /** 「파일을 하나도 안 읽고 clean」은 리뷰가 아니다(F10 · 리뷰 #12).

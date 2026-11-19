@@ -4,7 +4,9 @@ import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { StageRouter } from './runtime/stage-router.mjs';
-import { codexDevPolicy, failureKind, limitDowngradeMode, modelCandidates, selectModel, MODEL_CATALOG } from './runtime/model-policy.mjs';
+import { codexDevPolicy, claudeCrossPolicy, claudePairCross, failureKind, limitDowngradeMode, modelCandidates, selectModel, MODEL_CATALOG } from './runtime/model-policy.mjs';
+import { crossReviewResult } from './runtime/completion-rules.mjs';
+import { taskReadiness } from './readiness.mjs';
 import { recordModelEvent, readModelHealth } from './runtime/model-health.mjs';
 import { assignWorkers } from './assign.mjs';
 import { requestPlan } from './orchestrate.mjs';
@@ -12,6 +14,7 @@ import { asfCandidates } from './asf-resolve.mjs';
 import { buildCodexCommand } from './runtime/providers/codex.mjs';
 import { buildDag, validatePlan } from './plan-dag.mjs';
 import { parseSprint } from './story-ledger.mjs';
+import { sequentialPolicyFlags } from './runner-rules.mjs';
 
 const providers = { claude: { enabled: true, max: 3 }, codex: { enabled: true, max: 1, roles: ['dev', 'review'] } };
 test('Fable quota is shared across independent routers; Opus runs immediately; reset restores Fable', () => {
@@ -266,4 +269,204 @@ test('codexDev maxRisk -1 은 새 Codex 구현을 0건으로 만들고 교차 �
   // 범위 밖 값은 잘라 낸다
   assert.equal(codexDevPolicy({ enabled: true, maxRisk: -5, models: ['codex:gpt-5.6-sol'] }).maxRisk, -1);
   assert.equal(codexDevPolicy({ enabled: true, maxRisk: 99, models: ['codex:gpt-5.6-sol'] }).maxRisk, 10);
+});
+
+test('reviewMinTier (👤 2026-10-21 「위험도 높은 스토리 검토도 sol로」): 기본 = astra 유지 · 2 = sol 먼저 · sol 막히면 astra · 위험도 4 미만은 불변', () => {
+  const base = { role: 'review', risk: 8, difficulty: 8, avoid: 'opus', providers };
+  // 기본(키 없음·범위 밖 값) — 종전과 같이 astra 만
+  assert.deepEqual(modelCandidates({ role: 'review', risk: 8, difficulty: 8 }), ['codex:gpt-6-astra']);
+  assert.equal(selectModel(base).model, 'codex:gpt-6-astra');
+  assert.equal(selectModel({ ...base, preferred: 'codex:gpt-5.6-sol' }).model, 'codex:gpt-6-astra');
+  assert.equal(selectModel({ ...base, preferred: 'codex:gpt-5.6-sol', reviewMinTier: 9 }).model, 'codex:gpt-6-astra');
+  // 2 — sol 먼저, 선호 sol 그대로, sol 이 막히면 astra
+  assert.deepEqual(modelCandidates({ role: 'review', risk: 8, difficulty: 8, reviewMinTier: 2 }), ['codex:gpt-5.6-sol', 'codex:gpt-6-astra']);
+  assert.equal(selectModel({ ...base, reviewMinTier: 2 }).model, 'codex:gpt-5.6-sol');
+  assert.equal(selectModel({ ...base, reviewMinTier: 2, preferred: 'codex:gpt-5.6-sol' }).model, 'codex:gpt-5.6-sol');
+  assert.equal(selectModel({ ...base, reviewMinTier: 2, blocked: (m) => m === 'codex:gpt-5.6-sol' }).model, 'codex:gpt-6-astra');
+  // 위험도 4 미만은 설정과 무관하게 같다
+  for (const difficulty of [2, 8]) {
+    const lowRisk = { role: 'review', risk: 2, difficulty };
+    assert.deepEqual(modelCandidates({ ...lowRisk, reviewMinTier: 2 }), modelCandidates(lowRisk));
+    assert.equal(selectModel({ ...lowRisk, avoid: 'opus', providers, reviewMinTier: 2 })?.model, selectModel({ ...lowRisk, avoid: 'opus', providers })?.model);
+  }
+  // 교차검증 불변 — 구현이 sol 이면 sol 검토 금지
+  const codexDev = { enabled: true, maxRisk: 10, models: ['codex:gpt-5.6-sol'] };
+  assert.equal(selectModel({ ...base, avoid: 'codex:gpt-5.6-sol', codexDev, reviewMinTier: 2, preferred: 'codex:gpt-5.6-sol' }).model, 'codex:gpt-6-astra');
+  // 러너(StageRouter)·배정기(정책 경로)도 같은 설정을 따른다
+  const stateDir = mkdtempSync(join(tmpdir(), 'routing-review-tier-'));
+  assert.equal(new StageRouter({ stateDir, providers }).choose({ role: 'review', risk: 8, difficulty: 8, avoid: 'opus' }).model, 'codex:gpt-6-astra');
+  assert.equal(new StageRouter({ stateDir, providers, reviewMinTier: 2 }).choose({ role: 'review', risk: 8, difficulty: 8, avoid: 'opus' }).model, 'codex:gpt-5.6-sol');
+  const [a] = assignWorkers({ stories: [{ key: 'x' }], providers, config: { modelPolicy: { enabled: true, reviewMinTier: 2 } } });
+  assert.equal(a.review, 'codex:gpt-5.6-sol');
+  const [b] = assignWorkers({ stories: [{ key: 'x' }], providers, config: { modelPolicy: { enabled: true } } });
+  assert.equal(b.review, 'codex:gpt-6-astra');
+});
+
+test('순차 경로(수동 큐)도 배치 models 지정을 라우터 선호로 넘긴다 — 2026-11-12 7-23 (sol 구현 · astra 중지 · review=opus) exit 5 회귀', () => {
+  // ① 표식 규칙: 정책이 켜져 있고 배치에 models 지정이 있을 때만 붙는다(지정 없음 = 종전 명령줄 그대로).
+  assert.deepEqual(sequentialPolicyFlags({ enabled: true }, { review: 'opus' }), ['--policy-assigned']);
+  assert.deepEqual(sequentialPolicyFlags({ enabled: true }, {}), []);
+  assert.deepEqual(sequentialPolicyFlags({ enabled: true }, { review: '' }), []);
+  assert.deepEqual(sequentialPolicyFlags({ enabled: true }, undefined), []);
+  assert.deepEqual(sequentialPolicyFlags({ enabled: false }, { review: 'opus' }), []);
+  assert.deepEqual(sequentialPolicyFlags(undefined, { review: 'opus' }), []);
+  // ② 배선: 순차 builder 가 그 표식을 붙이고, 파이프라인은 표식이 있을 때 지정 모델을 선호로 쓴다.
+  const runner = readFileSync(new URL('./run-night.mjs', import.meta.url), 'utf8');
+  assert.match(runner, /args\.push\(\.\.\.routingFlags\(\), \.\.\.sequentialPolicyFlags\(CFG\.modelPolicy, batch\.models\)\)/);
+  assert.match(runner, /a\.push\(\.\.\.routingFlags\(\), \.\.\.\(CFG\.modelPolicy\?\.enabled \? \['--policy-assigned'\] : \[\]\)\)/, '병렬 경로 불변');
+  const pipe = readFileSync(new URL('./runtime/auto-story-pipeline.mjs', import.meta.url), 'utf8');
+  assert.match(pipe, /let preferred = flag\('policy-assigned'\) \? models\[stage\] :/);
+  // ③ 실사고 재현: sol 이 구현 · astra 소진(👤 11-09 중지) · codexDev 꺼짐 — 선호가 비면 검토자 0, opus 를 넘기면 opus.
+  const stateDir = mkdtempSync(join(tmpdir(), 'routing-seq-policy-'));
+  const router = new StageRouter({ stateDir, providers, exhausted: ['codex:gpt-6-astra'], reviewMinTier: 2 });
+  for (const risk of [2, 6]) {
+    const base = { role: 'review', risk, difficulty: 5, avoid: 'codex:gpt-5.6-sol', preferProvider: 'claude' };
+    assert.equal(router.choose({ ...base, preferred: '' }), null, `위험도 ${risk}: 지정이 빠지면 고를 모델 없음(종전 증상)`);
+    assert.equal(router.choose({ ...base, preferred: 'opus' })?.model, 'opus', `위험도 ${risk}: 지정 opus 가 교차 검토자로 골라진다`);
+  }
+});
+
+// ── modelPolicy.claudeCross (👤 2026-11-18 「코덱스 주간 한도 소진 · 코덱스 사용은 중단하고 fable 로 대체」) ──
+const CC = { enabled: true, review: 'fable', dev: ['opus', 'sonnet'] };
+const codexOff = { claude: { enabled: true, max: 2 }, codex: { enabled: false, max: 1, roles: ['review'] } };
+const ccManifest = ({ dev = 'opus', rev = 'fable', policy = CC, review = {} } = {}) => ({
+  story: 'x', workers: { dev: { provider: 'claude', model: dev } },
+  ...(policy ? { reviewPolicy: { claudeCross: claudeCrossPolicy(policy) } } : {}),
+  review: { provider: 'claude', model: rev, result: 'clean', counts: { patch: 0, decision: 0, high: 0 }, readEvidence: ['story.md', 'diff.txt', 'a.py'], ...review },
+});
+
+test('claudeCross 정책 정규화 — 켜진 때만 · 검토 모델은 Claude · dev 목록은 검토 모델보다 낮은 등급의 Claude 모델만', () => {
+  assert.deepEqual(claudeCrossPolicy(CC), { enabled: true, review: 'fable', dev: ['opus', 'sonnet'] });
+  assert.equal(claudeCrossPolicy(null).enabled, false);
+  assert.equal(claudeCrossPolicy({ ...CC, enabled: 'yes' }).enabled, false);
+  assert.equal(claudeCrossPolicy({ ...CC, enabled: false }).enabled, false);
+  assert.equal(claudeCrossPolicy({ enabled: true, review: 'codex:gpt-6-astra', dev: ['opus'] }).enabled, false, '검토 모델은 Claude 만');
+  assert.equal(claudeCrossPolicy({ enabled: true, review: 'fable', dev: [] }).enabled, false, 'dev 목록이 비면 꺼짐');
+  assert.deepEqual(claudeCrossPolicy({ enabled: true, review: 'fable', dev: ['fable', 'opus', 'codex:gpt-5.6-sol', 'nope'] }).dev, ['opus'], '같은 모델·codex·모르는 모델은 걸러진다');
+  assert.equal(claudeCrossPolicy({ enabled: true, review: 'opus', dev: ['fable', 'opus'] }).enabled, false, '더 낮은 모델이 높은 모델을 검토하는 짝은 만들 수 없다');
+  // 짝 판정
+  assert.equal(claudePairCross(CC, 'opus', 'fable'), true);
+  assert.equal(claudePairCross(CC, 'sonnet', 'fable'), true);
+  assert.equal(claudePairCross(CC, 'opus', 'opus'), false, '같은 모델');
+  assert.equal(claudePairCross(CC, 'fable', 'fable'), false);
+  assert.equal(claudePairCross(CC, 'fable', 'opus'), false, '거꾸로 짝(fable 구현 → opus 검토)은 예외가 아니다');
+  assert.equal(claudePairCross(CC, 'opus', 'sonnet'), false, '검토 모델이 지정 모델이 아니다');
+  assert.equal(claudePairCross(CC, '', 'fable'), false, '구현 모델 기록 누락');
+  assert.equal(claudePairCross(CC, 'opus', ''), false, '검토 모델 기록 누락');
+  assert.equal(claudePairCross(CC, 'cli-default', 'fable'), false);
+  assert.equal(claudePairCross(null, 'opus', 'fable'), false, '설정 없음');
+  assert.equal(claudePairCross({ ...CC, enabled: false }, 'opus', 'fable'), false, '설정 꺼짐');
+});
+
+test('claudeCross 정상: opus·sonnet 구현 → fable 검토가 골라진다(고위험 tier 3 하한을 내리지 않고 만족) · fable 은 구현하지 않는다', () => {
+  assert.equal(MODEL_CATALOG.fable.tier, 3, 'fable = 최상위 Claude — 고위험 검토 하한(tier 3)을 그대로 만족');
+  for (const [risk, difficulty] of [[8, 8], [4, 8], [2, 6], [0, 2]]) {
+    for (const dev of ['opus', 'sonnet']) {
+      const r = selectModel({ role: 'review', risk, difficulty, providers: codexOff, avoid: dev, claudeCross: CC });
+      assert.equal(r?.model, 'fable', `위험 ${risk}: ${dev} 구현 → fable 검토`);
+    }
+  }
+  assert.deepEqual(modelCandidates({ role: 'review', risk: 8, avoid: 'opus', claudeCross: CC }), ['fable', 'codex:gpt-6-astra']);
+  // 구현: fable 선호(고위험 기본)여도 dev 목록 안에서만 — 검토할 눈을 남긴다
+  assert.equal(selectModel({ role: 'dev', risk: 8, difficulty: 8, providers: codexOff, preferred: 'fable', claudeCross: CC }).model, 'opus');
+  assert.deepEqual(modelCandidates({ role: 'dev', risk: 8, claudeCross: CC }), ['opus']);
+  assert.equal(selectModel({ role: 'dev', risk: 0, difficulty: 2, providers: codexOff, claudeCross: CC }).model, 'sonnet');
+  assert.equal(selectModel({ role: 'dev', risk: 8, difficulty: 8, providers: codexOff, claudeCross: CC, blocked: (m) => m === 'opus' }), null, 'opus 불가 시 fable 로 구현하지 않는다(보류)');
+  // 계획 단계(create·replan·mockup)는 건드리지 않는다
+  assert.equal(selectModel({ role: 'replan', risk: 4, difficulty: 8, providers: codexOff, preferred: 'fable', claudeCross: CC }).model, 'fable');
+  // 배정기(정책 경로)도 같은 짝
+  const [a] = assignWorkers({ stories: [{ key: 'x' }], providers: codexOff, config: { modelPolicy: { enabled: true, claudeCross: CC } } });
+  assert.equal(a.dev, 'opus'); assert.equal(a.review, 'fable');
+});
+
+test('claudeCross 실패: 같은 모델끼리는 미달 · 설정이 없거나 꺼져 있으면 종전과 같다 · fable 불가면 다른 Claude 로 내려가지 않고 대기', () => {
+  const ask = { role: 'review', risk: 8, difficulty: 8, providers: codexOff, avoid: 'opus' };
+  // opus → opus 는 지정해도 고르지 않는다
+  assert.equal(selectModel({ ...ask, preferred: 'opus', claudeCross: CC }).model, 'fable');
+  assert.equal(selectModel({ ...ask, preferred: 'opus', claudeCross: CC, blocked: (m) => m === 'fable' }), null, 'fable 불가 → opus 자기 검토 금지(대기)');
+  assert.equal(selectModel({ ...ask, preferred: 'sonnet', claudeCross: CC, blocked: (m) => m === 'fable' }), null, 'fable 불가 → sonnet 으로도 내려가지 않는다');
+  assert.equal(selectModel({ ...ask, claudeCross: CC, exclude: ['fable'] }), null, 'exhaustedModels 에 fable → 대기');
+  // 설정 없음·꺼짐 = 종전(claude 끼리 금지)
+  assert.equal(selectModel({ ...ask }), null);
+  assert.equal(selectModel({ ...ask, preferred: 'fable' }), null);
+  assert.equal(selectModel({ ...ask, preferred: 'fable', claudeCross: { ...CC, enabled: false } }), null);
+  for (const role of ['dev', 'review', 'create']) for (const risk of [0, 4, 8]) for (const difficulty of [2, 8]) for (const avoid of ['', 'opus', 'fable', 'codex:gpt-5.6-sol']) {
+    const q = { role, risk, difficulty, avoid };
+    assert.deepEqual(modelCandidates({ ...q, claudeCross: null }), modelCandidates(q));
+    assert.deepEqual(modelCandidates({ ...q, claudeCross: { ...CC, enabled: false } }), modelCandidates(q));
+    assert.deepEqual(selectModel({ ...q, providers, claudeCross: { ...CC, enabled: false } }), selectModel({ ...q, providers }));
+  }
+  // codex 가 켜져 있는 종전 구성은 설정이 없으면 그대로 codex 검토
+  assert.equal(selectModel({ role: 'review', risk: 8, difficulty: 8, providers, avoid: 'opus' }).model, 'codex:gpt-6-astra');
+  // 라우터: fable 한도 기록 → 다른 러너도 검토자를 고르지 못한다(리뷰 대기)
+  const stateDir = mkdtempSync(join(tmpdir(), 'routing-claude-cross-'));
+  const router = new StageRouter({ stateDir, providers: codexOff, claudeCross: CC, now: () => 1000 });
+  assert.equal(router.choose({ role: 'review', risk: 8, difficulty: 8, avoid: 'opus' }).model, 'fable');
+  router.record('fable', 'limit', { retryAt: 9000 });
+  assert.equal(new StageRouter({ stateDir, providers: codexOff, claudeCross: CC, now: () => 1000 }).choose({ role: 'review', risk: 8, difficulty: 8, avoid: 'opus', preferred: 'opus' }), null);
+  assert.equal(new StageRouter({ stateDir: mkdtempSync(join(tmpdir(), 'routing-claude-cross-')), providers: codexOff, claudeCross: CC, exhausted: ['fable'] }).choose({ role: 'review', risk: 8, difficulty: 8, avoid: 'opus' }), null);
+  assert.equal(limitDowngradeMode({ stage: 'review', batchKind: 'new' }), 'block', '검토 한도 = 강등 없이 대기(불변)');
+});
+
+test('claudeCross 경계: dev 목록 밖 구현 모델(fable·codex·미상)은 예외가 아니다 · 검토 하한은 내려가지 않는다', () => {
+  const base = { role: 'review', risk: 8, difficulty: 8, providers: codexOff, claudeCross: CC };
+  assert.equal(selectModel({ ...base, avoid: 'fable' }), null, 'fable 구현분은 Claude 가 검토하지 못한다');
+  assert.equal(selectModel({ ...base, avoid: 'fable', preferred: 'opus' }), null);
+  assert.deepEqual(modelCandidates({ role: 'review', risk: 8, avoid: 'fable', claudeCross: CC }), ['codex:gpt-6-astra']);
+  assert.equal(selectModel({ ...base, avoid: 'opus', claudeCross: { enabled: true, review: 'fable', dev: ['sonnet'] } }), null, 'opus 가 목록에 없으면 opus 구현분은 대기');
+  assert.equal(selectModel({ ...base, avoid: 'codex:gpt-5.6-sol' }), null, 'codex 구현분은 이 예외와 무관(codex 꺼짐 → 대기)');
+  // 검토 모델을 opus 로 적어도 고위험(tier 3) 하한은 그대로 — 저위험만 opus 검토
+  const low = { enabled: true, review: 'opus', dev: ['sonnet'] };
+  assert.equal(selectModel({ role: 'review', risk: 8, difficulty: 8, providers: codexOff, avoid: 'sonnet', claudeCross: low }), null);
+  assert.equal(selectModel({ role: 'review', risk: 2, difficulty: 2, providers: codexOff, avoid: 'sonnet', claudeCross: low }).model, 'opus');
+});
+
+test('claudeCross + 환경값 사다리(AUTO_MODEL_LADDER=opus,sonnet): 지정 검토 모델만 review 역할에서 사다리 예외 — 구현·계획은 사다리 그대로', () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'routing-claude-cross-ladder-'));
+  const ladder = ['opus', 'sonnet'];
+  const on = new StageRouter({ stateDir, providers: codexOff, claudeLadder: ladder, claudeCross: CC });
+  assert.equal(on.choose({ role: 'review', risk: 8, difficulty: 8, avoid: 'opus' }).model, 'fable');
+  assert.equal(on.choose({ role: 'dev', risk: 8, difficulty: 8, preferred: 'fable' }).model, 'opus');
+  assert.equal(on.choose({ role: 'replan', risk: 4, difficulty: 8, preferred: 'fable' }).model, 'opus', '계획 단계의 fable 은 사다리가 계속 막는다');
+  assert.equal(on.choose({ role: 'create', risk: 4, difficulty: 8, preferred: 'fable' }).model, 'opus');
+  // 설정이 없으면 종전: 사다리가 fable 을 막아 검토자 0
+  assert.equal(new StageRouter({ stateDir, providers: codexOff, claudeLadder: ladder }).choose({ role: 'review', risk: 8, difficulty: 8, avoid: 'opus', preferred: 'fable' }), null);
+  assert.equal(new StageRouter({ stateDir, providers: codexOff, claudeLadder: ladder, claudeCross: { ...CC, enabled: false } }).choose({ role: 'review', risk: 8, difficulty: 8, avoid: 'opus', preferred: 'fable' }), null);
+});
+
+test('claudeCross 완료 판정(T6): opus→fable + 열람 증거면 통과 · 같은 모델·설정 기록 없음·목록 밖·증거 미달은 미달(completion-rules 와 readiness 가 같은 잣대)', () => {
+  const t6 = (m) => taskReadiness({ manifest: m }).criteria.find((c) => c.id === 'T6').result;
+  const both = (m, want, why) => { assert.equal(crossReviewResult(m)[0], want, why); assert.equal(t6(m), want, `readiness: ${why}`); };
+  both(ccManifest(), 'pass', 'opus 구현 → fable 검토');
+  both(ccManifest({ dev: 'sonnet' }), 'pass', 'sonnet 구현 → fable 검토');
+  both(ccManifest({ dev: 'opus', rev: 'opus' }), 'fail', '같은 모델');
+  both(ccManifest({ dev: 'fable', rev: 'fable' }), 'fail', '같은 모델(fable)');
+  both(ccManifest({ dev: 'fable', rev: 'opus' }), 'fail', '거꾸로 짝');
+  both(ccManifest({ policy: null }), 'fail', '매니페스트에 설정 기록이 없으면 종전대로 미달');
+  both(ccManifest({ policy: { ...CC, enabled: false } }), 'fail', '설정 꺼짐');
+  both(ccManifest({ dev: '' }), 'fail', '구현 모델 기록 누락');
+  both(ccManifest({ dev: 'cli-default' }), 'fail', '구현 모델 미상');
+  both(ccManifest({ rev: 'cli-default' }), 'fail', '검토 모델 미상');
+  both(ccManifest({ policy: { enabled: true, review: 'fable', dev: ['sonnet'] } }), 'fail', 'dev 목록 밖(opus)');
+  // 열람 증거 요건은 그대로다
+  both(ccManifest({ review: { result: 'not-run(missing read evidence)', readEvidence: ['story.md'] } }), 'not-verified', '열람 근거 미달 = 검토를 안 돌린 것');
+  both(ccManifest({ review: { readEvidence: [] } }), 'fail', '열람 증거 0건');
+  both(ccManifest({ review: { counts: { patch: 1, decision: 0, high: 1 } } }), 'fail', '높음 지적 잔존');
+  // 종전 짝은 불변
+  const codexRev = { story: 'x', workers: { dev: { provider: 'claude', model: 'opus' } }, review: { provider: 'codex', model: 'gpt-6-astra', result: 'clean', counts: { high: 0 }, readEvidence: ['a'] } };
+  both(codexRev, 'pass', 'claude 구현 → codex 검토(종전)');
+});
+
+test('claudeCross 배선: 파이프라인 REVIEW STOP · 라우터 · 매니페스트 표식 · 편성기 기본 짝 · Claude 검토의 열람 증거 판정 불변', () => {
+  const pipe = readFileSync(new URL('./runtime/auto-story-pipeline.mjs', import.meta.url), 'utf8');
+  assert.match(pipe, /claudePairCross\(routingConfig\.modelPolicy\?\.claudeCross, devSpecForCross\.model, spec\.model\)/);
+  assert.match(pipe, /spec\.provider === devSpecForCross\.provider && !codexCrossOk && !claudeCrossOk\)/);
+  assert.match(pipe, /claudeCross: routingConfig\.modelPolicy\?\.claudeCross \?\? null/);
+  assert.match(pipe, /if \(cc\.enabled\) m\.reviewPolicy = \{ claudeCross: cc \}/);
+  // 증거 요건: Claude 검토는 stream-json 으로 돌고, 필수 입력을 전부 Read 해야만 verified
+  assert.match(pipe, /stream: role === "review"/);
+  assert.match(pipe, /const verified = required\.length > 1 && readEvidence\.length === required\.length;/);
+  assert.match(pipe, /verified \? counts\.patch \+ counts\.decision \? 'findings' : 'clean' : 'not-run\(missing read evidence\)'/);
+  const planner = readFileSync(new URL('./plan-queue.mjs', import.meta.url), 'utf8');
+  assert.match(planner, /cc\.enabled \? \(kind === 'closeout' \? \{ review: cc\.review \} : \{ dev: cc\.dev\[0\], review: cc\.review \}\)/);
 });

@@ -117,20 +117,25 @@ export function ownerOfPath(owners, file) {
  * @returns {{kept:string[], excludedByOwner:{file:string, owner:string}[], owners:{key:string, entries:string[]}[], fallback:string|null}}
  *   fallback = 좁히지 않은 이유(sprint-status 없음 · 스토리 파일 없음) — 이때 kept = 입력 전체.
  */
-export function computeReviewScope({ files = [], story = '', ownKey = '', ownText = null, sprintText = null, readStory }) {
+export function computeReviewScope({ files = [], story = '', ownKey = '', ownText = null, sprintText = null, readStory, ownOnly = false }) {
   const all = [...files]
-  if (sprintText == null) return { kept: all, excludedByOwner: [], owners: [], fallback: 'sprint-status 없음' }
-  if (ownText == null) return { kept: all, excludedByOwner: [], owners: [], fallback: '스토리 파일 없음' }
+  if (sprintText == null) return { kept: all, excludedByOwner: [], excludedOutside: [], owners: [], fallback: 'sprint-status 없음' }
+  if (ownText == null) return { kept: all, excludedByOwner: [], excludedOutside: [], owners: [], fallback: '스토리 파일 없음' }
   const own = parseFileListLoose(ownText) ?? []
   const owners = activeOwners({ sprintText, story, ownKey, readStory })
-  const kept = [], excludedByOwner = []
+  // ownOnly = 이미 커밋된 라운드(baseline_commit..HEAD). 그 사이 같은 갈래에 쌓인 done 스토리 커밋까지 들어와 「소유 불분명 = 남긴다」가
+  // 수백 파일이 된다(2026-11-12 7-23 마감 재검수 — 573커밋 · 251파일 · 열람 근거 5/251 → T6 STOP). 자기 File List 가 있으면
+  // 그 밖 파일은 소유자가 없어도 뺀다. File List 가 비면 종전(보수적)대로 남긴다.
+  const strict = ownOnly && own.length > 0
+  const kept = [], excludedByOwner = [], excludedOutside = []
   for (const f of all) {
     if (own.some((e) => entryMatches(e, f)) || pathHasStoryKey(f, ownKey) || pathHasStoryKey(f, story)) { kept.push(f); continue }
     const owner = ownerOfPath(owners, f)
     if (owner) excludedByOwner.push({ file: f, owner })
+    else if (strict) excludedOutside.push(f)
     else kept.push(f)
   }
-  return { kept, excludedByOwner, owners, fallback: null }
+  return { kept, excludedByOwner, excludedOutside, owners, strict, fallback: null }
 }
 
 /** computeReviewScope 의 fail-open 판 — 어떤 오류도 리뷰를 막지 않는다: 전체 범위 + warn 1회. */
@@ -139,7 +144,7 @@ export function safeReviewScope(args, warn = () => {}) {
     return computeReviewScope(args)
   } catch (e) {
     warn(`리뷰 범위 좁히기 실패(${e?.message ?? e}) — 종전 전체 범위로 리뷰한다`)
-    return { kept: [...(args?.files ?? [])], excludedByOwner: [], owners: [], fallback: '오류' }
+    return { kept: [...(args?.files ?? [])], excludedByOwner: [], excludedOutside: [], owners: [], fallback: '오류' }
   }
 }
 
@@ -148,6 +153,9 @@ export function safeReviewScope(args, warn = () => {}) {
  *  열람 근거 미달(24-11 11/14 · 24-8 4/36) → 완료 차단. 프로젝트 소유 quality.config.json 은 예외(runtime-pin PROJECT_OWNED 와 같은 잣대). */
 export function isRunnerToolingPath(file) {
   const p = String(file ?? '').replace(/\\/g, '/')
+  // 2026-11-18 baroone 14-7 실사고: 실행 전용 클론 표식(.auto-batch-worktree)이 .gitignore 에 없는 프로젝트에서는 미추적 변경으로 잡혀
+  // Claude 리뷰의 필수 열람 목록에 들었다(열람 근거 미달 5/6 → 완료 차단). 표식도 러너 소유물이다(worktree-refresh·run-night 의 예외와 같은 잣대).
+  if (p === '.auto-batch-worktree') return true
   return p.startsWith('tools/auto/') && p !== 'tools/auto/quality.config.json'
 }
 

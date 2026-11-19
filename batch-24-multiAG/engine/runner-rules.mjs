@@ -134,6 +134,26 @@ export function parallelPlan({ storyCount, stages, parallel }) {
  *  (실작업 판정·진전 판정·landing 자동 해소가 모두 이 경계 하나를 공유한다.) */
 export const LOG_PREFIX = '_bmad-output/implementation-artifacts/auto-pipeline-logs/'
 
+/** 로그 폴더 안에서 **git 을 거쳐 다른 트리로 건너가야 하는 장부**만 새 파일로 추적한다(2026-10-28 · 러너 .git 10GB 실사고 — 루트 .log
+ *  12,986개 7.4GB 가 스토리 커밋에 실렸다: 커밋 화이트리스트가 `_bmad-output` 전체를 담고 DENY_LOG_RE 가 이 폴더만 예외로 둔 탓).
+ *  나머지 산출 로그(<story>-dev.log·-review.log·-quality.json·qa 덤프·워커 스크래치·하위 폴더)는 **새 파일이면** 어떤 무인 커밋에도 싣지
+ *  않는다 — 이미 추적 중인 파일의 변경은 종전대로 실린다(추적 해제는 체인 커밋 하나가 수 GB 삭제 diff 가 되므로 하지 않는다).
+ *  장부 = <story>-verification*.json(병렬 landing 이 cherry-pick 뒤 배치 트리에서 읽는다 · run-night) · batch-*-manifest.json ·
+ *  metrics-*.json(현황판 batch-sources) · state.json(완료·구현자 기록 — 워크트리가 HEAD 에서 이어받는다) · 라운드 파일(run-summary.log ·
+ *  exit-info.json · night-last-run.md · integration-gate.log · landing-quality.json — 매 라운드 덮어쓰는 한 벌이라 쌓이지 않는다). */
+export const LOG_LEDGER_KEEP_RE = /^(state\.json|exit-info\.json|run-summary\.log|night-last-run\.md|integration-gate\.log|landing-quality\.json|[^/]+-verification(\.rollback-[^/]+)?\.json|batch-[^/]+-manifest\.json|metrics-[^/]+\.json)$/
+/** 로그 폴더의 산출 로그(장부가 아닌 것)인가 — 하위 폴더까지 본다. 로그 폴더 밖이면 false. */
+export function isLogArtifactPath(p) {
+  const u = String(p ?? '').replaceAll('\\', '/')
+  if (!u.includes('auto-pipeline-logs/')) return false
+  return !LOG_LEDGER_KEEP_RE.test(u.slice(u.lastIndexOf('/') + 1))
+}
+/** 로그 폴더의 배치 매니페스트(`batch-*-manifest.json`)인가 — 장부라 보존 커밋에는 싣지만, 이름이 배치마다 새것이라
+ *  **미추적**으로 남은 것은 남의 미완 작업이 아니다(2026-11-15 실사고: 슬롯이 보존 커밋 전에 죽어 남은 매니페스트가 새로고침을 막았다). */
+export function isBatchManifestPath(p) {
+  return /(^|\/)auto-pipeline-logs\/batch-[^/]+-manifest\.json$/.test(String(p ?? '').replaceAll('\\', '/'))
+}
+
 /** 공유 장부 파일 — 거의 모든 dev 가 함께 고치는 문서. File List 겹침 판정에서 제외한다
  *  (landing 의 cherry-pick 3-way 가 줄 단위로 합치고, 충돌 나면 그 스토리만 landing 실패 폴백). */
 export const SHARED_BOOKKEEPING = Object.freeze([
@@ -171,7 +191,9 @@ export function landingResolution(files) {
     const p = String(f).trim().replace(/\\/g, '/')
     if (!p) continue
     if (p.startsWith(LOG_PREFIX)) {
-      out[p] = p.endsWith('.json') ? 'ours' : 'union'
+      out[p] = p === `${LOG_PREFIX}state.json` ? 'state' : p.endsWith('.json') ? 'ours' : 'union' // state = 스토리 키 단위(mergeStateJson)
+    } else if (p === SPRINT_STATUS_PATH) {
+      out[p] = 'sprint' // 키(스토리) 단위 병합 — union 은 이웃 줄 충돌에서 같은 키를 두 번 남겼다(2026-09-25 d389a72f8)
     } else if (SHARED_BOOKKEEPING.includes(p)) {
       out[p] = 'union'
     } else {
@@ -179,6 +201,82 @@ export function landingResolution(files) {
     }
   }
   return Object.keys(out).length > 0 ? out : null
+}
+
+export const SPRINT_STATUS_PATH = '_bmad-output/implementation-artifacts/sprint-status.yaml'
+
+/** sprint-status.yaml 충돌 해소 — **키(스토리) 단위**. 병렬 워커 둘이 이웃 줄(자기 스토리 키)을 각각 고치면 cherry-pick 이
+ *  두 줄을 한 hunk 로 묶어 충돌내고, union 은 양쪽을 다 남겨 같은 키가 두 번 생겼다(2026-09-25 d389a72f8 실사고 · 현황판 오판).
+ *  hunk 마다: ours 줄은 그대로 두되 preferKeys(착지하는 스토리) 의 키만 theirs 값으로 바꾸고, theirs 에만 있는 키는 뒤에 더한다.
+ *  같은 키가 양쪽에 있고 prefer 가 아니면 ours 가 이긴다(착지 스토리는 자기 키만 바꾸는 것이 규약). 키가 아닌 줄은 union.
+ *  마커가 남으면(비정형) null — 호출부는 보존 폴백. preferKeys 는 `2-1` 꼴 짧은 키도 받는다(`2-1-제목…` 에 매칭 · `2-10` 과 구분). */
+export function resolveSprintStatusConflict(text, { preferKeys = [], pick = null } = {}) {
+  // 키 = 들여쓰기 유무와 무관(최상위 last_updated 도 키) · 콜론 앞 공백은 같은 키(`2-1-a : x` ≡ `2-1-a: x` · Astra 10-29 #7)
+  const keyOf = (line) => /^\s*([^\s#:][^:#]*?)\s*:/.exec(line.replace(/\r$/, ''))?.[1] ?? null
+  const prefer = (k) => (preferKeys ?? []).some((p) => k === p || k.startsWith(`${p}-`))
+  const lines = String(text ?? '').split('\n')
+  const out = []
+  const hunkKeys = new Set() // 충돌 구간이 낸 키 — 결과 전체에서 두 번 나오면 병합 실패(보존 폴백)
+  let i = 0
+  while (i < lines.length) {
+    if (!/^<{7}(\s|$)/.test(lines[i].replace(/\r$/, ''))) { out.push(lines[i]); i++; continue }
+    i++
+    const ours = [], theirs = []
+    let side = ours, inBase = false, closed = false
+    for (; i < lines.length; i++) {
+      const b = lines[i].replace(/\r$/, '')
+      if (/^\|{7}(\s|$)/.test(b)) { inBase = true; continue }
+      if (/^={7}$/.test(b)) { inBase = false; side = theirs; continue }
+      if (/^>{7}(\s|$)/.test(b)) { closed = true; i++; break }
+      if (inBase) continue
+      side.push(lines[i])
+    }
+    if (!closed || side !== theirs) return null // 끝 마커 없음 · ======= 없음 = 비정형 → 보존 폴백
+    const tMap = new Map()
+    for (const t of theirs) { const k = keyOf(t); if (k && !tMap.has(k)) tMap.set(k, t) }
+    const seen = new Set()
+    for (const o of ours) {
+      const k = keyOf(o)
+      if (!k) { out.push(o); continue }
+      if (seen.has(k)) continue // 같은 쪽 안의 중복(비정상)도 하나로
+      seen.add(k); hunkKeys.add(k)
+      out.push(tMap.has(k) && (prefer(k) || (typeof pick === 'function' && pick(k, o, tMap.get(k)) === 'theirs')) ? tMap.get(k) : o)
+    }
+    for (const t of theirs) {
+      const k = keyOf(t)
+      if (k) { if (!seen.has(k)) { seen.add(k); hunkKeys.add(k); out.push(t) } } else if (!ours.includes(t)) out.push(t)
+    }
+  }
+  const s = out.join('\n')
+  if (/^(?:<{7}(\s|$)|>{7}(\s|$)|\|{7}(\s|$)|={7}\r?$)/m.test(s)) return null
+  // 충돌 구간이 낸 키가 파일 어디든 두 번이면 실패 — 병합이 중복 키를 만들거나 남기지 않았음을 보장한다
+  const count = new Map()
+  for (const l of out) { const k = keyOf(l); if (k && hunkKeys.has(k)) count.set(k, (count.get(k) ?? 0) + 1) }
+  for (const n of count.values()) if (n > 1) return null
+  return s
+}
+
+/** 엔진 state.json 충돌 병합 — **스토리 키 단위**(Astra 10-29 #2). 종전 'ours' 는 둘째 워커의 done·workers·quality·reviews 기록을 버려
+ *  다음 마감 재검수가 구현자 근거(T6)를 못 찾았다. ours 를 바탕으로, preferKeys(착지 스토리)에 속한 항목만 theirs 값으로 바꾼다 —
+ *  섹션(done/workers/…)의 항목 키는 `<스토리>` 또는 `<스토리>::<단계>` 꼴(엔진 key()) · 긴 슬러그는 `<스토리>-…`. 섹션이 객체가 아니면 ours 유지.
+ *  입력은 JSON 문자열(git 의 :2:/:3: 단계 전문) · 어느 쪽이든 깨진 JSON 이면 null(보존 폴백). */
+export function mergeStateJson(oursText, theirsText, { preferKeys = [] } = {}) {
+  let ours, theirs
+  try { ours = JSON.parse(String(oursText ?? '')); theirs = JSON.parse(String(theirsText ?? '')) } catch { return null }
+  if (!ours || typeof ours !== 'object' || Array.isArray(ours) || !theirs || typeof theirs !== 'object' || Array.isArray(theirs)) return null
+  const mine = (k) => (preferKeys ?? []).some((p) => k === p || k.startsWith(`${p}::`) || k.startsWith(`${p}-`))
+  const out = { ...ours }
+  for (const [section, tv] of Object.entries(theirs)) {
+    const ov = out[section]
+    if (!tv || typeof tv !== 'object' || Array.isArray(tv)) { if (!(section in out)) out[section] = tv; continue }
+    if (ov && typeof ov === 'object' && !Array.isArray(ov)) {
+      const merged = { ...ov }
+      for (const [k, v] of Object.entries(tv)) if (mine(k) || !(k in merged)) merged[k] = v
+      for (const k of Object.keys(ov)) if (mine(k) && !(k in tv)) delete merged[k] // 착지 스토리의 항목은 theirs 가 정본(invalidate 로 지운 것도 반영)
+      out[section] = merged
+    } else if (!(section in out)) out[section] = tv
+  }
+  return JSON.stringify(out, null, 2) + '\n'
 }
 
 /** 충돌 마커를 벗겨 양쪽을 순서대로 모두 보존(union). diff3 스타일의 base 구간(||||||| ~ =======)은
@@ -240,6 +338,42 @@ export function lockAction({ exists, parseOk, pidAlive, hbAgeMs }) {
   return (hbAgeMs ?? Infinity) > LOCK_HB_STALE_MS ? 'takeover' : 'skip-unknown'
 }
 
+/** 감시자 — 하향 동기 해소 요청(<stateDir>/downsync-conflict.json)이 오래 남으면 사람 질문 목록에 1건만 올린다(2026-11-12).
+ *  러너는 옛 기준 위에서 계속 돌기 때문에(downSyncCodeConflict=continue) 아무도 안 풀면 체인이 main 에서 계속 멀어진다.
+ *  @param gates human-gates.json 내용(없으면 null) · @param conflict downsync-conflict.json 내용(없으면 null)
+ *  @returns 바뀐 문서 또는 null(그대로) — 항목 키는 하나(`downsync-conflict`) · 파일이 사라지면 항목을 닫는다(지운다). 알림은 보내지 않는다. */
+export const DOWNSYNC_GATE_KEY = 'downsync-conflict'
+export const DOWNSYNC_GATE_AFTER_MIN = 30
+export function downSyncGateUpdate(gates, conflict, { nowMs = Date.now(), afterMin = DOWNSYNC_GATE_AFTER_MIN } = {}) {
+  const doc = gates && typeof gates === 'object' && !Array.isArray(gates) ? { ...gates } : {}
+  const list = Array.isArray(doc.humanGates) ? doc.humanGates : []
+  const rest = list.filter((g) => g?.key !== DOWNSYNC_GATE_KEY)
+  const had = rest.length !== list.length
+  const atMs = Date.parse(conflict?.at ?? '')
+  const n = Array.isArray(conflict?.conflicted) ? conflict.conflicted.length : 0
+  const due = conflict && n > 0 && Number.isFinite(atMs) && nowMs - atMs > afterMin * 60_000
+  if (!due) {
+    if (!conflict && had) return { ...doc, humanGates: rest } // 해소 요청 파일이 사라졌다 — 항목 닫기
+    return null // 아직 30분 전 · 기록 이상 — 손대지 않는다(열려 있던 항목은 그대로 둔다)
+  }
+  const text = `하향 동기 충돌 ${n}파일 — 러너 지휘 창이 풀 것(CLAUDE.md 운영 방식 8) · 파일: ${conflict.conflicted.slice(0, 6).join(', ')}${n > 6 ? ' 외' : ''} · 기록 ${conflict.at}`
+  const item = { key: DOWNSYNC_GATE_KEY, type: 'question', source: 'watchdog', text }
+  const prev = list.find((g) => g?.key === DOWNSYNC_GATE_KEY)
+  if (prev && prev.text === text && prev.source === 'watchdog' && list.filter((g) => g?.key === DOWNSYNC_GATE_KEY).length === 1) return null
+  return { ...doc, humanGates: [...rest, item] }
+}
+
+/** 감시자 「lock-dead」 기본 심박 기한 — 주인 pid 가 죽은 것을 확인한 뒤의 보조 조건이라 짧아도 된다. */
+export const WD_LOCK_DEAD_HB_MS = 30 * 60 * 1000
+
+/** 감시자 「죽은 lock」 판정 — lock 파일은 남았는데 주인 pid 가 죽었고(ESRCH) 심박도 기한을 넘겼다.
+ *  2026-10-18 14:2x 실사고: 데스크톱 앱 재시작과 함께 러너 node(pid 29380)가 사라지고 lock 만 남아, 감시자는
+ *  lock 이 있다는 이유로 「ok」를 내고 lock-stale(일지 3시간 정지)까지 기다렸다 — 틈 적용 대기기는 lock 부재를 기다리며 예약을 끈 채 교착.
+ *  pid 판정 불능('unknown' = EPERM 등)·JSON 손상은 죽었다고 보지 않는다(살아 있는 러너를 밀어내지 않는다 — lockAction 과 같은 원칙). */
+export function lockDead({ exists, parseOk, pidAlive, hbAgeMs } = {}, { hbStaleMs = WD_LOCK_DEAD_HB_MS } = {}) {
+  return Boolean(exists && parseOk && pidAlive === false && (hbAgeMs ?? Infinity) > hbStaleMs)
+}
+
 /** STOP 차단기 v2 — 구판은 창(12시간) 단위 통짜 차단이라 초저녁 실패 2회가 밤 전체(최장 11시간)를
  *  휴면시켰다. 차단 단위를 「원인 서명」(exit 코드 + 멈춘 배치 라벨)으로 좁힌다: 같은 서명 2회만
  *  차단하고 다른 원인은 계속 돈다. 창 누적 4회는 폭주 백스톱으로 남긴다.
@@ -285,23 +419,53 @@ export function refreshStall(prev, { ok, at, winId, after = REFRESH_STALL_NOTIFY
  *  장부는 'union'. 종전 'defer' 는 아래 반복 백스톱과 결합해 **19시간 38분 미동기 실사고**를
  *  만들었다: 문서 2파일 충돌이 2회 나자 d2halt 가 섰고, 새 날 브랜치가 정본이 아니라 전날
  *  작업 tip 을 승계해 정본의 확정·코드가 밤새 러너에 닿지 않았다(편성기가 낡은 원장으로 오보). */
-export function downSyncDecision(files) {
+export function downSyncDecision(files, { regenerate = null } = {}) {
   const list = (files ?? []).map((f) => String(f).trim().replace(/\\/g, '/')).filter(Boolean)
   if (list.length === 0) return { mode: 'resolve', plan: {} }
-  const plan = landingResolution(list)
-  if (plan) return { mode: 'resolve', plan }
-  const docOnly = list.every((p) => p.startsWith('_bmad-output/') && p.endsWith('.md'))
-  if (docOnly) {
-    const docPlan = {}
-    for (const p of list) docPlan[p] = SHARED_BOOKKEEPING.includes(p) ? 'union' : 'ours'
-    return { mode: 'resolve', plan: docPlan }
+  // 2026-11-12 부분 자동 해소: 파일마다 따로 분류한다 — 종전엔 코드 1파일이 섞이면 장부·생성물까지 통째로 halt 였다
+  //   (11-12 00:35 충돌 13파일 = 장부 2 · 생성물 1 · 시험 4 · 원장 번호 3 · 코드 3 → 사람이 손으로 풂).
+  //   장부(sprint = 키 단위 · 공유 원장 = union) · 로그 · 스토리 문서(ours) · 생성물(regen = theirs 받고 명령으로 재생성)은
+  //   계획에 넣고, 남은 진짜 코드만 remaining 으로 돌려준다. remaining 이 있으면 halt(호출부는 merge --abort).
+  const regen = downSyncRegenerateMap(regenerate)
+  const plan = {}
+  const remaining = []
+  for (const p of list) {
+    const one = landingResolution([p])
+    if (one) { Object.assign(plan, one); continue }
+    if (Object.hasOwn(regen, p)) { plan[p] = 'regen'; continue }
+    if (p.startsWith('_bmad-output/') && p.endsWith('.md')) { plan[p] = 'ours'; continue }
+    remaining.push(p)
   }
-  return { mode: 'halt' }
+  return remaining.length > 0 ? { mode: 'halt', plan, remaining } : { mode: 'resolve', plan }
 }
 
-/** 충돌 지문 — 같은 충돌을 라운드마다 재생산하는 것을 막는 반복 백스톱의 재료(순서 무관 동일). */
-export function conflictFingerprint(files) {
-  return (files ?? []).map((f) => String(f).trim().replace(/\\/g, '/')).filter(Boolean).sort().join('|')
+/** 설정 downSyncRegenerate({ 경로: 명령 }) 정규화 — 경로는 / 로 · 빈 명령·객체 아님은 버린다. */
+export function downSyncRegenerateMap(cfg) {
+  const out = {}
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return out
+  for (const [k, v] of Object.entries(cfg)) {
+    const p = String(k).trim().replace(/\\/g, '/')
+    const cmd = typeof v === 'string' ? v.trim() : ''
+    if (p && cmd) out[p] = cmd
+  }
+  return out
+}
+
+const SPRINT_RANK = Object.freeze({ backlog: 0, 'ready-for-dev': 1, 'in-progress': 2, review: 3, done: 4 })
+/** 하향 동기 sprint-status 같은 키 충돌의 승자 — 상태가 더 나아간 쪽 · 같으면 main(theirs: 사람이 확정한 주석
+ *  「⏸ 러너 편성 제외」 등이 main 에서 온다) · 체인(ours)이 더 나아갔으면 체인. 상태값을 모르면 같은 순위로 본다. */
+export function downSyncSprintPick(_key, oursLine, theirsLine) {
+  const rank = (l) => SPRINT_RANK[/:\s*([^\s#]+)/.exec(String(l ?? ''))?.[1]] ?? -1
+  return rank(theirsLine) >= rank(oursLine) ? 'theirs' : 'ours'
+}
+
+/** 충돌 지문 — 같은 충돌을 라운드마다 재생산하는 것을 막는 반복 백스톱의 재료(순서 무관 동일).
+ *  2026-11-12: origin/main 해시를 앞에 붙인다 — main 이 새로 움직이면 같은 파일 집합이어도 다른 지문(다시 시도).
+ *  하루 통째 중단이던 백스톱이 「그 main 해시에 대해서만」 멈춘다(깃러너가 하루 10회 넘게 main 을 올린다). */
+export function conflictFingerprint(files, mainSha = '') {
+  const base = (files ?? []).map((f) => String(f).trim().replace(/\\/g, '/')).filter(Boolean).sort().join('|')
+  const sha = String(mainSha ?? '').trim()
+  return sha ? sha + '::' + base : base
 }
 
 /** 선형 승계 — 미머지 `auto/<날짜>` 목록에서 승계 기준을 고른다. 구판은 미머지 브랜치가 남아 있으면
@@ -655,6 +819,14 @@ export function applyIntegrationToManifest(manifestJson, result) {
 }
 
 /** 정규화 설정 → 엔진 추가 플래그(순수). 설정이 하나도 없으면 [] — 종전 명령줄과 바이트 단위로 같다(하위 호환). */
+/** 순차 경로(수동 큐 night-queue.json)의 `--policy-assigned` 표식 — 2026-11-12 7-23 실사고.
+ *  병렬 경로는 배정기가 고른 모델을 넘기므로 정책이 켜져 있으면 늘 붙인다. 순차 경로는 **배치에 models 지정이 있을 때만** 붙인다 —
+ *  안 붙이면 파이프라인이 지정 모델(예 review=opus)을 라우터 선호로 쓰지 않아, codex(sol) 구현 + astra 중지 스토리의
+ *  검토 후보가 0 → exit 5 가 된다. 지정이 없으면 종전 명령줄 그대로(휴리스틱 선호 유지). */
+export function sequentialPolicyFlags(modelPolicy, batchModels) {
+  return modelPolicy?.enabled === true && Object.values(batchModels ?? {}).some((m) => String(m ?? '').trim()) ? ['--policy-assigned'] : []
+}
+
 export function engineFlagsFromConfig(pc) {
   const a = []
   if (pc?.autonomy?.mode === 'full') a.push('--autonomy', 'full') // configured 와 무관 — full 은 그 자체로 켜진다
@@ -677,6 +849,27 @@ export function blockedProviderFromExit(info) {
   if (!info || typeof info !== 'object') return null
   if (!['limit', 'auth', 'spend'].includes(info.kind)) return null
   return info.provider === 'codex' ? 'codex' : info.provider === 'claude' ? 'claude' : null
+}
+
+/** 감시자 「구현자 기록 부재」 서명을 슬롯 출력에서 되살린다(순수).
+ *  엔진은 exit 5 와 함께 exit-info.json(why: missing implementation provenance)을 남기지만 그 부기는 러너 본 폴더가 아니라
+ *  실행 폴더에 남거나 다음 스토리 부기에 덮여, 감시자는 「- **중단(exit 5)**: 마감 재검수 — <제목>」 한 줄만 서명으로 봤다 —
+ *  플레이북 정규식이 그 줄에서 원인 문구를 못 찾아 12시간 넘게 복원이 돌지 않았다(2026-11-15 4-74 실사고).
+ *  마지막 슬롯(`워크트리 기준:` 줄 이후)의 마지막 exit 5 중단 줄 바로 앞(같은 스토리 구간)에 엔진의
+ *  「⏸ [<키>] review: 실제 구현자 모델 기록이 없어 …」 줄이 있으면 그 스토리 키를 돌려준다. 없으면 null. */
+export function provenanceStopFromSlots(lines = []) {
+  const arr = Array.isArray(lines) ? lines : []
+  let from = 0
+  for (let i = arr.length - 1; i >= 0; i--) if (/^워크트리 기준: /.test(arr[i])) { from = i; break }
+  let stop = -1
+  for (let i = arr.length - 1; i >= from; i--) if (/\*\*중단\(exit \d+\)\*\*/.test(arr[i])) { stop = i; break }
+  if (stop < 0 || !/\*\*중단\(exit 5\)\*\*/.test(arr[stop])) return null
+  for (let i = stop - 1; i >= from; i--) {
+    if (/^─+ STORY /.test(arr[i]) || /\*\*중단\(exit \d+\)\*\*/.test(arr[i])) return null
+    const m = /^⏸ \[([^\]]+)\] review: 실제 구현자 모델 기록이 없어/.exec(arr[i])
+    if (m) return { story: m[1] }
+  }
+  return null
 }
 
 /** 감시자 플레이북 「구현자 기록 부재」의 state.json 복원(순수 · st 를 직접 고친다).
@@ -716,4 +909,16 @@ export function orchestratorLadder(model, ladder = null) {
 /** 이 폴백 사유면 다음 모델로 올라간다(실행기 사고만) — 형식·검증 거부는 false. */
 export function shouldLadderOn(source) {
   return /^deterministic-fallback\((runner-timeout|runner-error|runner-nonzero)/.test(String(source ?? ''))
+}
+
+// ── 감시자 텔레그램 발송 (2026-10-19 실측) ── Windows 에서 한글 JSON 을 curl 인자(`-d body`)로 넘기면 인자가 시스템 코드페이지로
+// 바뀌어 텔레그램이 「400 strings must be encoded in UTF-8」로 거절한다. curl 종료 코드는 0 이라 감시자는 「발송 ok」로 적었다.
+// 본문은 stdin(`--data-binary @-`)으로 UTF-8 바이트를 그대로 넘기고, 성공은 응답의 "ok":true 로만 판정한다.
+/** curl 인자와 stdin 입력 — 본문은 인자에 싣지 않는다. */
+export function telegramCurlRequest(url, body) {
+  return { args: ['-s', '-m', '20', '-X', 'POST', url, '-H', 'Content-Type: application/json; charset=utf-8', '--data-binary', '@-'], input: Buffer.from(String(body), 'utf8') }
+}
+/** 텔레그램 응답 본문이 성공인가 — 종료 코드가 아니라 "ok":true 로 본다. */
+export function telegramSent(stdout) {
+  try { return JSON.parse(String(stdout ?? '')).ok === true } catch { return false }
 }
